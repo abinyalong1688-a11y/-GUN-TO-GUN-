@@ -35,6 +35,10 @@ export class KeyboardMouseAdapter{
     const g=this.game;
 
     this._on(window,'keydown',e=>{
+      // M3-G3:强化选择态用数字键快速选择
+      if(g.state==='upgrade'&&/^Digit[123]$/.test(e.code)){
+        g._pickUpgrade(+e.code.slice(-1)-1);return;
+      }
       if(e.code==='Tab'){e.preventDefault();if(g.state==='playing'&&g.mode==='dm')g._showBoard();}
       if(e.code==='Tab')return;
 
@@ -52,6 +56,10 @@ export class KeyboardMouseAdapter{
       if(e.code==='Digit1')g.weapon.switchTo(0);                            // 主武器槽(反复按循环 4 把)
       if(e.code==='Digit2')g.weapon.switchTo(g.weapon.primaryCount);        // 沙漠之鹰
       if(e.code==='Digit3')g.weapon.switchTo(g.weapon.primaryCount+1);      // 军刀
+      // M3-G1:手雷 G 破片 / F 闪光 / V 烟雾
+      if(e.code==='KeyG'&&g.grenades)g.grenades.throw('frag');
+      if(e.code==='KeyF'&&g.grenades)g.grenades.throw('flash');
+      if(e.code==='KeyV'&&g.grenades)g.grenades.throw('smoke');
       if(e.code==='Escape'&&g.fallbackAim)g.pause();
     });
 

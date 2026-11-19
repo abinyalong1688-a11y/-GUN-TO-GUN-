@@ -16,8 +16,8 @@ export const HERO_DEFS={
 const FACTION_HEX={ct:'#7fd4ff',t:'#ff8a6a'};
 /* Bot 战斗风格:CT 稳定点射,T 猛烈扫射 */
 const BOT_PROFILE={
-  ct:{burst:3,burstT:.13,pause:1.2,missK:1.0,dmgP:6,dmgH:12,range:[7,16]},
-  t:{burst:5,burstT:.11,pause:1.5,missK:1.35,dmgP:9,dmgH:15,range:[6,13]},
+  ct:{burst:3,burstT:.13,pause:1.2,missK:1.0,dmgP:6,dmgH:12,range:[7,16],reaction:.25,coverBias:.6,flankBias:.3},
+  t:{burst:5,burstT:.11,pause:1.5,missK:1.35,dmgP:9,dmgH:15,range:[6,13],reaction:.18,coverBias:.4,flankBias:.6},
 };
 
 let BID=0;
@@ -80,6 +80,13 @@ export class HeroBot{
     this.moving=false;this.hasTarget=false;
     /* M2-A2 无线电台词冷却(错开开局,避免刷屏) */
     this._barkT=1+Math.random()*4;this._lowBarked=false;
+    this.blindT=0;
+    /* M3-G6:掩体 / 侧翼 / 反应 */
+    this.coverTarget=null;this.coverT=0;
+    this.flankDir=Math.random()>.5?1:-1;
+    this.reactionT=0;
+    this.difficulty=(game.settings&&game.settings.get('botDifficulty'))||'normal';
+    this._coverFrom=new THREE.Vector3();this._coverTo=new THREE.Vector3();this._coverBest=new THREE.Vector3();
     this.baseArmR=[0,0,0];this.baseArmL=[0,0,0];this.baseTorsoY=0;
     this._eyeT=new THREE.Vector3();this._tPosT=new THREE.Vector3(); // 热路径向量复用
     this._fromT=new THREE.Vector3();this._dirT=new THREE.Vector3();
@@ -127,7 +134,7 @@ export class HeroBot{
     this.speed=_botSpeed(op);
     this.state='active';this.alive=true;this.deathT=0;this.respawnT=0;
     this.animState='idle';this.animT=0;this.recoilKick=0;this.reloadT=0;this.hitT=0;
-    this._barkT=1+Math.random()*3;this._lowBarked=false;
+    this._barkT=1+Math.random()*3;this._lowBarked=false;this.blindT=0;
     this.magSize=op.rifle==='awp'?10:30;this.ammo=this.magSize;
     if(tag&&tag.bar)tag.bar.scale.x=1;
     this.rifleHome=null;this.rifleFalling=false;
@@ -226,7 +233,8 @@ export class HeroBot{
     fadeMaterials(this.materials,1);
     this.alive=true;this.state='active';this.deathT=0;this.hp=this.maxHp;
     this.animState='idle';this.animT=0;this.recoilKick=0;this.reloadT=0;this.hitT=0;
-    this.ammo=this.magSize;this.burst=0;this.flashT=0;this._lowBarked=false;
+    this.ammo=this.magSize;this.burst=0;this.flashT=0;this._lowBarked=false;this.blindT=0;
+    this.coverTarget=null;this.coverT=0;
     if(this.nameTag&&this.nameTag.bar)this.nameTag.bar.scale.x=1;
     if(this.torso)this.torso.position.y=this.baseTorsoY;
     if(this.parts.head)this.parts.head.rotation.x=0;
@@ -279,6 +287,7 @@ export class HeroBot{
       this.nameTag.bar.material.opacity=a*.95;
     }
     if(this._barkT>0)this._barkT-=dt;
+    if(this.blindT>0)this.blindT-=dt;
     if(this.flashT>0){
       this.flashT-=dt;
       if(this.flashT<=0)for(const m of this.flashable){
@@ -306,9 +315,13 @@ export class HeroBot{
       if(d<tDist){tDist=d;target='player';this._tPosT.copy(pe);}
     }
     const tPos=this._tPosT;
-    if(target&&!hadTarget)this.bark('bark_spot');
-
+    if(this.blindT>0)target=null; // 闪光致盲期间丢失目标
     const P=BOT_PROFILE[this.faction];
+    if(target&&!hadTarget){
+      this.bark('bark_spot');
+      this.reactionT=P.reaction*(this.difficulty==='hard'?.6:this.difficulty==='easy'?1.6:1);
+    }
+    if(this.reactionT>0)this.reactionT-=dt;
     if(target){
       const dx=tPos.x-this.pos.x,dz=tPos.z-this.pos.z;
       const wantYaw=Math.atan2(dx,dz);
@@ -320,7 +333,7 @@ export class HeroBot{
       const dist0=Math.max(.001,Math.hypot(dx,dz));
       this.aimPitch=Math.max(-.5,Math.min(.5,Math.atan2(tPos.y-(this.pos.y+1.4),dist0)));
 
-      // 走位:保持交战距离 + 横向游走
+      // 走位:保持交战距离 + 横向游走 + 掩体 / 侧翼(M3-G6)
       this.strafeT-=dt;
       if(this.strafeT<=0){this.strafeT=1.5+Math.random()*2;this.strafeDir*=-1;}
       const dist=Math.max(.001,Math.hypot(dx,dz));
@@ -328,9 +341,24 @@ export class HeroBot{
       const approach=dist>P.range[1];
       const spd=this.speed*(approach?1:.6);
       let mx=0,mz=0;
-      if(approach){mx+=nx*spd;mz+=nz*spd;}
-      else if(dist<P.range[0]){mx-=nx*spd*.8;mz-=nz*spd*.8;}
-      mx+=-nz*this.strafeDir*spd*.55;mz+=nx*this.strafeDir*spd*.55;
+      this.coverT-=dt;
+      const needCover=this.hp/this.maxHp<.4||this.reloadT>0;
+      if(!needCover)this.coverTarget=null;
+      else if(!this.coverTarget||this.coverT<=0){
+        this.coverTarget=this._findCover(tPos,losCheck);
+        this.coverT=2.5;
+      }
+      if(this.coverTarget){
+        const cdx=this.coverTarget.x-this.pos.x,cdz=this.coverTarget.z-this.pos.z;
+        const cd=Math.max(.001,Math.hypot(cdx,cdz));
+        mx=cdx/cd*spd;mz=cdz/cd*spd;
+      }else{
+        if(approach){mx+=nx*spd;mz+=nz*spd;}
+        else if(dist<P.range[0]){mx-=nx*spd*.8;mz-=nz*spd*.8;}
+        const flank=P.flankBias*(this.difficulty==='hard'?1.25:1);
+        mx+=-nz*this.strafeDir*spd*(.35+flank*.5);
+        mz+=nx*this.strafeDir*spd*(.35+flank*.5);
+      }
       const k=Math.min(1,8*dt);
       this.vel.x+=(mx-this.vel.x)*k;
       this.vel.z+=(mz-this.vel.z)*k;
@@ -340,7 +368,7 @@ export class HeroBot{
 
       // 点射/扫射(换弹期间不开火)
       this.fireT-=dt;
-      if(this.fireT<=0&&this.reloadT<=0){
+      if(this.fireT<=0&&this.reloadT<=0&&this.reactionT<=0){
         const clear=losCheck(eye,tPos);
         if(clear){
           if(this.burst<P.burst){this.burst++;this.fireT=P.burstT;}
@@ -358,6 +386,27 @@ export class HeroBot{
     this._animate(dt,time,this.vel.length());
     this.group.position.set(this.pos.x,this.group.position.y,this.pos.z);
     this.group.rotation.y=this.yaw;
+  }
+
+  /* M3-G6:在掩体后方采样一个可藏身点(LOS 被遮挡且离自己最近) */
+  _findCover(threat,losCheck){
+    let best=null,bestD=1e9;
+    const tx=threat.x,ty=threat.y||1.4,tz=threat.z;
+    for(const c of this.game.world.colliders){
+      if(c.top<1)continue;
+      const cx=(c.minX+c.maxX)/2,cz=(c.minZ+c.maxZ)/2;
+      let dx=cx-tx,dz=cz-tz;
+      let d=Math.hypot(dx,dz);
+      if(d<.01){dx=this.pos.x-tx;dz=this.pos.z-tz;d=Math.hypot(dx,dz)||1;}
+      const hw=(c.maxX-c.minX)/2,hz=(c.maxZ-c.minZ)/2;
+      const px=cx+dx/d*(hw+1.4),pz=cz+dz/d*(hz+1.4);
+      // 该点需在竞技场内
+      if(Math.hypot(px,pz)>50)continue;
+      if(losCheck(this._coverFrom.set(px,1.4,pz),this._coverTo.set(tx,ty,tz)))continue;
+      const dd=Math.hypot(px-this.pos.x,pz-this.pos.z);
+      if(dd<bestD){bestD=dd;best=this._coverBest.set(px,0,pz);}
+    }
+    return best?best.clone():null;
   }
 
   /* M2-A2:电台台词(每 bot 6s 冷却,静音由音频总线处理) */
@@ -403,7 +452,9 @@ export class HeroBot{
     this.gunTip.getWorldPosition(from);
     const dir=this._dirT.copy(tPos).sub(from).normalize();
     // 命中精度:距离越远越散(T 更猛但更糙)
-    const miss=Math.random()<Math.min(.6,dist*.018*P.missK+.08);
+    const mk=P.missK*(this.difficulty==='hard'?.7:this.difficulty==='easy'?1.4:1);
+    const smoked=this.game.grenades&&this.game.grenades.inSmoke(tPos);
+    const miss=Math.random()<Math.min(.92,dist*.018*mk+.08+(smoked?.45:0));
     if(miss)dir.add(new THREE.Vector3((Math.random()-.5)*.12,(Math.random()-.5)*.08,(Math.random()-.5)*.12)).normalize();
     const end=miss
       ?from.clone().addScaledVector(dir,dist+4)

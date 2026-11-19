@@ -80,7 +80,7 @@ export class Weapon{
     this.state=this.defs.map(d=>({ammo:d.mag,reserve:d.reserve}));
     this.reloading=false;this.reloadT=0;this._reloadSnd=0;
     this.fireT=0;this.adsAmt=0;this.heat=0;
-    this.recoilMul=1;this.reloadSpeedMul=1;
+    this.recoilMul=1;this.reloadSpeedMul=1;this.rpmMul=1;
     this.camKick=0;this.gunKickZ=0;this.gunKickRX=0;this.gunKickRY=0;this._slide=0;
     this.camKickYaw=0;this.recoilIdx=0;this.recoilReset=0;
     this.bobT=0;this._trigWasDown=false;this._adsWas=false;
@@ -540,7 +540,7 @@ export class Weapon{
       const trig=input.firing&&s.ammo>0;
       const wantFire=d.auto?trig:(trig&&!this._trigWasDown); // 半自动:扳机沿触发
       if(wantFire&&canFire&&this.fireT<=0){
-        this.fireT=60/d.rpm;
+        this.fireT=60/(d.rpm*(this.rpmMul||1));
         s.ammo--;
         this.heat=Math.min(d.heatMax,this.heat+d.heatShot);
         const ads=this.adsAmt;

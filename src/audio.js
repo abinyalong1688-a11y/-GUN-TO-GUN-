@@ -262,6 +262,13 @@ export class AudioFX{
     if(!this.ok)return;const t=this.ctx.currentTime;
     this._tone(t,.1,.2,{freq:660});this._tone(t+.1,.16,.2,{freq:990});
   }
+  /* M3-G2:拾取提示音 */
+  pickup(){
+    if(!this.ok)return;
+    const t=this.ctx.currentTime;
+    this._tone(t,.08,.25,{freq:880,bus:'sfx'});
+    this._tone(t+.07,.14,.22,{freq:1320,bus:'sfx'});
+  }
   /* M2-A2:无线电按键提示音(走 radio 分轨,受音乐/无线电音量控制) */
   radio(){
     if(!this.ok)return;

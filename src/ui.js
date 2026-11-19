@@ -32,6 +32,7 @@ export class UI{
       dmgDir:$('dmg-dir'),combo:$('combo-callout'),
       mOperators:$('m-operators'),mCamos:$('m-camos'),
       wslots:[...document.querySelectorAll('.wslot')],
+      grenades:{frag:$('g-frag'),flash:$('g-flash'),smoke:$('g-smoke')},
       scope:$('scope-overlay'),
     };
     this.bannerT=0;
@@ -447,6 +448,34 @@ export class UI{
     this.el.combo.classList.add('show');
     this.comboT=1.1;
   }
+  flashWhite(v=.85){
+    const f=this.el.flash;
+    if(!f)return;
+    f.style.transition='none';f.style.opacity=String(v);
+    requestAnimationFrame(()=>{f.style.transition='opacity .6s';f.style.opacity='0';});
+  }
+  /* M3-G1:手雷余量 HUD */
+  setGrenades(counts){
+    if(!counts||!this.el.grenades)return;
+    const g=this.el.grenades;
+    if(g.frag)g.frag.textContent=counts.frag;
+    if(g.flash)g.flash.textContent=counts.flash;
+    if(g.smoke)g.smoke.textContent=counts.smoke;
+  }
+  /* M3-G4:Boss 血条 */
+  setBoss(ratio,name){
+    const el=document.getElementById('bossbar');
+    if(!el)return;
+    el.classList.remove('hidden');
+    const fill=document.getElementById('boss-fill');
+    if(fill)fill.style.width=Math.max(0,Math.min(1,ratio))*100+'%';
+    const n=document.getElementById('boss-name');
+    if(n&&name)n.textContent=name;
+  }
+  hideBoss(){
+    const el=document.getElementById('bossbar');
+    if(el)el.classList.add('hidden');
+  }
   deathFlash(){
     const f=this.el.flash;
     f.style.transition='none';f.style.opacity=.85;
@@ -602,6 +631,55 @@ export class UI{
       const a=document.createElement('a');a.href=cv.toDataURL('image/png');a.download=name;a.click();
     }
     return true;
+  }
+  /* M3-G7:新手引导 */
+  showTutorial(steps,onDone){
+    const root=document.getElementById('tutorial');
+    if(!root||!steps||!steps.length)return;
+    this._tutSteps=steps;this._tutIdx=0;this._tutDone=onDone;
+    this._renderTutorial();
+    root.classList.remove('hidden');
+  }
+  _renderTutorial(){
+    const s=this._tutSteps&&this._tutSteps[this._tutIdx];
+    if(!s)return;
+    const title=document.getElementById('tut-title');
+    if(title)title.textContent=isEN()?s.en:s.zh;
+    const c=document.getElementById('tut-count');
+    if(c)c.textContent=`${this._tutIdx+1} / ${this._tutSteps.length}`;
+  }
+  nextTutorial(){
+    if(!this._tutSteps)return;
+    this._tutIdx++;
+    if(this._tutIdx>=this._tutSteps.length)this.closeTutorial(true);
+    else this._renderTutorial();
+  }
+  closeTutorial(done=false){
+    const root=document.getElementById('tutorial');
+    if(root)root.classList.add('hidden');
+    const cb=this._tutDone;
+    this._tutSteps=null;this._tutDone=null;
+    if(cb)cb(done);
+  }
+  /* M3-G3:三选一强化卡 */
+  showUpgrades(cards,onPick){
+    const box=document.getElementById('upgrade-cards');
+    const root=document.getElementById('upgrades');
+    if(!box||!root)return;
+    box.innerHTML=cards.map((c,i)=>`<div class="up-card" data-up="${escHTML(c.id)}">
+      <div class="up-num">${i+1}</div>
+      <div class="up-name">${escHTML(isEN()?c.name.en:c.name.zh)}</div>
+      <div class="up-desc">${escHTML(isEN()?c.desc.en:c.desc.zh)}</div>
+    </div>`).join('');
+    box.onclick=e=>{
+      const el=e.target.closest('.up-card');
+      if(el){this.hideUpgrades();onPick&&onPick(el.dataset.up);}
+    };
+    root.classList.remove('hidden');
+  }
+  hideUpgrades(){
+    const root=document.getElementById('upgrades');
+    if(root)root.classList.add('hidden');
   }
   showBest(best){
     this.el.mBest.innerHTML=best>0?`${t('best_hit')}<b>${best}</b>`:t('best_none');

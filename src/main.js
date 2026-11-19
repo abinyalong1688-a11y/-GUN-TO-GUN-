@@ -20,13 +20,24 @@ import {UI} from './ui.js';
 import {PortraitRenderer} from './portraits.js';
 import {settings} from './settings.js';
 import {InputManager,KeyboardMouseAdapter} from './input.js';
+import {Grenades} from './grenades.js';
+import {Pickups} from './pickups.js';
+import {applyUpgrade,rollUpgrades} from './upgrades.js';
+import {Radar} from './radar.js';
 import {OPERATORS,byId,byFaction,DEFAULT_OP,CAMOS} from './operators.js';
 import {store,num,escHTML} from './util.js';
 
 const $=id=>document.getElementById(id);
 const UP=new THREE.Vector3(0,1,0);
 const FOV_H=106; // 腰射水平视野(度):横向视野锁定,不随窗口宽高比缩水(16:9 下垂直约72.7°)
-const VERSION='1.4.1';
+const TUTORIAL=[
+  {zh:'WASD 移动,鼠标瞄准',en:'Move with WASD, aim with the mouse'},
+  {zh:'按住右键开镜(ADS),精度更高',en:'Hold right mouse to aim down sights'},
+  {zh:'按 R 换弹,避免空仓',en:'Press R to reload before running dry'},
+  {zh:'按 1 循环主武器,2 手枪,3 军刀',en:'Press 1 to cycle primaries, 2 sidearm, 3 knife'},
+  {zh:'按 G / F / V 投掷破片 / 闪光 / 烟雾',en:'Press G / F / V for frag / flash / smoke'},
+];
+const VERSION='1.5.0';
 const _rsO=new THREE.Vector3(); // 射线-球判定复用向量(热路径零分配)
 
 class Game{
@@ -37,6 +48,7 @@ class Game{
     this.perfMode=new URLSearchParams(location.search).has('perf');
     this.rosterMode=new URLSearchParams(location.search).has('roster');
     this.portraitsMode=new URLSearchParams(location.search).has('portraits');
+    this.bossMode=new URLSearchParams(location.search).get('boss')==='1';
     if(this.shotMode||this.selftestMode||this.e2eMode||this.rosterMode||this.portraitsMode)window.__game=this; // 调试探针:仅测试钩子下暴露
     this.perf={frames:0,slow:0,maxDt:0}; // 卡顿监控:慢帧(>25ms)计数
     this.state='menu'; // menu | playing | paused | dying | over
@@ -128,11 +140,14 @@ class Game{
     };
     this.waves=new Waves(this);
     this.heroes=new HeroTeam(this);
+    this.grenades=new Grenades(this,this.scene,this.effects,this.audio,this.ui);
+    this.pickups=new Pickups(this,this.scene,this.effects,this.audio,this.ui);
+    this.radar=new Radar(document.getElementById('radar'));
     this.ray=new THREE.Raycaster();
     this.losRay=new THREE.Raycaster();
     // 射击复用向量池:避免每发子弹都 new Vector3 造成 GC 抖动
     this._sd=new THREE.Vector3();this._sr=new THREE.Vector3();this._su=new THREE.Vector3();
-    this._send=new THREE.Vector3();this._muzzle=new THREE.Vector3();this._losV=new THREE.Vector3();
+    this._send=new THREE.Vector3();this._muzzle=new THREE.Vector3();this._losV=new THREE.Vector3();this._pierceO=new THREE.Vector3();
     this._shotGroups=[];
 
     this._setupComposer();
@@ -156,6 +171,8 @@ class Game{
       this.audio.uiClick();
       if(this.ui.downloadShareCard())this.ui.banner(t('share_hint'),'');
     });
+    $('tut-next').addEventListener('click',()=>{this.audio.uiClick();this.ui.nextTutorial();});
+    $('tut-skip').addEventListener('click',()=>{this.audio.uiClick();this.ui.closeTutorial(false);});
     // U1:设置面板统一绑定(灵敏度/FOV/音量/音效/音乐/准星/反转/蹲伏切换/ADS 切换)
     this.ui.bindSettings(this.settings,(path)=>{
       if(path==='fov'||path==='reset')this.baseHFov=this.settings.get('fov');
@@ -192,10 +209,16 @@ class Game{
     else if(this.shotMode==='over')this._shotOver();
     else if(this.shotMode==='killcard')this._shotKillcard();
     else if(this.shotMode==='mvp')this._shotMvp();
+    else if(this.shotMode==='tutorial')this._shotTutorial();
     if(this.selftestMode)this.selftest();
     if(this.e2eMode)this.e2e();
     if(this.rosterMode)this._debugRoster();
     if(this.portraitsMode)this._debugPortraits();
+    if(this.bossMode){
+      this.ui.sel.mode='waves';this.startGame();
+      this.waves.n=4;this.waves.queue.length=0;
+      this.waves.state='intermission';this.waves.timer=.2;
+    }
     // 异步 IP 探测:非中国 IP → 英文界面(结果缓存供下次首帧使用);?ipcc= 可强制(测试钩子)
     const forcedIPCC=new URLSearchParams(location.search).get('ipcc');
     (forcedIPCC?Promise.resolve(forcedIPCC):detectIPCountry()).then(cc=>{
@@ -373,6 +396,13 @@ class Game{
     this.playerFaction=hero;
     this.playerCamo=sel.camo||this.camoFor(op);
     this.player.god=false;this.invulnT=0;this.dmRespawnT=-1;
+    this.grenades.reset();this.pickups.clear();
+    this.damageBoostT=0;this.damageBoostMul=1;
+    this.empT=0;
+    this.ui.hideBoss();
+    this.upgrades={dmg:0,rpm:0,reload:0,speed:0,hp:0,crit:0,pierce:0,regen:0};
+    this.weapon.rpmMul=1;
+    this.ui.hideUpgrades();
     this.player.maxHealth=op.hp;
     this.player.speed=5.2*op.speedMul;
     this.player.sprintSpeed=7.8*op.speedMul;
@@ -429,6 +459,17 @@ class Game{
     this.ui.setHealth(this.player.health,this.player.maxHealth);
     this.fallbackAim=false;
     this._requestLock();
+    // M3-G7:首次进入显示新手引导
+    if(!this.shotMode&&!this.e2eMode&&!store.get('o07_tutorial_done')){
+      this.state='tutorial';
+      if(document.pointerLockElement)document.exitPointerLock();
+      this.ui.showTutorial(TUTORIAL,()=>{
+        store.set('o07_tutorial_done','1');
+        this.state='playing';
+        this.ui.showOnly(null);
+        this._requestLock();
+      });
+    }
     for(const e of [...this.enemies.list])if(e.decor)this.enemies.kill(e,false,true);
     this.audio.setWind(.05);
   }
@@ -450,6 +491,8 @@ class Game{
   toMenu(){
     this.enemies.clearAll();
     this.heroes.clear();
+    this.grenades.clear();
+    this.pickups.clear();
     this.state='menu';
     this.audio.musicStart('menu');
     this.audio.musicSet(1);
@@ -569,7 +612,7 @@ class Game{
     if(bestHero){
       this.stats.hits++;
       const head=bestHeroPart==='head';
-      const dmg=def.dmg*(head?2:1);
+      const dmg=def.dmg*(head?this.playerCritMul():1)*this.playerDamageMul();
       bestHero.takeDamage(dmg,this.playerName);
       this.audio.hit(head);
       this.ui.hitmark(head);
@@ -577,12 +620,39 @@ class Game{
     }else if(bestEnemy){
       this.stats.hits++;
       const part=bestEnemyHit.object.userData.part||'body';
-      const res=this.enemies.damage(bestEnemy,part,def.dmg,bestEnemyHit.point);
+      const res=this.enemies.damage(bestEnemy,part,def.dmg*this.playerDamageMul(),bestEnemyHit.point);
       this.audio.hit(res.crit);
       this.ui.hitmark(res.crit);
     }else if(bestStatic){
       const n=bestStatic.face?this._sr.copy(bestStatic.face.normal).transformDirection(bestStatic.object.matrixWorld):UP;
       this.effects.impact(bestStatic.point,n,bestStatic.object.userData.surface||'concrete');
+    }
+    // M3-G3:穿甲弹 —— 对射线后方第二个目标造成 60% 伤害
+    if(this.upgrades&&this.upgrades.pierce>0&&(bestEnemy||bestHero)&&bestT<399){
+      const org=this._pierceO.copy(cam.position).addScaledVector(dir,bestT+.15);
+      this.ray.set(org,dir);this.ray.far=60;
+      const s2=this.ray.intersectObjects(this.world.shootStatics,false);
+      let limit=s2.length?s2[0].distance:60;
+      let second=null,secondHero=null;
+      if(this.enemies.list.length){
+        const groups=this.enemies.list.filter(e=>!e.decor).map(e=>e.group);
+        const h2=groups.length?this.ray.intersectObjects(groups,true):[];
+        if(h2.length&&h2[0].distance<limit){
+          limit=h2[0].distance;
+          let o=h2[0].object;while(o&&!o.userData.enemyRef)o=o.parent;
+          second=o?o.userData.enemyRef:null;
+        }
+      }
+      for(const h of this.heroes.list){
+        if(!h.alive||h.team===this.playerTeam)continue;
+        for(const s of h.hitSpheres()){
+          const t=this._raySphere(org,dir,s.c,s.r);
+          if(t!==null&&t<limit){limit=t;secondHero=h;second=null;}
+        }
+      }
+      const pd=def.dmg*.6*this.playerDamageMul();
+      if(second)this.enemies.damage(second,'body',pd,org);
+      if(secondHero)secondHero.takeDamage(pd,this.playerName);
     }
 
     // 爆炸弹 AoE
@@ -623,6 +693,46 @@ class Game{
     const pts=Math.round(e.T.score*(crit?1.5:1)*comboMul);
     this.addScore(pts,e.pos.clone().add(new THREE.Vector3(0,.4,0)),crit);
     this.audio.kill();
+    // M3-G2:15% 概率掉落补给
+    if(!e.decor&&Math.random()<.15){
+      const type=['ammo','med','boost'][Math.floor(Math.random()*3)];
+      this.pickups.spawn(e.pos,type);
+    }
+    // M3-G3:战场恢复
+    if(this.upgrades&&this.upgrades.regen)this.player.heal(5*this.upgrades.regen);
+  }
+
+  /* M3-G3:每 3 波三选一强化 */
+  openUpgrade(){
+    if(this.state!=='playing')return;
+    this.state='upgrade';
+    const cards=rollUpgrades(this,3);
+    this._upgradeCards=cards;
+    if(document.pointerLockElement)document.exitPointerLock();
+    this.ui.showUpgrades(cards,id=>this._applyUpgrade(id));
+  }
+  _applyUpgrade(id){
+    const ok=applyUpgrade(this,id);
+    this.ui.hideUpgrades();
+    this._upgradeCards=null;
+    if(this.state==='upgrade')this.state='playing';
+    this._requestLock();
+    if(ok)this.ui.banner(t('upgrade_applied'),'');
+    return ok;
+  }
+  _pickUpgrade(i){
+    const c=this._upgradeCards&&this._upgradeCards[i];
+    return c?this._applyUpgrade(c.id):false;
+  }
+
+  /* M3-G3:暴击倍率(基础 2x + 升级) */
+  playerCritMul(){return 2+.25*(this.upgrades&&this.upgrades.crit||0);}
+
+  /* M3-G2/G3:玩家伤害倍率(强化道具 + 波次升级) */
+  playerDamageMul(){
+    const boost=this.damageBoostT>0?(this.damageBoostMul||1):1;
+    const up=this.upgrades?(1+.15*(this.upgrades.dmg||0)):1;
+    return boost*up;
   }
 
   /* ================= 乱斗判定 ================= */
@@ -790,6 +900,9 @@ class Game{
       }else{
         this.enemies.update(dt,this.player,this.world.colliders,this.time,this);
         this.waves.update(dt);
+        const boss=this.enemies.list.find(e=>e.boss);
+        if(boss)this.ui.setBoss(boss.hp/boss.maxHp,t('boss_name'));
+        else this.ui.hideBoss();
       }
 
       if(this.comboT>0){this.comboT-=dt;if(this.comboT<=0)this.comboKills=0;}
@@ -848,6 +961,17 @@ class Game{
     for(const fn of this.world.worldAnim)fn(this.time);
     this.effects.setCamPos(this.camera.position);
     this.effects.update(dt);
+    this.grenades.update(dt);
+    this.pickups.update(dt,this.player);
+    if(this.damageBoostT>0)this.damageBoostT=Math.max(0,this.damageBoostT-dt);
+    if(this.empT>0)this.empT=Math.max(0,this.empT-dt);
+    // M3-G5:雷达(设置开关 + EMP 干扰)
+    const rc=document.getElementById('radar');
+    if(rc){
+      const on=this.settings.get('radar')&&this.state==='playing';
+      rc.classList.toggle('hidden',!on);
+      if(on)this.radar.update(this.player,this.enemies.list,this.heroes.list,this.pickups,this.empT>0);
+    }
     this.ui.update(dt,this.player.health,this.player.maxHealth);
     // M2-A6:低血量 BGM 紧张度(状态翻转时才写,避免每帧调度)
     if(this.state==='playing'){
@@ -923,6 +1047,12 @@ class Game{
     return !!h;
   }
 
+  /* M3-G2:调试生成掉落物 */
+  debugSpawnPickup(type){return this.pickups.spawn(this.player.pos,type);}
+
+  /* M3-G1:调试投掷手雷 */
+  debugThrow(type){return this.grenades.throw(type);}
+
   /* M2-A1:调试击杀指定 bot(看死亡动画/击杀卡) */
   debugKillBot(id){
     const h=this.heroes.list.find(x=>x.opId===id);
@@ -961,6 +1091,9 @@ class Game{
     this.ui.killFeed(this.playerName,'秃鹫','M4A4',true);
     this.ui.setDmScore(7,5,213);
   }
+  /* M3-G7:新手引导截图 */
+  _shotTutorial(){this.ui.showTutorial(TUTORIAL,()=>{});}
+
   /* M2-A3:击杀卡截图 */
   _shotKillcard(){
     const k=byId('frost'),v=byId('raven');
@@ -994,6 +1127,7 @@ class Game{
      确定性驱动(手动步进 update),不依赖 rAF —— 后台标签页/无头环境可复现。
      结果:window.__e2e = {pass, fail, results[]} */
   async e2e(){
+    store.set('o07_tutorial_done','1'); // e2e 环境跳过首次引导
     const results=[];let pass=0;
     const run=async(name,fn)=>{
       try{await fn();results.push({name,ok:true});pass++;}
@@ -1146,6 +1280,151 @@ class Game{
       this.weapon.setFaction(byId('raven'));
       const t=this.weapon._armSleeves[0].color.getHex();
       assert(ct!==t,'CT/T 第一人称袖套颜色应不同: '+ct.toString(16)+' vs '+t.toString(16));
+    });
+    await run('pickup-magnet',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      this.player.god=true;this.player.health=50;
+      const p=this.pickups.spawn(this.player.pos.clone(),'med');
+      this.pickups.update(.016,this.player);
+      assert(this.player.health>50,'医疗掉落应回血');
+      assert(!this.pickups.list.includes(p),'拾取后应移除掉落物');
+    });
+    await run('pickup-ammo',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const before=this.weapon.state[this.weapon.cur].reserve;
+      this.pickups.spawn(this.player.pos.clone(),'ammo');
+      this.pickups.update(.016,this.player);
+      assert(this.weapon.state[this.weapon.cur].reserve>before,'弹药掉落应增加备弹');
+      this.pickups.spawn(this.player.pos.clone(),'boost');
+      this.pickups.update(.016,this.player);
+      assert(this.damageBoostT>9&&this.playerDamageMul()>=1.4,'强化掉落应提升伤害倍率');
+    });
+    await run('tutorial',()=>{
+      this.ui.showTutorial(TUTORIAL,()=>{});
+      const root=document.getElementById('tutorial');
+      assert(!root.classList.contains('hidden'),'引导应显示');
+      const first=document.getElementById('tut-title').textContent;
+      this.ui.nextTutorial();
+      assert(document.getElementById('tut-title').textContent!==first,'下一步应切换步骤');
+      this.ui.closeTutorial(false);
+      assert(root.classList.contains('hidden'),'跳过后应隐藏');
+    });
+    await run('bot-cover',()=>{
+      this.settings.set('botDifficulty','hard');
+      this.ui.sel.mode='dm';this.startGame();
+      const h=this.heroes.list[0];
+      assert(h.difficulty==='hard','Bot 难度应读取设置');
+      assert(h.coverTarget===null,'初始不应有掩体目标');
+      const saved=this.world.colliders.slice();
+      this.world.colliders.push({minX:-2,maxX:2,minZ:-2,maxZ:2,top:2});
+      h.pos.set(0,0,8);
+      const c=h._findCover(new THREE.Vector3(0,1.4,0),()=>false);
+      assert(c&&Number.isFinite(c.x)&&Number.isFinite(c.z),'应找到合法掩体点');
+      assert(Math.hypot(c.x,c.z)>2,'掩体点应在掩体外侧');
+      this.world.colliders.length=0;
+      for(const v of saved)this.world.colliders.push(v);
+      this.settings.set('botDifficulty','normal');
+      h.takeDamage(9999,'E2E');
+    });
+    await run('radar-draw',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const cv=document.getElementById('radar');
+      this.radar.frame=0;
+      this.radar.update(this.player,this.enemies.list,this.heroes.list,this.pickups,false);
+      const d=cv.getContext('2d').getImageData(0,0,cv.width,cv.height).data;
+      let n=0;for(let i=3;i<d.length;i+=4)if(d[i]>16)n++;
+      assert(n>100,'雷达应绘制非空内容');
+      this.player.yaw+=Math.PI/2;
+      this.radar.frame=0;
+      this.radar.update(this.player,this.enemies.list,this.heroes.list,this.pickups,false);
+      const d2=cv.getContext('2d').getImageData(0,0,cv.width,cv.height).data;
+      let n2=0;for(let i=3;i<d2.length;i+=4)if(d2[i]>16)n2++;
+      assert(n2>100,'旋转后雷达仍应正常绘制');
+      this.radar.frame=0;
+      this.radar.update(this.player,this.enemies.list,this.heroes.list,this.pickups,true);
+      assert(!document.getElementById('radar').classList.contains('hidden'),'雷达节点应存在');
+    });
+    await run('wave-20',()=>{
+      this.ui.sel.mode='waves';this.startGame();
+      for(let i=0;i<20;i++){
+        this.waves.timer=0;
+        this.waves.update(.016);          // 开波
+        this.waves.queue.length=0;
+        this.enemies.clearAll();
+        this.waves.update(.016);          // 清波
+        if(this.state==='upgrade')this._pickUpgrade(0);
+      }
+      assert(this.waves.n>=20,`应推进 20 波,实际 ${this.waves.n}`);
+      assert(this.state==='playing','20 波后应仍处于游玩状态(无软锁)');
+    });
+    await run('boss-spawn',()=>{
+      this.ui.sel.mode='waves';this.startGame();
+      assert(this.waves.composition(5).includes('BOSS'),'第 5 波应含 BOSS');
+      assert(!this.waves.composition(4).includes('BOSS'),'第 4 波不应含 BOSS');
+      this.waves.n=4;this.waves.queue.length=0;this.waves.state='intermission';this.waves.timer=0;
+      this.waves.update(.016);
+      assert(this.waves.n===5,'应进入第 5 波');
+      assert(!!this.waves.modifier,'Boss 波应带词缀');
+      assert(['fog','emp','rush'].includes(this.waves.modifier),'词缀应合法');
+      const boss=this.enemies.spawn('WARDEN',new THREE.Vector3(0,2,-8),{hpScale:4});
+      boss.boss=true;boss.phase=1;
+      this.ui.setBoss(.5,t('boss_name'));
+      const bar=document.getElementById('bossbar');
+      assert(!bar.classList.contains('hidden'),'Boss 血条应显示');
+      assert(document.getElementById('boss-fill').style.width==='50%','Boss 血条比例应正确');
+      this.ui.hideBoss();
+      assert(bar.classList.contains('hidden'),'Boss 血条应可隐藏');
+    });
+    await run('upgrade-apply',()=>{
+      this.ui.sel.mode='waves';this.startGame();
+      const cards=rollUpgrades(this,3);
+      assert(cards.length===3,'应提供 3 张升级卡');
+      assert(new Set(cards.map(c=>c.id)).size===3,'升级卡不应重复');
+      this.openUpgrade();
+      assert(this.state==='upgrade','应进入升级态');
+      assert(!document.getElementById('upgrades').classList.contains('hidden'),'升级面板应显示');
+      applyUpgrade(this,'dmg');
+      assert(this.upgrades.dmg===1&&this.playerDamageMul()>=1.15,'伤害升级应立即生效');
+      this._applyUpgrade('rpm');
+      assert(this.weapon.rpmMul>1,'射速升级应立即生效');
+      assert(this.state==='playing'&&document.getElementById('upgrades').classList.contains('hidden'),'选择后应恢复游戏');
+    });
+    await run('upgrade-max',()=>{
+      this.upgrades={dmg:3,rpm:3,reload:2,speed:2,hp:3,crit:2,pierce:1,regen:2};
+      assert(rollUpgrades(this,3).length===0,'全满级时候选池应为空');
+      assert(!applyUpgrade(this,'dmg'),'满级不应继续叠加');
+      this.startGame();
+    });
+    await run('grenade-count',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const g=this.grenades;
+      assert(g.counts.frag===2&&g.counts.flash===2&&g.counts.smoke===1,'初始手雷应为 2/2/1');
+      assert(g.throw('frag')&&g.counts.frag===1,'破片数量应减少');
+      assert(document.getElementById('g-frag').textContent==='1','HUD 数量应同步');
+      assert(g.throw('frag')&&!g.throw('frag'),'用尽后不能继续投掷');
+      assert(!g.throw('unknown'),'未知类型应被拒绝');
+      g.reset();
+      assert(g.counts.frag===2,'重开后手雷应补满');
+    });
+    await run('grenade-aoe',()=>{
+      this.ui.sel.mode='waves';this.startGame();this.player.god=true;
+      const e=this.enemies.spawn('WASP',new THREE.Vector3(2,1.4,2),{entering:false});
+      const hp=e.hp;
+      this.grenades._explode({type:'frag',pos:new THREE.Vector3(2,1.4,2)});
+      assert(e.hp<hp,'破片 AoE 应伤害范围内敌人');
+      const far=this.enemies.spawn('WASP',new THREE.Vector3(40,1.4,40),{entering:false});
+      const farHp=far.hp;
+      this.grenades._explode({type:'frag',pos:new THREE.Vector3(2,1.4,2)});
+      assert(far.hp===farHp,'范围外敌人不应受伤');
+    });
+    await run('flash-blind',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const h=this.heroes.list.find(x=>x.team==='B');
+      this.grenades._explode({type:'flash',pos:h.pos.clone()});
+      assert(h.blindT>2,'闪光应致盲范围内敌方 bot');
+      this.grenades._explode({type:'smoke',pos:h.pos.clone()});
+      assert(this.grenades.inSmoke(h.pos),'烟雾内判定应为真');
+      assert(!this.grenades.inSmoke(new THREE.Vector3(99,0,99)),'烟雾外应为假');
     });
     await run('anim-state',()=>{
       this.ui.sel.mode='dm';this.startGame();
@@ -1354,7 +1633,7 @@ class Game{
         const hits=this.ray.intersectObjects([e.group],true);
         if(hits.length){
           const part=hits[0].object.userData.part||'body';
-          this.enemies.damage(e,part,this.weapon.def.dmg,hits[0].point);
+          this.enemies.damage(e,part,this.weapon.def.dmg*this.playerDamageMul(),hits[0].point);
           this.stats.hits++;
         }
         await new Promise(r=>setTimeout(r,60));

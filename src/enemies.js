@@ -76,7 +76,7 @@ export class Enemies{
       state:'enter',stateT:0,
       fireT:1+Math.random()*1.5,burst:0,
       orbitDir:Math.random()>.5?1:-1,
-      smokeT:0,flashT:0,dead:false,
+      smokeT:0,flashT:0,blindT:0,dead:false,
       group:new THREE.Group(),
       parts:[],
     };
@@ -269,6 +269,15 @@ export class Enemies{
       }
       // 悬浮起伏
       const bob=Math.sin(time*2.2+e.phase)*.16;
+      // M3-G1:闪光致盲 —— 随机游走且停火
+      if(e.blindT>0){
+        e.blindT-=dt;
+        const ta=this._t3.set(e.pos.x+(Math.random()-.5)*6,e.alt,e.pos.z+(Math.random()-.5)*6);
+        this._steer(e,ta,dt,e.T.speed*.55);
+        e.group.position.set(e.pos.x,e.pos.y+bob,e.pos.z);
+        for(const r of e.rotors)r.rotation.z+=dt*24;
+        continue;
+      }
       const toPlayer=e.pos.distanceTo(eye);
       nearest=Math.min(nearest,toPlayer); // (仅非 decor 走到此处)
       // 红核呼吸脉冲(待机态;REAPER 蓄能会在其分支内覆盖为高亮)

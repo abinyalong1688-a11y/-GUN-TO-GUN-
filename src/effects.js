@@ -163,6 +163,7 @@ export class Effects{
     }
     this.onShake=null;
     this._bloodV=new THREE.Vector3(); // 血雾粒子速度复用(死亡非热路径,避免逐粒子分配)
+    this._smokeP=new THREE.Vector3();this._smokeV=new THREE.Vector3();
   }
 
   tracer(from,dir,dist,{color=0xffd9a0,width=.03,speed=420}={}){
@@ -224,6 +225,18 @@ export class Effects{
     this.smoke.spawn(pos,
       new THREE.Vector3((Math.random()-.5)*.5,.9+(Math.random()*.4),(Math.random()-.5)*.5),
       {life:.45+Math.random()*.25,size:.16,size1:.55,color:[.82,.8,.78],gravity:.5,drag:1.6,alpha:.4});
+  }
+
+  /* M3-G1:烟雾弹持续烟幕(一次性生成长寿命粒子,无逐帧分配) */
+  smokeCloud(pos,radius=4){
+    for(let i=0;i<34;i++){
+      const a=Math.random()*Math.PI*2,rr=Math.random()*radius;
+      const p=this._smokeP||(this._smokeP=new THREE.Vector3());
+      p.set(pos.x+Math.cos(a)*rr,.25+Math.random()*1.3,pos.z+Math.sin(a)*rr);
+      this.smoke.spawn(p,
+        this._smokeV.set((Math.random()-.5)*.3,.18+Math.random()*.3,(Math.random()-.5)*.3),
+        {life:5+Math.random()*3,size:radius*.55,size1:radius*1.15,color:[.46,.47,.49],gravity:-.04,drag:1.4,alpha:.36});
+    }
   }
 
   /* C2:人体中弹血雾(替代人类单位的爆炸效果) */

@@ -31,6 +31,7 @@
       <div id="dm-timer">04:00</div>
       <div id="dm-score"><span class="teamA" id="dm-a">0</span><i>:</i><span class="teamB" id="dm-b">0</span></div>
     </div>
+    <div id="bossbar" class="hidden"><span id="boss-name">守卫者</span><div class="bb-track"><i id="boss-fill"></i></div></div>
     <div id="killfeed"></div>
     <div id="killcard" class="hidden"></div>
     <div id="barks"></div>
@@ -40,6 +41,8 @@
     <div id="xh"><i class="xh-dot"></i><i class="xh-l t"></i><i class="xh-l b"></i><i class="xh-l l"></i><i class="xh-l r"></i></div>
     <div id="scope-overlay"><i class="h"></i><i class="v"></i><i class="dot"></i></div>
     <div id="hitmark"><i></i><i></i><i></i><i></i></div>
+    <div id="grenades"><span data-i="g_frag">G</span> <b id="g-frag">2</b> · <span data-i="g_flash">F</span> <b id="g-flash">2</b> · <span data-i="g_smoke">V</span> <b id="g-smoke">1</b></div>
+    <canvas id="radar" width="160" height="160"></canvas>
     <div id="reload-ring"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="16"></circle><circle id="rr-arc" cx="20" cy="20" r="16"></circle></svg><div id="rr-text" data-i="reload">装填</div></div>
     <div id="weapon-slots">
       <div class="wslot" data-i="0"><b>1</b><span id="ws0">主武器</span></div>
@@ -147,6 +150,28 @@
         <button id="o-menu" class="btn" data-i="main_menu">返回主菜单</button>
         <button id="o-share" class="btn" data-i="o_share">保存战绩</button>
       </div>
+    </div>
+  </div>
+
+  <div id="tutorial" class="overlay hidden">
+    <div class="tut-box">
+      <span class="m-kicker" data-i="tut_kicker">新兵训练</span>
+      <h2 id="tut-title"></h2>
+      <div class="tut-keys" data-i="tut_keys">WASD 移动 · 鼠标瞄准 · 左键开火 · 右键开镜 · R 换弹 · 1 切枪 · G 投雷</div>
+      <div class="tut-actions">
+        <button id="tut-next" class="btn-primary" data-i="tut_next">下一步</button>
+        <button id="tut-skip" class="btn" data-i="tut_skip">跳过训练</button>
+      </div>
+      <div id="tut-count" class="tut-count"></div>
+    </div>
+  </div>
+
+  <div id="upgrades" class="overlay hidden">
+    <div class="upgrade-box">
+      <span class="m-kicker" data-i="upgrade_kicker">补给投放</span>
+      <h2 data-i="upgrade_title">选择一项强化</h2>
+      <div id="upgrade-cards" class="upgrade-cards"></div>
+      <div class="u-hint" data-i="upgrade_hint">点击卡片立即生效 · 可按 1/2/3 快速选择</div>
     </div>
   </div>
 
