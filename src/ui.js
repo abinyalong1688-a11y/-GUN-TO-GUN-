@@ -31,6 +31,8 @@ export class UI{
       killfeed:$('killfeed'),killcard:$('killcard'),barks:$('barks'),board:$('board'),
       dmgDir:$('dmg-dir'),combo:$('combo-callout'),
       mOperators:$('m-operators'),mCamos:$('m-camos'),
+      koth:{bar:$('koth-bar'),name:$('koth-name'),fill:$('koth-fill'),score:$('koth-score')},
+  progress:$('m-progress'),
       wslots:[...document.querySelectorAll('.wslot')],
       grenades:{frag:$('g-frag'),flash:$('g-flash'),smoke:$('g-smoke')},
       scope:$('scope-overlay'),
@@ -65,7 +67,7 @@ export class UI{
     this._pv=new THREE.Vector3(); // 每帧计分浮字复用
     this.dmgDirT=0;this.comboT=0;
     // 菜单选择状态(校验持久化旧值,脏数据回落默认)
-    const MOK=['desert','snow','snowtown','ember'],KOK=['waves','dm'];
+    const MOK=['desert','snow','snowtown','ember'],KOK=['waves','dm','koth'];
     const m=store.get('o07_map'),k=store.get('o07_mode');
     const p=store.get('o07_primary');
     const op=byId(store.get('o07_operator'))||byId(DEFAULT_OP);
@@ -239,6 +241,11 @@ export class UI{
     bind('p-yinv','yInvert');
     bind('p-crouch','crouchToggle');
     bind('p-ads-toggle','adsToggle');
+    bind('p-touchassist','touchAssist');
+    bind('p-colorblind','colorblind');
+    bind('p-reduce-motion','reduceMotion');
+    bind('p-subtitles','subtitles');
+    bind('p-ui-scale','uiScale','p-ui-scale-v',v=>v+'%');
     const reset=el('p-reset');
     if(reset)reset.addEventListener('click',()=>{
       settings.reset();
@@ -248,6 +255,7 @@ export class UI{
     });
     this.syncSettings();
     this.applyCrosshair();
+    this.applyAccessibility();
   }
   syncSettings(){
     const s=this.settings;
@@ -267,6 +275,20 @@ export class UI{
     check('p-yinv',s.get('yInvert'));
     check('p-crouch',s.get('crouchToggle'));
     check('p-ads-toggle',s.get('adsToggle'));
+    check('p-touchassist',s.get('touchAssist'));
+    check('p-colorblind',s.get('colorblind'));
+    check('p-reduce-motion',s.get('reduceMotion'));
+    check('p-subtitles',s.get('subtitles'));
+    set('p-ui-scale',s.get('uiScale'));txt('p-ui-scale-v',s.get('uiScale')+'%');
+  }
+  /* M4-P7:可访问性设置即时生效 */
+  applyAccessibility(){
+    const s=this.settings;
+    if(!s)return;
+    const r=document.documentElement;
+    r.style.setProperty('--ui-zoom',(s.get('uiScale')/100).toFixed(2));
+    r.classList.toggle('cb',!!s.get('colorblind'));
+    r.classList.toggle('reduce-motion',!!s.get('reduceMotion'));
   }
   applyCrosshair(){
     const s=this.settings;
@@ -412,6 +434,7 @@ export class UI{
   bark(name,text,faction){
     const pool=this.barkPool;
     if(!pool||!pool.length)return;
+    if(this.settings&&!this.settings.get('subtitles'))return;
     const slot=pool[this._barkIdx++%pool.length];
     slot.t=2.5;
     slot.el.className='bk'+(faction==='t'?' t':'');
@@ -461,6 +484,20 @@ export class UI{
     if(g.frag)g.frag.textContent=counts.frag;
     if(g.flash)g.flash.textContent=counts.flash;
     if(g.smoke)g.smoke.textContent=counts.smoke;
+  }
+  /* M4-P4:KOTH 占点状态条 */
+  setKoth(owner,ratio,a,b){
+    const k=this.el.koth;
+    if(!k||!k.bar)return;
+    k.bar.classList.remove('hidden');
+    if(k.fill)k.fill.style.width=Math.max(0,Math.min(1,ratio))*100+'%';
+    if(k.fill)k.fill.style.background=owner==='B'?'#ff8a6a':'#7fd4ff';
+    if(k.name)k.name.textContent=t('koth_name');
+    if(k.score)k.score.textContent=`${t('koth_a')} ${a} : ${b} ${t('koth_b')}`;
+  }
+  hideKoth(){
+    const k=this.el.koth;
+    if(k&&k.bar)k.bar.classList.add('hidden');
   }
   /* M3-G4:Boss 血条 */
   setBoss(ratio,name){
@@ -537,6 +574,11 @@ export class UI{
     this.el.oKicker.textContent=kicker||t('kicker_lost');
     this.el.oTitle.textContent=title||t('fail_title');
     this.el.oTitle.className=win?'o-win':'o-lose';
+    // M4-P5:等级进度(由 showOver 调用方注入 save)
+    if(this.el.progress&&this._save&&mvp&&mvp.op){
+      const lv=this._save.levelOf(mvp.op.id);
+      this.el.progress.textContent=`${t('progress_lv')} ${lv.level} · ${lv.xp} XP`;
+    }
     // M2-A4:MVP 立绘 + 代号 + 台词(无立绘时回退首字母)
     if(this.el.oMvp){
       if(mvp&&mvp.op){

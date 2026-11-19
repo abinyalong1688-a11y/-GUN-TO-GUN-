@@ -32,6 +32,7 @@
       <div id="dm-score"><span class="teamA" id="dm-a">0</span><i>:</i><span class="teamB" id="dm-b">0</span></div>
     </div>
     <div id="bossbar" class="hidden"><span id="boss-name">守卫者</span><div class="bb-track"><i id="boss-fill"></i></div></div>
+    <div id="koth-bar" class="hidden"><span id="koth-name">占点争夺</span><div class="bb-track"><i id="koth-fill"></i></div><div id="koth-score"></div></div>
     <div id="killfeed"></div>
     <div id="killcard" class="hidden"></div>
     <div id="barks"></div>
@@ -93,6 +94,7 @@
           <div class="chips" id="m-modes">
             <div class="chip selected" data-mode="waves">无尽波次 · 守卫哨站</div>
             <div class="chip" data-mode="dm">6 人乱斗 · 3v3 对战</div>
+            <div class="chip" data-mode="koth">占点争夺 · 先到 200 分</div>
           </div>
         </div>
       </div>
@@ -123,10 +125,16 @@
       <div class="p-row"><label><span data-i="p_xh_color">准星颜色</span> <input id="p-xh-color" type="color" value="#7fe3ff"></label></div>
       <div class="p-row"><label><span data-i="p_xh_size">准星大小</span> <input id="p-xh-size" type="range" min="2" max="8" step="1" value="4"><span id="p-xh-size-v">4</span></label></div>
       <div class="p-row"><label><span data-i="p_xh_gap">准星间隙</span> <input id="p-xh-gap" type="range" min="0" max="20" step="1" value="6"><span id="p-xh-gap-v">6</span></label></div>
+      <div class="p-row"><label><span data-i="p_ui_scale">界面缩放</span> <input id="p-ui-scale" type="range" min="90" max="120" step="5" value="100"><span id="p-ui-scale-v">100%</span></label></div>
+      <div class="p-row"><label><input id="p-leaderboard" type="checkbox"> <span data-i="p_leaderboard">匿名全球榜(需联网)</span></label></div>
       <div class="p-row checks">
         <label><input id="p-yinv" type="checkbox"> <span data-i="p_yinv">Y 轴反转</span></label>
         <label><input id="p-crouch" type="checkbox"> <span data-i="p_crouch">蹲伏切换</span></label>
         <label><input id="p-ads-toggle" type="checkbox"> <span data-i="p_ads_toggle">ADS 切换</span></label>
+        <label><input id="p-touchassist" type="checkbox"> <span data-i="p_touchassist">触屏辅助瞄准</span></label>
+        <label><input id="p-colorblind" type="checkbox"> <span data-i="p_colorblind">色盲高对比</span></label>
+        <label><input id="p-reduce-motion" type="checkbox"> <span data-i="p_reduce_motion">减弱动态效果</span></label>
+        <label><input id="p-subtitles" type="checkbox"> <span data-i="p_subtitles">台词字幕</span></label>
       </div>
       <div class="p-row"><button id="p-reset" class="btn" data-i="p_reset">恢复默认设置</button></div>
       <div class="p-row btns">
@@ -142,6 +150,7 @@
       <span class="o-kicker" id="o-kicker">信号中断 · SIGNAL LOST</span>
       <h2 id="o-title">哨站失守</h2>
       <div id="o-mvp" class="hidden"></div>
+      <div id="m-progress" class="o-best"></div>
       <div class="o-stats" id="o-stats"></div>
       <div class="o-board" id="o-board"></div>
       <div class="o-best" id="o-best"></div>
@@ -165,6 +174,18 @@
       <div id="tut-count" class="tut-count"></div>
     </div>
   </div>
+
+  <div id="touch-ui" class="hidden">
+    <div id="touch-stick"><i></i></div>
+    <div id="touch-look"></div>
+    <div id="touch-acts">
+      <button data-act="fire">FIRE</button><button data-act="ads">ADS</button>
+      <button data-act="reload">R</button><button data-act="jump">JMP</button>
+      <button data-act="crouch">CR</button><button data-act="switch">SW</button>
+      <button data-act="grenade">G</button>
+    </div>
+  </div>
+  <div id="rotate-hint" class="hidden">请横屏游玩 · Rotate your device</div>
 
   <div id="upgrades" class="overlay hidden">
     <div class="upgrade-box">

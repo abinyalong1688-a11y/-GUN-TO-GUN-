@@ -17,9 +17,14 @@ import {Enemies} from './enemies.js';
 import {Waves} from './waves.js';
 import {HeroTeam} from './heroes.js';
 import {UI} from './ui.js';
+import {SaveSystem} from './save.js';
+import {Leaderboard} from './leaderboard.js';
+import {GameMode,KothMode} from './modes.js';
 import {PortraitRenderer} from './portraits.js';
 import {settings} from './settings.js';
 import {InputManager,KeyboardMouseAdapter} from './input.js';
+import {TouchAdapter} from './input-touch.js';
+import {GamepadAdapter,PAD_MAP} from './input-gamepad.js';
 import {Grenades} from './grenades.js';
 import {Pickups} from './pickups.js';
 import {applyUpgrade,rollUpgrades} from './upgrades.js';
@@ -37,7 +42,7 @@ const TUTORIAL=[
   {zh:'按 1 循环主武器,2 手枪,3 军刀',en:'Press 1 to cycle primaries, 2 sidearm, 3 knife'},
   {zh:'按 G / F / V 投掷破片 / 闪光 / 烟雾',en:'Press G / F / V for frag / flash / smoke'},
 ];
-const VERSION='1.5.0';
+const VERSION='1.6.0';
 const _rsO=new THREE.Vector3(); // 射线-球判定复用向量(热路径零分配)
 
 class Game{
@@ -49,25 +54,33 @@ class Game{
     this.rosterMode=new URLSearchParams(location.search).has('roster');
     this.portraitsMode=new URLSearchParams(location.search).has('portraits');
     this.bossMode=new URLSearchParams(location.search).get('boss')==='1';
-    if(this.shotMode||this.selftestMode||this.e2eMode||this.rosterMode||this.portraitsMode)window.__game=this; // 调试探针:仅测试钩子下暴露
+    this.padMode=new URLSearchParams(location.search).has('pad');
+    this.touchMode=new URLSearchParams(location.search).has('touch')||
+      (typeof matchMedia==='function'&&matchMedia('(pointer:coarse)').matches);
+    if(this.shotMode||this.selftestMode||this.e2eMode||this.rosterMode||this.portraitsMode||this.padMode)window.__game=this; // 调试探针:仅测试钩子下暴露
     this.perf={frames:0,slow:0,maxDt:0}; // 卡顿监控:慢帧(>25ms)计数
+    this.dynScale=1;this._perfAt=0;
     this.state='menu'; // menu | playing | paused | dying | over
     this.keys=new Set();
     this.input={firing:false,ads:false};
     this.fallbackAim=false;
     // S1.4 设置中心:统一读取 + 旧 key 迁移
     this.settings=settings;
+    this.save=new SaveSystem();
+    this.leaderboard=new Leaderboard(settings);
     this.settings.load();
     this.baseHFov=this.settings.get('fov');
     this.sensMul=this.settings.get('sens');
     this.volume=this.settings.get('volume');
-    this.quality=this.settings.get('quality');
+    this.quality=this.touchMode?'low':this.settings.get('quality');
     this.score=0;this.shake=0;this.dyingT=0;this.time=0;
     this.stats={shots:0,hits:0,kills:0,critKills:0,time:0,bestCombo:0};
     this.comboKills=0;this.comboT=0;
     this.playerName='守卫-07';
     this.playerTeam='A';
     this.invulnT=0;this.dmRespawnT=-1;
+    this.spectate={target:null,t:0};this.lastKiller=null;
+    this._specWant=new THREE.Vector3();this._specFrom=new THREE.Vector3();this._specDir=new THREE.Vector3();
     this._boot();
   }
 
@@ -75,6 +88,7 @@ class Game{
   _boot(){
     applyStatic(); // 语言首帧判定后立即替换静态文案(脚本阻塞解析,无闪屏)
     this.ui=new UI();
+    this.ui._save=this.save;
     window.addEventListener('error',e=>{
       const st=(e.error&&e.error.stack||'').split('\n').slice(0,4).join('\n');
       this.ui.debug('ERR '+e.message+'\n'+st,true);
@@ -143,6 +157,7 @@ class Game{
     this.grenades=new Grenades(this,this.scene,this.effects,this.audio,this.ui);
     this.pickups=new Pickups(this,this.scene,this.effects,this.audio,this.ui);
     this.radar=new Radar(document.getElementById('radar'));
+    this.koth=new KothMode(this);
     this.ray=new THREE.Raycaster();
     this.losRay=new THREE.Raycaster();
     // 射击复用向量池:避免每发子弹都 new Vector3 造成 GC 抖动
@@ -173,12 +188,21 @@ class Game{
     });
     $('tut-next').addEventListener('click',()=>{this.audio.uiClick();this.ui.nextTutorial();});
     $('tut-skip').addEventListener('click',()=>{this.audio.uiClick();this.ui.closeTutorial(false);});
+    const lb=$('p-leaderboard');
+    if(lb){
+      lb.checked=this.leaderboard.optIn();
+      lb.addEventListener('change',()=>{
+        this.leaderboard.setEnabled(lb.checked);
+        if(lb.checked)this.leaderboard.submit(this.playerName,this.bestScore||0);
+      });
+    }
     // U1:设置面板统一绑定(灵敏度/FOV/音量/音效/音乐/准星/反转/蹲伏切换/ADS 切换)
     this.ui.bindSettings(this.settings,(path)=>{
       if(path==='fov'||path==='reset')this.baseHFov=this.settings.get('fov');
       if(path==='sens'||path==='reset')this.sensMul=this.settings.get('sens');
       if(path==='volume'||path==='reset')this.volume=this.settings.get('volume');
       if(path==='volume'||path==='sfx'||path==='music'||path==='reset')this._applyAudioSettings();
+      if(path==='uiScale'||path==='colorblind'||path==='reduceMotion'||path==='reset')this.ui.applyAccessibility();
     });
 
     this.bestScore=parseInt(store.get('o07_best','0'))||0;
@@ -210,6 +234,7 @@ class Game{
     else if(this.shotMode==='killcard')this._shotKillcard();
     else if(this.shotMode==='mvp')this._shotMvp();
     else if(this.shotMode==='tutorial')this._shotTutorial();
+    else if(this.shotMode==='spectate')this._shotSpectate();
     if(this.selftestMode)this.selftest();
     if(this.e2eMode)this.e2e();
     if(this.rosterMode)this._debugRoster();
@@ -218,6 +243,11 @@ class Game{
       this.ui.sel.mode='waves';this.startGame();
       this.waves.n=4;this.waves.queue.length=0;
       this.waves.state='intermission';this.waves.timer=.2;
+    }
+    if(this.padMode){
+      console.table(PAD_MAP.axes);
+      console.table(PAD_MAP.buttons);
+      console.log('[PAD] 左摇杆移动 · 右摇杆视角 · RT 开火 · LT 开镜 · A/B/X/Y 动作');
     }
     // 异步 IP 探测:非中国 IP → 英文界面(结果缓存供下次首帧使用);?ipcc= 可强制(测试钩子)
     const forcedIPCC=new URLSearchParams(location.search).get('ipcc');
@@ -291,7 +321,8 @@ class Game{
   }
 
   _applyQuality(){
-    const pr=Math.min(devicePixelRatio||1,this.quality==='high'?2:1);
+    const base=Math.min(devicePixelRatio||1,this.quality==='high'?2:1);
+    const pr=base*(this.dynScale||1);
     this.renderer.setPixelRatio(pr);
     this.composer.setPixelRatio(pr);
     this.bloom.strength=this.quality==='high'?.42:.26;
@@ -312,6 +343,9 @@ class Game{
   _setupInput(){
     this.inputMgr=new InputManager(this);
     this.inputMgr.attach(new KeyboardMouseAdapter(this));
+    this.inputMgr.attach(new GamepadAdapter(this));
+    // M4-P1:触屏设备(或 ?touch=1)挂载虚拟摇杆/视角/动作按钮
+    if(this.touchMode)this.inputMgr.attach(new TouchAdapter(this));
   }
 
   /* 视角输入统一入口(鼠标/触屏/手柄共用) */
@@ -396,6 +430,7 @@ class Game{
     this.playerFaction=hero;
     this.playerCamo=sel.camo||this.camoFor(op);
     this.player.god=false;this.invulnT=0;this.dmRespawnT=-1;
+    this.spectate.target=null;this.lastKiller=null;
     this.grenades.reset();this.pickups.clear();
     this.damageBoostT=0;this.damageBoostMul=1;
     this.empT=0;
@@ -443,6 +478,18 @@ class Game{
       for(const h of this.heroes.list)
         this.dm.scores.set(h.name,{name:h.name,team:h.team,kills:0,deaths:0,me:false,op:h.def});
       this.ui.banner(t('dm_start'),t('dm_sub'));
+      this.audio.waveStart();
+      this.ui.setScore(0);
+    }else if(this.mode==='koth'){
+      this.ui.setDmMode(true);
+      this.waves.state='idle';
+      this.dm={scores:new Map(),timer:300,winKills:999};
+      this.dm.scores.set(this.playerName,{name:this.playerName,team:'A',kills:0,deaths:0,me:true,op:this.playerOperator});
+      this.heroes.setup(this.playerFaction,this.playerName,op.id);
+      for(const h of this.heroes.list)
+        this.dm.scores.set(h.name,{name:h.name,team:h.team,kills:0,deaths:0,me:false,op:h.def});
+      this.koth.start();
+      this.ui.banner(t('mode_koth'),t('koth_name'));
       this.audio.waveStart();
       this.ui.setScore(0);
     }else{
@@ -493,6 +540,7 @@ class Game{
     this.heroes.clear();
     this.grenades.clear();
     this.pickups.clear();
+    this.koth.end();
     this.state='menu';
     this.audio.musicStart('menu');
     this.audio.musicSet(1);
@@ -737,7 +785,7 @@ class Game{
 
   /* ================= 乱斗判定 ================= */
   onHeroKill(killerName,victimHero){
-    if(this.mode!=='dm'||!this.dm)return;
+    if(!this.dm||(this.mode!=='dm'&&this.mode!=='koth'))return;
     const k=this.dm.scores.get(killerName);
     if(k)k.kills++;
     const v=this.dm.scores.get(victimHero.name);
@@ -767,7 +815,15 @@ class Game{
     this.shake=Math.max(this.shake,.1);
     this.audio.hurt();
     this._showDamageDirection(fromPos);
+    if(fromName){
+      const killer=this.heroes.list.find(h=>h.name===fromName);
+      if(killer)this.lastKiller=killer;
+    }
     if(this.player.health<=0){
+      if((this.mode==='dm'||this.mode==='koth')&&fromName){
+        const killer=this.heroes.list.find(h=>h.name===fromName);
+        if(killer&&killer.alive)this.spectate={target:killer,t:2.5};
+      }
       const src=this.heroes.list.find(h=>h.name===fromName);
       this.ui.killCard({
         killer:fromName,victim:this.playerName,
@@ -827,6 +883,45 @@ class Game{
       board:`<table><tr><th>${t('sb_role')}</th><th>${t('sb_faction')}</th><th>${t('sb_kills')}</th><th>${t('sb_deaths')}</th></tr>${rows}</table>`,
     });
     if(document.pointerLockElement)document.exitPointerLock();
+    this._awardProgress();
+  }
+
+  /* M4-P5:结算发放经验/成长 */
+  _awardProgress(){
+    const op=this.playerOperator||byId(DEFAULT_OP);
+    const r=this.save.award({
+      kills:this.stats.kills,wave:this.mode==='waves'?this.waves.n:0,
+      score:this.score,time:this.stats.time,opId:op.id,
+    });
+    this.ui.showBest(this.save.data.stats.bestScore);
+    if(r.leveled)this.ui.banner(`${t('level_up')} LV.${r.level}`,'');
+    else if(this.save.data.daily.done)this.ui.banner(t('daily_ready'),'');
+    return r;
+  }
+
+  /* M4-P4:通用模式结算(KOTH 超时/占满) */
+  _endMode(win){
+    if(this.state==='over')return;
+    this.state='over';
+    this.koth.end();
+    const lab=this._factionLabels();
+    const rows=[...this.dm.scores.values()].sort((x,y)=>y.kills-x.kills)
+      .map(r=>`<tr class="${r.me?'me':''}"><td>${escHTML(r.name)}</td><td><span class="${r.team==='A'?'tA':'tB'}">${r.team==='A'?lab.A:lab.B}</span></td><td>${r.kills}</td><td>${r.deaths}</td></tr>`).join('');
+    const mvpRow=[...this.dm.scores.values()].sort((a,b)=>b.kills-a.kills)[0];
+    const mvp=mvpRow?{name:mvpRow.name,op:mvpRow.op||this.playerOperator,kills:mvpRow.kills,deaths:mvpRow.deaths}:null;
+    const best=parseInt(store.get('o07_best','0'))||0;
+    if(this.score>best)store.set('o07_best',this.score);
+    this.audio.gameOver();
+    this.ui.showOver({
+      title:win?t('win'):t('lose'),win,kicker:t('mode_koth'),
+      stats:{...this.stats,waveLabel:t('dur_label'),wave:t('dur_fmt',{m:Math.floor(this.stats.time/60),s:Math.floor(this.stats.time%60)}),
+        score:this.score,best:Math.max(best,this.score),mvp},
+      board:`<table><tr><th>${t('sb_role')}</th><th>${t('sb_faction')}</th><th>${t('sb_kills')}</th><th>${t('sb_deaths')}</th></tr>${rows}</table>`,
+    });
+    if(document.pointerLockElement)document.exitPointerLock();
+    this._awardProgress();
+    if(this.leaderboard.enabled&&this.leaderboard.endpoint)
+      this.leaderboard.submit(this.playerName,this.score);
   }
 
   /* ================= 主循环 ================= */
@@ -838,7 +933,16 @@ class Game{
     if(dtRaw>.025)this.perf.slow++;
     if(dtRaw>this.perf.maxDt)this.perf.maxDt=dtRaw;
     if(this.perfMode&&this.perf.frames%180===0)
-      console.log(`[PERF] frames=${this.perf.frames} slow=${this.perf.slow} max=${(this.perf.maxDt*1000).toFixed(1)}ms`);
+      console.log(`[PERF] frames=${this.perf.frames} slow=${this.perf.slow} max=${(this.perf.maxDt*1000).toFixed(1)}ms calls=${this.renderer.info.render.calls} tris=${this.renderer.info.render.triangles}`);
+    // M4-P6:动态分辨率(每 60 帧)
+    if(this.perf.frames-this._perfAt>=60){
+      const ratio=this.perf.slow/Math.max(1,this.perf.frames-this._perfAt);
+      let next=this.dynScale;
+      if(ratio>.2)next=Math.max(.7,this.dynScale-.1);
+      else if(ratio<.05)next=Math.min(1,this.dynScale+.05);
+      if(next!==this.dynScale){this.dynScale=next;this._applyQuality();}
+      this.perf.slow=0;this._perfAt=this.perf.frames;
+    }
     this.inputMgr&&this.inputMgr.update(dtRaw);
     if(this.state==='dying'){
       dt*=.3;
@@ -861,7 +965,7 @@ class Game{
     if(active){
       this.stats.time+=dt;
       // dm 重生
-      if(this.mode==='dm'&&this.dmRespawnT>0){
+      if((this.mode==='dm'||this.mode==='koth')&&this.dmRespawnT>0){
         this.dmRespawnT-=dtRaw;
         if(this.dmRespawnT<=0){
           this.player.pos.set((Math.random()-.5)*6,0,24);
@@ -884,14 +988,19 @@ class Game{
       this.player.update(dt,this.input,this.keys,this.time,this.audio);
       this.weapon.update(dt,this.input,this.player,this.camera,this.time,(d,opts)=>this.fire(d,opts));
 
-      if(this.mode==='dm'){
+      if(this.mode==='dm'||this.mode==='koth'){
         this.heroes.update(dt,this.time,(a,b)=>this._los(a,b));
+        if(this.mode==='koth')this.koth.update(dt);
         if(this.dm&&this.state==='playing'){
           this.dm.timer-=dt;
           if(this.dm.timer<=0){
             let a=0,b=0;
             for(const s of this.dm.scores.values()){if(s.team==='A')a+=s.kills;else b+=s.kills;}
-            this._endDm(a,b);
+            if(this.mode==='dm')this._endDm(a,b);
+            else{
+              const win=this.koth.score.A>=this.koth.score.B;
+              this._endMode(win);
+            }
           }
           let a=0,b=0;
           for(const s of this.dm.scores.values()){if(s.team==='A')a+=s.kills;else b+=s.kills;}
@@ -921,8 +1030,9 @@ class Game{
       }
       this.camera.rotation.x+=kick;
       this.camera.rotation.y+=this.weapon.camKickYaw; // 弹道模式水平漂移
-      this.camera.rotation.y+=(Math.random()-.5)*this.shake*.06;
-      this.camera.rotation.z=(Math.random()-.5)*this.shake*.05;
+      const shake=this.settings.get('reduceMotion')?0:this.shake;
+      this.camera.rotation.y+=(Math.random()-.5)*shake*.06;
+      this.camera.rotation.z=(Math.random()-.5)*shake*.05;
       // 相机最终俯仰钳制:后坐/甩枪任何情况都不得越过天顶
       this.camera.rotation.x=Math.max(-1.553,Math.min(1.553,this.camera.rotation.x));
       this.shake=Math.max(0,this.shake-dt*.5);
@@ -934,8 +1044,9 @@ class Game{
       this.ui.hint(this.weapon.ammo<=8&&!this.weapon.reloading&&this.weapon.st.reserve>0?t('hint_reload'):
         (!document.pointerLockElement&&!this.fallbackAim?t('hint_lock'):''));
       if(this.player.alive===false&&this.state==='playing'){
-        if(this.mode==='dm'){
+        if(this.mode==='dm'||this.mode==='koth'){
           this.dmRespawnT=2.5;
+          if(this.lastKiller&&this.lastKiller.alive)this.spectate={target:this.lastKiller,t:2.5};
           this.ui.deathFlash();
           this.audio.hurt();
           if(document.pointerLockElement)document.exitPointerLock();
@@ -950,6 +1061,26 @@ class Game{
       }
       // 相机/开镜状态(可被 e2e 确定性调用)
       this._applyCameraState();
+      // M4-P3:阵亡后观战击杀者 2.5s(射线避免穿墙)
+      if(this.spectate.target){
+        const s=this.spectate,t=s.target;
+        if(t&&t.alive&&this.mode==='dm'){
+          const want=this._specWant.set(t.pos.x,t.pos.y+2.2,t.pos.z-3.5);
+          const from=this._specFrom.set(t.pos.x,t.pos.y+1.2,t.pos.z);
+          const dir=this._specDir.copy(want).sub(from);
+          const len=dir.length();
+          if(len>.01){
+            dir.divideScalar(len);
+            this.losRay.set(from,dir);this.losRay.far=len;
+            const hits=this.losRay.intersectObjects(this.world.shootStatics,false);
+            if(hits.length)want.copy(from).addScaledVector(dir,Math.max(.4,hits[0].distance-.3));
+          }
+          this.camera.position.copy(want);
+          this.camera.lookAt(from);
+          s.t-=dtRaw;
+          if(s.t<=0)s.target=null;
+        }else s.target=null;
+      }
     }else if(this.state==='menu'){
       const t=performance.now()*.001*.06;
       this.camera.position.set(Math.cos(t)*24,6.2+Math.sin(t*.7)*1.2,Math.sin(t)*24);
@@ -1091,6 +1222,15 @@ class Game{
     this.ui.killFeed(this.playerName,'秃鹫','M4A4',true);
     this.ui.setDmScore(7,5,213);
   }
+  /* M4-P3:观战截图 */
+  _shotSpectate(){
+    this.ui.sel.mode='dm';this.startGame();this.fallbackAim=true;this.player.god=false;
+    const killer=this.heroes.list.find(h=>h.team==='B');
+    this.lastKiller=killer;
+    this.player.health=1;this.player.alive=true;
+    this.damagePlayerFromBot(999,killer.name,killer.pos);
+  }
+
   /* M3-G7:新手引导截图 */
   _shotTutorial(){this.ui.showTutorial(TUTORIAL,()=>{});}
 
@@ -1298,6 +1438,71 @@ class Game{
       this.pickups.spawn(this.player.pos.clone(),'boost');
       this.pickups.update(.016,this.player);
       assert(this.damageBoostT>9&&this.playerDamageMul()>=1.4,'强化掉落应提升伤害倍率');
+    });
+    await run('save-migrate',()=>{
+      localStorage.removeItem('o07_save_v2');
+      localStorage.setItem('o07_best','12345');
+      localStorage.setItem('o07_best_wave','7');
+      const s=new SaveSystem();
+      assert(s.data.stats.bestScore===12345,'旧 best 应迁移');
+      assert(s.data.stats.bestWave===7,'旧 best_wave 应迁移');
+      localStorage.removeItem('o07_save_v2');
+      const s2=new SaveSystem();
+      assert(s2.data.stats.bestScore===12345,'迁移结果应重新读回');
+    });
+    await run('xp-award',()=>{
+      const s=new SaveSystem();
+      const before=s.levelOf('frost');
+      const r=s.award({kills:20,wave:10,score:5000,time:200,opId:'frost'});
+      assert(r.xp>0&&r.level>=before.level,'应发放经验');
+      assert(s.data.daily.date&&new SaveSystem().dailyGoals().length===3,'每日挑战应生成 3 项');
+      const s3=new SaveSystem();
+      assert(s3.data.operators.frost.xp===s.data.operators.frost.xp,'经验应持久化');
+    });
+    await run('koth-score',()=>{
+      this.ui.sel.mode='koth';this.startGame();
+      assert(this.koth.active&&this.koth.score.A===0,'KOTH 应初始化');
+      this.player.pos.set(0,0,0);
+      this.player.alive=true;this.player.god=true;
+      for(const h of this.heroes.list)h.alive=false;
+      for(let i=0;i<120;i++)this.koth.update(.016);
+      assert(this.koth.capture>0,'玩家站在点内应积累占点进度');
+      this.koth.score.A=199;this.koth.score.B=0;
+      this.koth.capture=1;this.koth.owner='A';
+      this.koth.update(1);
+      assert(this.state==='over','达到 200 分应结束对局');
+      this.startGame();
+    });
+    await run('accessibility',()=>{
+      this.settings.set('reduceMotion',true);
+      this.settings.set('colorblind',true);
+      this.settings.set('uiScale',110);
+      this.ui.applyAccessibility();
+      assert(document.documentElement.classList.contains('cb'),'色盲模式应生效');
+      assert(document.documentElement.classList.contains('reduce-motion'),'减动模式应生效');
+      assert(document.documentElement.style.getPropertyValue('--ui-zoom')==='1.10','UI 缩放应生效');
+      this.settings.reset();this.ui.applyAccessibility();
+    });
+    await run('spectate',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const killer=this.heroes.list.find(h=>h.team==='B');
+      this.lastKiller=killer;
+      this.player.god=false;this.player.health=1;this.player.alive=true;
+      this.damagePlayerFromBot(999,killer.name,killer.pos);
+      assert(!this.player.alive,'玩家应阵亡');
+      assert(this.spectate.target===killer,'阵亡后应观战击杀者');
+      this.player.alive=true;this.player.health=this.player.maxHealth;this.player.god=true;
+      this.spectate.target=null;
+    });
+    await run('gamepad-map',()=>{
+      const pad=this.inputMgr.adapters.find(a=>a instanceof GamepadAdapter);
+      assert(pad&&typeof pad.poll==='function','应挂载手柄适配器');
+      assert(PAD_MAP.buttons.RT==='fire'&&PAD_MAP.buttons.LT==='ads','手柄映射应正确');
+      assert(PAD_MAP.axes.deadzone===.18,'死区应为 0.18');
+      pad.gamePadButtons=[{pressed:false,value:0},{pressed:false,value:0}];
+      pad.prev={};
+      pad._edge(0,()=>{},()=>{});
+      assert(pad.prev[0]===false,'未按下的按键沿应为 false');
     });
     await run('tutorial',()=>{
       this.ui.showTutorial(TUTORIAL,()=>{});

@@ -11,7 +11,7 @@ export const DEFAULTS={
   crosshair:{color:'#7fe3ff',size:4,gap:6,dot:true},
   yInvert:false,crouchToggle:false,quality:'high',
   radar:true,botDifficulty:'normal',
-  reduceMotion:false,colorblind:false,adsToggle:false,
+  reduceMotion:false,colorblind:false,adsToggle:false,touchAssist:true,subtitles:true,
   uiScale:100,
 };
 
@@ -37,7 +37,7 @@ function sanitize(raw){
     const n=clampNumber(k,raw[k]);
     if(n!=null)d[k]=n;
   }
-  for(const k of ['yInvert','crouchToggle','radar','reduceMotion','colorblind','adsToggle']){
+  for(const k of ['yInvert','crouchToggle','radar','reduceMotion','colorblind','adsToggle','touchAssist','subtitles']){
     if(typeof raw[k]==='boolean')d[k]=raw[k];
   }
   if(raw.quality==='low'||raw.quality==='high')d.quality=raw.quality;
