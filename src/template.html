@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0a0c14">
+<link rel="manifest" href="manifest.webmanifest">
+<title>GUN TO GUN · CS 风格反恐射击</title>
+<style>/*__CSS__*/</style>
+</head>
+<body>
+<div id="app">
+  <div id="gl"></div>
+
+  <div id="dmg-vignette"></div>
+  <div id="lowhp"></div>
+  <div id="flash-white"></div>
+
+  <div id="hud" class="hidden">
+    <div id="topline">
+      <div class="tl-item"><span class="tl-label" data-i="hud_wave">波次</span><span id="ui-wave" class="tl-val">–</span></div>
+      <div class="tl-item"><span class="tl-label" data-i="hud_left">残余敌机</span><span id="ui-remain" class="tl-val">–</span></div>
+      <div class="tl-item right"><span class="tl-label" data-i="hud_score">得分</span><span id="ui-score" class="tl-val">0</span></div>
+    </div>
+    <div id="dm-top" class="hidden">
+      <div id="dm-timer">04:00</div>
+      <div id="dm-score"><span class="teamA" id="dm-a">0</span><i>:</i><span class="teamB" id="dm-b">0</span></div>
+    </div>
+    <div id="killfeed"></div>
+    <div id="board" class="hidden"></div>
+    <div id="xh"><i class="xh-dot"></i><i class="xh-l t"></i><i class="xh-l b"></i><i class="xh-l l"></i><i class="xh-l r"></i></div>
+    <div id="scope-overlay"><i class="h"></i><i class="v"></i><i class="dot"></i></div>
+    <div id="hitmark"><i></i><i></i><i></i><i></i></div>
+    <div id="reload-ring"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="16"></circle><circle id="rr-arc" cx="20" cy="20" r="16"></circle></svg><div id="rr-text" data-i="reload">装填</div></div>
+    <div id="weapon-slots">
+      <div class="wslot" data-i="0"><b>1</b><span id="ws0">主武器</span></div>
+      <div class="wslot" data-i="1"><b>1</b><span id="ws1">AUG</span></div>
+      <div class="wslot" data-i="2"><b>1</b><span id="ws2">AWP</span></div>
+      <div class="wslot" data-i="3"><b>1</b><span id="ws3">MP5</span></div>
+      <div class="wslot" data-i="4"><b>2</b><span id="ws4">沙漠之鹰</span></div>
+      <div class="wslot" data-i="5"><b>3</b><span id="ws5">军刀</span></div>
+    </div>
+    <div id="banner"><div id="banner-main"></div><div id="banner-sub"></div></div>
+    <div id="hint"></div>
+    <div id="pops"></div>
+    <div id="vitals"><div class="lbl" id="hero-role" data-i="hp">生命</div><div id="hpbar"><div id="hpfill"></div></div><div id="ui-hp" class="hpnum">100</div></div>
+    <div id="ammo"><div id="ui-ammo" class="big">30</div><div id="ui-reserve">/ 90</div><div id="ui-weapon">M4A4 · 5.56×45MM</div></div>
+  </div>
+
+  <div id="menu" class="overlay">
+    <div class="menu-box">
+      <span class="m-kicker" data-i="kicker">◆ 单文件 · 离线可玩 · Three.js / WebGL2</span>
+      <h1 class="m-title">GUN <em>TO</em> GUN</h1>
+      <div class="m-sub" data-i="sub">CS 风格反恐射击 · CT vs T · 7 种真实武器 · 真实物理</div>
+
+      <div class="m-grid">
+        <div class="m-sec">
+          <div class="m-sec-t" data-i="callsign">呼号登录</div>
+          <input id="m-name" class="m-input" maxlength="10" placeholder="输入昵称(默认 守卫-07)">
+        </div>
+        <div class="m-sec">
+          <div class="m-sec-t" data-i="sec_role">选择角色 · CS 阵营 · 3D 真人风</div>
+          <div class="hero-cards">
+            <div class="hero-card selected" data-hero="ct">
+              <div class="hc-avatar hc-ct">CT</div>
+              <div class="hc-name">霜华 · CT 特勤</div>
+              <div class="hc-desc">SAS 空勤特勤 · 模特身形女干员 · 长发马尾 · 战术耳麦<br>生命 115 · 主武器 M4A4 · 稳定精准</div>
+            </div>
+            <div class="hero-card" data-hero="t">
+              <div class="hc-avatar hc-t">T</div>
+              <div class="hc-name">赤鸦 · T 佣兵</div>
+              <div class="hc-desc">凤凰线佣兵 · 硬朗帅气突击手 · 挽袖红夹克 · V 型身躯<br>移速 +12% 换弹 +25% · 主武器 AK-47</div>
+            </div>
+          </div>
+        </div>
+        <div class="m-sec">
+          <div class="m-sec-t" data-i="sec_primary">初始主武器(阵营全部 4 把随身,按 1 循环切换)</div>
+          <div class="chips" id="m-primaries"></div>
+        </div>
+        <div class="m-sec">
+          <div class="m-sec-t" data-i="sec_map">作战地图</div>
+          <div class="chips" id="m-maps">
+            <div class="chip selected" data-map="desert">沙漠哨站 · 日落</div>
+            <div class="chip" data-map="snow">雪夜要塞 · 极寒</div>
+            <div class="chip" data-map="snowtown">雪地小镇 · de_snow</div>
+            <div class="chip" data-map="ember">熔岩废都 · 烈焰</div>
+          </div>
+        </div>
+        <div class="m-sec">
+          <div class="m-sec-t" data-i="sec_mode">作战模式</div>
+          <div class="chips" id="m-modes">
+            <div class="chip selected" data-mode="waves">无尽波次 · 守卫哨站</div>
+            <div class="chip" data-mode="dm">6 人乱斗 · 3v3 对战</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="m-row">
+        <select id="m-quality" class="btn">
+          <option value="high">画质:高</option>
+          <option value="low">画质:流畅</option>
+        </select>
+        <button id="m-start" class="btn-primary" data-i="deploy">▶ 开始部署</button>
+      </div>
+      <div class="m-best" id="m-best"></div>
+      <div class="m-sponsor" data-i="sponsor">广告 · <b>AbinStudio</b> AI 短剧制作软件 · <a href="https://app.agents100.com" target="_blank" rel="noopener">app.agents100.com</a></div>
+      <div class="m-foot">空格 跳跃 · Ctrl 蹲伏 · 反复按 1 循环 4 把主武器 · 2 沙漠之鹰 · 3 军刀 · 滚轮顺序切换 · 开镜 · 360° 视野 · <span id="m-ver"></span></div>
+    </div>
+  </div>
+
+  <div id="pause" class="overlay hidden">
+    <div class="pause-box">
+      <span class="m-kicker" data-i="pause_kicker">作战暂停</span>
+      <h2 data-i="pause_title">行动中止</h2>
+      <div class="p-row"><label><span data-i="p_sens">鼠标灵敏度</span> <input id="p-sens" type="range" min="0.3" max="2.2" step="0.05" value="1"><span id="p-sens-v">1.00</span></label></div>
+      <div class="p-row"><label><span data-i="p_vol">音量</span> <input id="p-vol" type="range" min="0" max="1" step="0.05" value="0.8"><span id="p-vol-v">80%</span></label></div>
+      <div class="p-row btns">
+        <button id="p-resume" class="btn-primary" data-i="resume">继续作战</button>
+        <button id="p-restart" class="btn" data-i="redeploy">重新部署</button>
+        <button id="p-menu" class="btn" data-i="main_menu">返回主菜单</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="over" class="overlay hidden">
+    <div class="over-box">
+      <span class="o-kicker" id="o-kicker">信号中断 · SIGNAL LOST</span>
+      <h2 id="o-title">哨站失守</h2>
+      <div class="o-stats" id="o-stats"></div>
+      <div class="o-board" id="o-board"></div>
+      <div class="o-best" id="o-best"></div>
+      <div class="p-row btns">
+        <button id="o-restart" class="btn-primary" data-i="redeploy">重新部署</button>
+        <button id="o-menu" class="btn" data-i="main_menu">返回主菜单</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="debug" class="hidden"></div>
+</div>
+<script>//__JS__</script>
+</body>
+</html>

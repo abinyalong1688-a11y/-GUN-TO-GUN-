@@ -1,0 +1,14 @@
+{
+  "dependencies": {
+    "esbuild": "^0.28.2",
+    "three": "^0.170.0"
+  },
+  "name": "outpost07",
+  "version": "1.2.0",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test",
+    "serve": "node serve.mjs"
+  }
+}

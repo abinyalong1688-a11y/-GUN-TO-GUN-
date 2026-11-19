@@ -1,0 +1,11 @@
+{
+  "name": "GUN TO GUN",
+  "short_name": "GUN TO GUN",
+  "description": "CS-style tactical shooter · CT vs T · 7 real weapons · real physics",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0a0c14",
+  "theme_color": "#0a0c14"
+}
