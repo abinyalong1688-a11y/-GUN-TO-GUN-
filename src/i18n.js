@@ -10,7 +10,7 @@ const STR={
     callsign:'呼号登录',
     name_ph:'输入昵称(默认 守卫-07)',
     default_name:'守卫-07',
-    sec_role:'选择角色 · CS 阵营 · 3D 真人风',
+    sec_role:'选择干员 · CT vs T · 8 名干员',
     sec_primary:'初始主武器(阵营全部 4 把随身,按 1 循环切换)',
     sec_map:'作战地图',
     sec_mode:'作战模式',
@@ -20,6 +20,21 @@ const STR={
     hero_t_desc:'凤凰线佣兵 · 硬朗帅气突击手 · 挽袖红夹克 · V 型身躯<br>移速 +12% 换弹 +25% · 主武器 AK-47',
     hero_ct_role:'CT 特勤 · 霜华',
     hero_t_role:'T 佣兵 · 赤鸦',
+    op_locked:'未解锁',
+    op_select:'选择',
+    op_camo:'迷彩',
+    op_bio:'档案',
+    op_quote:'台词',
+    op_hp:'生命',
+    op_speed:'移速',
+    op_reload:'换弹',
+    camo_default:'标准',
+    camo_desert:'沙漠',
+    camo_snow:'雪地',
+    camo_urban:'城市',
+    camo_locked:'完成第 {n} 波解锁',
+    faction_ct:'CT',
+    faction_t:'T',
     map_desert:'沙漠哨站 · 日落',
     map_snow:'雪夜要塞 · 极寒',
     map_snowtown:'雪地小镇 · de_snow',
@@ -37,6 +52,31 @@ const STR={
     pause_title:'行动中止',
     p_sens:'鼠标灵敏度',
     p_vol:'音量',
+    p_ads:'ADS 灵敏度',
+    p_fov:'视野 FOV',
+    p_sfx:'音效',
+    p_music:'音乐',
+    p_xh_color:'准星颜色',
+    p_xh_size:'准星大小',
+    p_xh_gap:'准星间隙',
+    p_yinv:'Y 轴反转',
+    p_crouch:'蹲伏切换',
+    p_ads_toggle:'ADS 切换',
+    p_reset:'恢复默认设置',
+    sw_update:'新版本已就绪',
+    sw_reload:'立即刷新',
+    combo_2:'双杀',
+    combo_3:'三杀',
+    combo_4:'四杀',
+    combo_5:'暴走',
+    bark_spot:'发现目标,请求支援',
+    bark_reload:'换弹,掩护我',
+    bark_low:'受伤,寻找掩护',
+    bark_down:'我倒下了',
+    mvp_title:'本场 MVP',
+    o_share:'保存战绩',
+    share_hint:'战绩卡已保存',
+    share_footer:'单文件 · 离线可玩 · AbinStudio',
     resume:'继续作战',
     redeploy:'重新部署',
     main_menu:'返回主菜单',
@@ -86,7 +126,7 @@ const STR={
     callsign:'CALLSIGN',
     name_ph:'Enter callsign (default Guard-07)',
     default_name:'Guard-07',
-    sec_role:'OPERATOR · CS Factions · Realistic 3D',
+    sec_role:'OPERATOR · CT vs T · 8 operators',
     sec_primary:'PRIMARY (all 4 carried · press 1 to cycle)',
     sec_map:'MAP',
     sec_mode:'MODE',
@@ -96,6 +136,21 @@ const STR={
     hero_t_desc:'Phoenix-line mercenary · Handsome assault · Rolled-sleeve red jacket · V-frame<br>Speed +12% Reload +25% · Primary AK-47',
     hero_ct_role:'CT OPERATOR · FROST',
     hero_t_role:'T MERCENARY · RAVEN',
+    op_locked:'LOCKED',
+    op_select:'SELECT',
+    op_camo:'CAMO',
+    op_bio:'BIO',
+    op_quote:'QUOTE',
+    op_hp:'HP',
+    op_speed:'SPEED',
+    op_reload:'RELOAD',
+    camo_default:'Standard',
+    camo_desert:'Desert',
+    camo_snow:'Snow',
+    camo_urban:'Urban',
+    camo_locked:'Unlock at wave {n}',
+    faction_ct:'CT',
+    faction_t:'T',
     map_desert:'Desert Outpost · Sunset',
     map_snow:'Snow Keep · Night',
     map_snowtown:'Snow Town · de_snow',
@@ -113,6 +168,31 @@ const STR={
     pause_title:'STAND BY',
     p_sens:'Mouse Sens.',
     p_vol:'Volume',
+    p_ads:'ADS Sens.',
+    p_fov:'Field of View',
+    p_sfx:'SFX',
+    p_music:'Music',
+    p_xh_color:'Crosshair Color',
+    p_xh_size:'Crosshair Size',
+    p_xh_gap:'Crosshair Gap',
+    p_yinv:'Invert Y',
+    p_crouch:'Crouch Toggle',
+    p_ads_toggle:'ADS Toggle',
+    p_reset:'Reset to Defaults',
+    sw_update:'New version ready',
+    sw_reload:'RELOAD NOW',
+    combo_2:'DOUBLE KILL',
+    combo_3:'TRIPLE KILL',
+    combo_4:'QUAD KILL',
+    combo_5:'RAMPAGE',
+    bark_spot:'Contact, need backup',
+    bark_reload:'Reloading, cover me',
+    bark_low:'Hit, taking cover',
+    bark_down:'I\'m down',
+    mvp_title:'MATCH MVP',
+    o_share:'SAVE CARD',
+    share_hint:'Score card saved',
+    share_footer:'Single file · Offline play · AbinStudio',
     resume:'RESUME',
     redeploy:'REDEPLOY',
     main_menu:'MAIN MENU',
@@ -159,7 +239,12 @@ const STR={
 
 export const lang={cur:'zh'};
 
-export function setLang(l){ if(l==='zh'||l==='en')lang.cur=l; }
+export function setLang(l){
+  if(l==='zh'||l==='en')lang.cur=l;
+  if(typeof document!=='undefined'&&document.documentElement){
+    document.documentElement.lang=l==='en'?'en':'zh-CN';
+  }
+}
 export function isEN(){ return lang.cur==='en'; }
 
 /* 取词:支持 {var} 占位 */
@@ -187,6 +272,9 @@ export function t(k,vars){
   }
   if(!l&&typeof navigator!=='undefined'&&navigator.language&&!/^zh/i.test(navigator.language))l='en';
   if(l)lang.cur=l;
+  if(typeof document!=='undefined'&&document.documentElement){
+    document.documentElement.lang=lang.cur==='en'?'en':'zh-CN';
+  }
 })();
 
 /* 异步 IP 探测:非中国 IP → 英文界面;失败静默(默认中文) */
@@ -220,11 +308,5 @@ export function applyStatic(){
   // 地图/模式 chips(按 data 属性取词)
   document.querySelectorAll('#m-maps .chip').forEach(c=>{c.textContent=t('map_'+c.dataset.map);});
   document.querySelectorAll('#m-modes .chip').forEach(c=>{c.textContent=t('mode_'+c.dataset.mode);});
-  // 角色卡(名称 + 描述)
-  document.querySelectorAll('.hero-card').forEach(c=>{
-    const h=c.dataset.hero;
-    const n=c.querySelector('.hc-name'),d=c.querySelector('.hc-desc');
-    if(n)n.textContent=t('hero_'+h+'_name');
-    if(d)d.innerHTML=t('hero_'+h+'_desc');
-  });
+  // 干员卡由 UI.buildOperators() 重建(名称/简介/台词均来自 operators.js)
 }

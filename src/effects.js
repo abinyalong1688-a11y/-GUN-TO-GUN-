@@ -162,6 +162,7 @@ export class Effects{
       scene.add(l);this.lights.push({l,decay:0});
     }
     this.onShake=null;
+    this._bloodV=new THREE.Vector3(); // 血雾粒子速度复用(死亡非热路径,避免逐粒子分配)
   }
 
   tracer(from,dir,dist,{color=0xffd9a0,width=.03,speed=420}={}){
@@ -223,6 +224,16 @@ export class Effects{
     this.smoke.spawn(pos,
       new THREE.Vector3((Math.random()-.5)*.5,.9+(Math.random()*.4),(Math.random()-.5)*.5),
       {life:.45+Math.random()*.25,size:.16,size1:.55,color:[.82,.8,.78],gravity:.5,drag:1.6,alpha:.4});
+  }
+
+  /* C2:人体中弹血雾(替代人类单位的爆炸效果) */
+  bloodPuff(pos,color=0x7a1a12){
+    const r=((color>>16)&255)/255,g=((color>>8)&255)/255,b=(color&255)/255;
+    for(let i=0;i<10;i++){
+      this._bloodV.set((Math.random()-.5)*1.6,.2+Math.random()*1.4,(Math.random()-.5)*1.6);
+      this.dust.spawn(pos,this._bloodV,
+        {life:.35+Math.random()*.35,size:.34,size1:.08,color:[r,g,b],gravity:-2.2,drag:1.6,alpha:.8});
+    }
   }
 
   explosion(pos,power=1){

@@ -288,7 +288,7 @@ export class Enemies{
           if(toPlayer<1.7){
             // 自爆
             player.damage(16*Math.max(.4,1-toPlayer/8),time);
-            if(this.onPlayerHit)this.onPlayerHit();
+            if(this.onPlayerHit)this.onPlayerHit(e.pos);
             e.dead=false;
             this.kill(e,false,true);
             continue;
@@ -381,7 +381,7 @@ export class Enemies{
       const chest=this._t1.copy(eye);chest.y-=.35;
       if(b.mesh.position.distanceTo(chest)<.55&&player.alive){
         player.damage(b.dmg,time);
-        if(this.onPlayerHit)this.onPlayerHit();
+        if(this.onPlayerHit)this.onPlayerHit(b.mesh.position);
         kill=true;
       }else{
         // 打掩体

@@ -1,13 +1,17 @@
-// heroes.js —— 3D 真人风阵营角色(第三人称):
-//   女性 CT 特勤「霜华」:模特级身形 · 长发马尾 · 精致五官 · 战术耳麦
-//   男性 T 佣兵「赤鸦」:硬朗帅气 · V 型身躯 · 挽袖红夹克 · 短发
-// + 3v3 人机乱斗对战(走位/点射扫射风格/重生/名牌)
+// heroes.js —— 3D 真人风阵营角色(第三人称)+ 3v3 人机乱斗:
+//   外观由 character.js 按干员定义构建(8 名干员 / 迷彩 / 剪影);
+//   战斗风格按阵营(CT 稳定点射 / T 猛烈扫射),死亡倒地 → 尸体淡出 → 重生。
 import * as THREE from 'three';
-import {isEN} from './i18n.js';
+import {t,isEN} from './i18n.js';
+import {byId,byFaction,DEFAULT_OP} from './operators.js';
+import {buildOperatorMesh,fadeMaterials} from './character.js';
 
+/* 兼容层:旧逻辑按阵营读取基础属性,数据源统一在 operators.js */
+const _opCT=byId('frost'),_opT=byId('raven');
+const _botSpeed=op=>Math.round(5.2*op.speedMul*10)/10;
 export const HERO_DEFS={
-  ct:{label:'霜华 · CT 特勤',hp:115,speed:5.2,gender:'f'},
-  t:{label:'赤鸦 · T 佣兵',hp:100,speed:5.8,gender:'m'},
+  ct:{label:`${_opCT.name.zh} · CT 特勤`,hp:_opCT.hp,speed:_botSpeed(_opCT),gender:_opCT.gender},
+  t:{label:`${_opT.name.zh} · T 佣兵`,hp:_opT.hp,speed:_botSpeed(_opT),gender:_opT.gender},
 };
 const FACTION_HEX={ct:'#7fd4ff',t:'#ff8a6a'};
 /* Bot 战斗风格:CT 稳定点射,T 猛烈扫射 */
@@ -15,13 +19,12 @@ const BOT_PROFILE={
   ct:{burst:3,burstT:.13,pause:1.2,missK:1.0,dmgP:6,dmgH:12,range:[7,16]},
   t:{burst:5,burstT:.11,pause:1.5,missK:1.35,dmgP:9,dmgH:15,range:[6,13]},
 };
-/* 名册(性别混编,双方阵营都有男女干员;中英呼号) */
-const BOT_NAMES={
-  ct:[{n:'夜莺',nEn:'Nightingale',g:'f'},{n:'雪狼',nEn:'Snowwolf',g:'m'},{n:'雨燕',nEn:'Swift',g:'f'},{n:'雷豹',nEn:'Thunder',g:'m'}],
-  t:[{n:'秃鹫',nEn:'Vulture',g:'m'},{n:'火狐',nEn:'Fox',g:'f'},{n:'豺狼',nEn:'Jackal',g:'m'},{n:'黑蛇',nEn:'Viper',g:'f'}],
-};
 
 let BID=0;
+
+/* M2-A5:名牌血条 —— 两片几何模块级共享,材质每 bot 独立 */
+const TAG_BG_GEO=new THREE.PlaneGeometry(.62,.075);
+const TAG_BAR_GEO=new THREE.PlaneGeometry(.58,.05).translate(.29,0,0);
 
 function makeNameTag(name,faction){
   const c=document.createElement('canvas');c.width=256;c.height=64;
@@ -35,223 +38,104 @@ function makeNameTag(name,faction){
   t.colorSpace=THREE.SRGBColorSpace;
   const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true,depthTest:true}));
   sp.scale.set(1.9,.44,1);
-  sp.position.y=2.0;
-  return sp;
+  sp.userData.tex=t;
+  // 血条挂在名字上方(y+.26),bg 与 fill 的 z 错开避免 z-fighting
+  const group=new THREE.Group();
+  const bg=new THREE.Mesh(TAG_BG_GEO,new THREE.MeshBasicMaterial({
+    color:0x0a0f18,transparent:true,opacity:.75,depthTest:true,depthWrite:false}));
+  bg.position.set(0,.26,.005);
+  const bar=new THREE.Mesh(TAG_BAR_GEO,new THREE.MeshBasicMaterial({
+    color:FACTION_HEX[faction]==='#ff8a6a'?0xff8a6a:0x7fd4ff,
+    transparent:true,opacity:.95,depthTest:true,depthWrite:false}));
+  bar.position.set(-.29,.26,.012);
+  group.add(sp,bg,bar);
+  return {group,sprite:sp,bar,bg,tex:t};
 }
 
 export class HeroBot{
-  constructor(game,scene,assets,effects,audio,ui,{hero,team,name,gender}){
+  constructor(game,scene,assets,effects,audio,ui,{operator,team,name}){
     this.game=game;this.scene=scene;this.assets=assets;this.fx=effects;this.audio=audio;this.ui=ui;
     this.id=++BID;
-    this.hero=hero;this.team=team;this.name=name;
-    const D=HERO_DEFS[hero];
-    this.gender=gender||D.gender||'f';
-    this.hp=D.hp;this.maxHp=D.hp;this.speed=D.speed;
+    this.def=operator;
+    this.opId=operator.id;
+    this.faction=operator.faction;
+    this.hero=operator.faction;      // 兼容字段:战斗风格/阵营标签按 faction
+    this.team=team;this.name=name;
+    this.gender=operator.gender;
+    this.hp=operator.hp;this.maxHp=operator.hp;
+    this.speed=_botSpeed(operator);
     this.pos=new THREE.Vector3();
     this.vel=new THREE.Vector3();
     this.yaw=0;this.alive=true;
+    this.state='active';             // active | dying | dead
+    this.deathT=0;this.respawnT=0;
     this.fireT=1+Math.random();this.burst=0;
-    this.respawnT=0;
     this.flashT=0;this.strafeDir=Math.random()>.5?1:-1;this.strafeT=2+Math.random()*2;
     this.walkT=0;
+    /* M2-A1 动画状态机 */
+    this.animState='idle';this.animT=0;
+    this.aimPitch=0;this.aimYaw=0;
+    this.recoilKick=0;this.reloadT=0;this.hitT=0;this.hitDir=1;
+    this.magSize=operator.rifle==='awp'?10:30;this.ammo=this.magSize;
+    this.moving=false;this.hasTarget=false;
+    /* M2-A2 无线电台词冷却(错开开局,避免刷屏) */
+    this._barkT=1+Math.random()*4;this._lowBarked=false;
+    this.baseArmR=[0,0,0];this.baseArmL=[0,0,0];this.baseTorsoY=0;
     this._eyeT=new THREE.Vector3();this._tPosT=new THREE.Vector3(); // 热路径向量复用
     this._fromT=new THREE.Vector3();this._dirT=new THREE.Vector3();
-    this.group=new THREE.Group();
+    this._rifleVel=new THREE.Vector3();this._rifleSpin=new THREE.Vector3();
+    this.rifleFalling=false;this.rifleHome=null;
+    this.nameTag=null;
     this.buildBody();
-    this.group.add(makeNameTag(name,hero));
     scene.add(this.group);
   }
 
-  /* ============ 通用网格工具 ============ */
-  _mesh(parent,geo,mat,x,y,z,rx=0,ry=0,rz=0,sx=1,sy=1,sz=1){
-    const m=new THREE.Mesh(geo,mat.clone());
-    m.position.set(x,y,z);m.rotation.set(rx,ry,rz);m.scale.set(sx,sy,sz);
-    m.castShadow=true;
-    parent.add(m);return m;
-  }
-  _sphere(r,ws=18,hs=14){return new THREE.SphereGeometry(r,ws,hs);}
-  _cyl(rt,rb,h,seg=12){return new THREE.CylinderGeometry(rt,rb,h,seg);}
-  _box(w,h,d){return new THREE.BoxGeometry(w,h,d);}
-  _cone(r,h,seg=10){return new THREE.ConeGeometry(r,h,seg);}
-  _torus(r,t,rs=8,ts=20,arc=Math.PI*2){return new THREE.TorusGeometry(r,t,rs,ts,arc);}
-
-  /* 人脸(头心局部坐标,朝向 +z):眉 / 眼睑+眼白+虹膜 / 鼻 / 唇 / 耳 */
-  _makeFace(H,M,{fem}){
-    const skin=fem?M.skinF:M.skinM;
-    for(const s of[-1,1]){
-      this._mesh(H,this._sphere(.018,10,8),M.sclera,s*.041,.016,.086,0,0,0,.95,.62,.5);
-      this._mesh(H,this._sphere(.0125,10,8),M.iris,s*.041,.016,.0995);
-      // 上眼睑:肤色压住眼白上缘,形成自然眼型
-      this._mesh(H,this._box(.05,.016,.02),skin,s*.041,.034,.088,0,0,-s*(fem?.1:.06));
-      const bw=fem?{w:.04,h:.007,a:.22}:{w:.048,h:.011,a:.1};
-      this._mesh(H,this._box(bw.w,bw.h,.012),M.brow,s*.043,.058,.087,0,0,-s*bw.a);
-    }
-    this._mesh(H,this._cone(.011,.044,8),skin,0,-.008,.098,Math.PI/2);
-    if(fem)this._mesh(H,this._box(.038,.011,.013),M.lipsF,0,-.048,.09,0,0,0,1,1,.9);
-    else this._mesh(H,this._box(.034,.008,.012),M.lipsM,0,-.048,.088);
-    for(const s of[-1,1])this._mesh(H,this._sphere(.02,8,8),skin,s*.094,0,-.003,0,0,0,.5,1,.7);
-  }
-
-  /* 步枪(枪口朝 +z = 角色面向;kind: 'ak47'|'m4a4') */
-  _mkRifle(kind){
-    const M=this.assets.mats;
-    const g=new THREE.Group();
-    const wood=kind==='ak47';
-    this._mesh(g,this._box(.05,.075,.34),M.gunDark,0,0,-.02);                    // 机匣
-    this._mesh(g,this._box(.046,.05,.16),wood?M.gunWood:M.gunPoly,0,.005,.14);   // 护木
-    this._mesh(g,this._cyl(.011,.011,.18,10),M.gunDark,0,.018,.28,Math.PI/2);    // 枪管
-    this._mesh(g,this._box(.014,.05,.012),M.gunDark,0,.045,.34);                 // 准星
-    this._mesh(g,this._box(.04,.06,.13),wood?M.gunWood:M.gunPoly,0,-.008,-.24);  // 枪托
-    this._mesh(g,this._box(.028,.10,.05),M.gunDark,0,-.075,.02,wood?.4:.15);     // 弹匣
-    return g;
-  }
-
-  /* ============ 女性模特级身形(1.75m,腿长过半) ============ */
-  _buildFemale(M,look){
-    const g=this.group;
-    const skin=M.skinF,jacket=look.jacket,armor=look.plate,hair=M.hairF,boot=M.bootDark,glove=M.gloveDark;
-
-    /* --- 头(中心 1.60):椭圆颅骨 + 精致五官 --- */
-    const H=new THREE.Group();H.position.set(0,1.60,0);g.add(H);this.headY=1.60;
-    this._mesh(H,this._sphere(.102,20,16),skin,0,0,.004,0,0,0,.95,1.12,1.0);
-    this._makeFace(H,M,{fem:true});
-    // 发型:顶盖 + 后脑 + 刘海 + 侧长发 + 低马尾(随步态摆动)
-    this._mesh(H,this._sphere(.107,18,12),hair,0,.03,-.01,0,0,0,1.04,.88,1.0);
-    this._mesh(H,this._sphere(.104,16,12),hair,0,-.01,-.045,0,0,0,1.1,.95,.9);
-    this._mesh(H,this._box(.15,.05,.038),hair,0,.066,.068,-.5);
-    this._mesh(H,this._sphere(.026,8,8),hair,-.082,-.06,.045,0,0,.12,1,2.6,.8);
-    this._mesh(H,this._sphere(.026,8,8),hair,.082,-.06,.045,0,0,-.12,1,2.6,.8);
-    const pony=new THREE.Group();pony.position.set(0,-.02,-.11);H.add(pony);this.pony=pony;
-    this._mesh(pony,this._sphere(.048,10,8),hair,0,-.01,-.02,0,0,0,1,1.3,1);
-    this._mesh(pony,this._sphere(.037,10,8),hair,0,-.12,-.05,0,0,0,1,1.5,1);
-    this._mesh(pony,this._sphere(.027,10,8),hair,0,-.25,-.04,0,0,0,1,1.6,1);
-    // 战术耳麦 + 通话麦(露出面容与发型,干员气质)
-    this._mesh(H,this._torus(.104,.007,8,20,Math.PI),M.gunDark,0,.005,0);
-    for(const s of[-1,1])this._mesh(H,this._cyl(.026,.026,.016,10),M.gunDark,s*.10,0,0,0,0,Math.PI/2);
-    this._mesh(H,this._box(.01,.01,.065),M.gunDark,-.095,-.045,.035,.3,.4,0);
-
-    /* --- 颈 + 躯干(Lathe 曲面:肩-胸-腰-臀曲线,scale.z=0.72 椭圆截面) --- */
-    this._mesh(g,this._cyl(.03,.035,.09),skin,0,1.47,0);
-    const prof=[[.001,.845],[.128,.86],[.134,.93],[.098,1.06],[.124,1.16],[.15,1.32],[.146,1.40],[.092,1.455]];
-    const torso=new THREE.Mesh(new THREE.LatheGeometry(prof.map(([r,y])=>new THREE.Vector2(r,y)),24),jacket.clone());
-    torso.scale.z=.72;torso.castShadow=true;g.add(torso);this.torso=torso;
-    this._mesh(g,this._sphere(.048,12,10),jacket,-.05,1.30,.078,0,0,0,1,.85,.7);
-    this._mesh(g,this._sphere(.048,12,10),jacket,.05,1.30,.078,0,0,0,1,.85,.7);
-    // 腰带 / 背心插板(窄版,露出夹克色)/ 弹匣袋 / 对讲机
-    this._mesh(g,this._cyl(.109,.109,.03,20),M.gunDark,0,.945,0,0,0,0,1,1,.72);
-    this._mesh(g,this._box(.22,.19,.03),armor,0,1.27,.10);
-    this._mesh(g,this._box(.22,.19,.03),armor,0,1.27,-.082);
-    this._mesh(g,this._box(.045,.06,.02),M.gunDark,-.045,1.21,.118);
-    this._mesh(g,this._box(.045,.06,.02),M.gunDark,.045,1.21,.118);
-    this._mesh(g,this._box(.032,.055,.016),M.gunDark,-.088,1.16,.105,0,0,-.2);
-
-    /* --- 臂(袖+露肤前臂+战术手套,持枪锁定) --- */
-    const mkArm=side=>{
-      const p=new THREE.Group();p.position.set(side*.148,1.395,0);g.add(p);
-      this._mesh(p,this._cyl(.045,.038,.24),jacket,0,-.115,0);
-      this._mesh(p,this._cyl(.034,.028,.17),skin,0,-.29,.015);
-      this._mesh(p,this._sphere(.033,10,8),glove,0,-.385,.03);
-      return p;
-    };
-    this.armL=mkArm(-1);this.armR=mkArm(1);
-
-    /* --- 腿(长腿比例:髋 .90 落地,占身高 51%) --- */
-    const mkLeg=side=>{
-      const p=new THREE.Group();p.position.set(side*.082,.90,0);g.add(p);
-      this._mesh(p,this._cyl(.068,.054,.44),jacket,0,-.22,0);
-      this._mesh(p,this._cyl(.05,.043,.36),jacket,0,-.585,.01);
-      this._mesh(p,this._box(.082,.082,.20),boot,0,-.855,.03);
-      return p;
-    };
-    this.legL=mkLeg(-1);this.legR=mkLeg(1);
-
-    /* --- 主武器(阵营制式,枪口 +z 前向,gunTip 挂枪身) --- */
-    const rifle=this._mkRifle(look.rifle);
-    rifle.position.set(.10,1.20,.16);
-    rifle.scale.setScalar(.94);
-    g.add(rifle);
-    this.gunTip=new THREE.Object3D();
-    this.gunTip.position.set(0,.02,.44);
-    rifle.add(this.gunTip);
-    this.armR.rotation.set(-.72,0,-.04);
-    this.armL.rotation.set(-.85,.35,.5);
-  }
-
-  /* ============ 男性硬朗帅气(1.80m,V 型身躯) ============ */
-  _buildMale(M,look){
-    const g=this.group;
-    const skin=M.skinM,jacket=look.jacket,pants=look.pants,hair=M.hairM,boot=M.bootDark,glove=M.gloveDark;
-
-    /* --- 头(中心 1.64):方正颅骨 + 方下巴 + 粗直眉 --- */
-    const H=new THREE.Group();H.position.set(0,1.64,0);g.add(H);this.headY=1.64;
-    this._mesh(H,this._sphere(.106,20,16),skin,0,0,.004,0,0,0,1.0,1.1,1.02);
-    this._mesh(H,this._box(.06,.04,.06),skin,0,-.065,.028);          // 方下颌
-    this._makeFace(H,M,{fem:false});
-    // 短发:贴合头型的短发顶盖(前缘微翘不压眉)+ 后脑铲青
-    this._mesh(H,this._sphere(.114,18,12),hair,0,.022,-.01,-.18,0,0,1.03,.94,1.05);
-    this._mesh(H,this._sphere(.095,14,10),hair,0,-.005,-.07,0,0,0,1.12,.72,.6);
-
-    /* --- 颈 + 躯干(宽肩窄腰 V 型) --- */
-    this._mesh(g,this._cyl(.045,.052,.10),skin,0,1.50,0);
-    const prof=[[.001,.86],[.145,.88],[.128,.98],[.125,1.06],[.148,1.20],[.168,1.34],[.166,1.43],[.095,1.49]];
-    const torso=new THREE.Mesh(new THREE.LatheGeometry(prof.map(([r,y])=>new THREE.Vector2(r,y)),24),jacket.clone());
-    torso.scale.z=.74;torso.castShadow=true;g.add(torso);this.torso=torso;
-    // 衣领;T 阵营开襟+黑 T+X 胸挂,CT 合领+前拉链
-    this._mesh(g,this._box(.16,.04,.02),jacket,0,1.475,.115);
-    if(this.hero!=='ct'){
-      this._mesh(g,this._box(.11,.16,.02),M.clothDark,0,1.36,.127);
-      this._mesh(g,this._box(.045,.36,.018),M.tRig,-.075,1.22,.128,0,0,.45);
-      this._mesh(g,this._box(.045,.36,.018),M.tRig,.075,1.22,.128,0,0,-.45);
-    }else{
-      this._mesh(g,this._box(.014,.3,.014),M.clothDark,0,1.30,.122);
-    }
-
-    /* --- 臂(宽肩厚臂,挽袖露肤,战术手套) --- */
-    const mkArm=side=>{
-      const p=new THREE.Group();p.position.set(side*.165,1.42,0);g.add(p);
-      this._mesh(p,this._cyl(.055,.047,.25),jacket,0,-.12,0);
-      this._mesh(p,this._cyl(.045,.038,.18),skin,0,-.30,.02);
-      this._mesh(p,this._sphere(.043,12,10),glove,0,-.40,.03);
-      return p;
-    };
-    this.armL=mkArm(-1);this.armR=mkArm(1);
-
-    /* --- 腿 --- */
-    const mkLeg=side=>{
-      const p=new THREE.Group();p.position.set(side*.088,.88,0);g.add(p);
-      this._mesh(p,this._cyl(.08,.058,.42),pants,0,-.21,0);
-      this._mesh(p,this._cyl(.056,.048,.38),pants,0,-.55,.01);
-      this._mesh(p,this._box(.095,.09,.215),boot,0,-.835,.035);
-      return p;
-    };
-    this.legL=mkLeg(-1);this.legR=mkLeg(1);
-
-    /* --- 主武器(阵营制式,枪口 +z) --- */
-    const rifle=this._mkRifle(look.rifle);
-    rifle.position.set(.10,1.19,.16);
-    g.add(rifle);
-    this.gunTip=new THREE.Object3D();
-    this.gunTip.position.set(0,.02,.44);
-    rifle.add(this.gunTip);
-    this.armR.rotation.set(-.70,0,-.04);
-    this.armL.rotation.set(-.82,.35,.5);
-  }
-
+  /* 角色网格由 character.js 构建(几何共享 / 每角色一套材质) */
   buildBody(){
-    const M=this.assets.mats;
-    // 服装/枪械跟随阵营(同阵营男女着装统一,队伍辨识清晰)
-    const ct=this.hero==='ct';
-    const look={
-      jacket:ct?M.ctFatigue:M.tJacket,
-      pants:ct?M.ctFatigue:M.tPants,
-      plate:ct?M.ctArmor:M.tRig,
-      rifle:ct?'m4a4':'ak47',
-    };
-    if(this.gender==='f')this._buildFemale(M,look);
-    else this._buildMale(M,look);
-    // 收集本角色克隆材质(受击闪白只影响自己)
-    this.flashable=[];
-    this.group.traverse(o=>{if(o.isMesh&&o.material&&o.material.emissive)this.flashable.push(o.material);});
+    const built=buildOperatorMesh(this.assets,this.def,{camo:this.def.camo||'default'});
+    this.group=built.group;
+    this.parts=built.parts;
+    this.materials=built.materials;
+    this.headY=built.parts.headY;
+    this.torso=built.parts.torso;
+    this.armL=built.parts.armL;this.armR=built.parts.armR;
+    this.legL=built.parts.legL;this.legR=built.parts.legR;
+    this.pony=built.parts.pony;
+    this.gunTip=built.parts.gunTip;
+    // 记录初始持枪姿态:动画在此基准上偏移,避免 T-pose
+    if(this.armR)this.baseArmR=[this.armR.rotation.x,this.armR.rotation.y,this.armR.rotation.z];
+    if(this.armL)this.baseArmL=[this.armL.rotation.x,this.armL.rotation.y,this.armL.rotation.z];
+    this.baseTorsoY=this.torso?this.torso.position.y:0;
+    // 受击闪白只影响本角色
+    this.flashable=this.materials.filter(m=>m.emissive);
+    // 名牌挂点(角色头顶);setOperator 重建时复用旧名牌
+    if(!this.nameTag)this.nameTag=makeNameTag(this.name,this.faction);
+    built.parts.nameTagAnchor.add(this.nameTag.group);
+  }
+
+  /* 调试/换装:原地替换干员外观与属性(C1 ?op= / C5 迷彩预览共用) */
+  setOperator(op){
+    if(!op)return false;
+    const tag=this.nameTag;
+    if(tag&&tag.group.parent)tag.group.parent.remove(tag.group);
+    if(this.parts.rifle&&this.parts.rifle.parent===this.scene)this.scene.remove(this.parts.rifle);
+    this.scene.remove(this.group);
+    for(const m of this.materials)m.dispose();
+    this.def=op;this.opId=op.id;this.faction=op.faction;this.hero=op.faction;
+    this.gender=op.gender;
+    this.hp=this.maxHp=op.hp;
+    this.speed=_botSpeed(op);
+    this.state='active';this.alive=true;this.deathT=0;this.respawnT=0;
+    this.animState='idle';this.animT=0;this.recoilKick=0;this.reloadT=0;this.hitT=0;
+    this._barkT=1+Math.random()*3;this._lowBarked=false;
+    this.magSize=op.rifle==='awp'?10:30;this.ammo=this.magSize;
+    if(tag&&tag.bar)tag.bar.scale.x=1;
+    this.rifleHome=null;this.rifleFalling=false;
+    this.buildBody();
+    if(tag)this.parts.nameTagAnchor.add(tag.group);
+    this.scene.add(this.group);
+    this.group.position.copy(this.pos);this.group.rotation.set(0,this.yaw,0);
+    return true;
   }
 
   place(pos,yaw){
@@ -270,7 +154,11 @@ export class HeroBot{
   takeDamage(n,fromName){
     if(!this.alive)return -1;
     this.hp-=n;
+    if(this.nameTag&&this.nameTag.bar)
+      this.nameTag.bar.scale.x=Math.max(.001,Math.min(1,this.hp/this.maxHp));
     this.flashT=.09;
+    this.hitT=.35;this.hitDir=Math.random()>.5?1:-1;
+    if(this.hp/this.maxHp<.35&&!this._lowBarked&&this.bark('bark_low'))this._lowBarked=true;
     for(const m of this.flashable){m.emissive.setHex(0xffffff);m.emissiveIntensity=.6;}
     if(this.hp<=0){
       this.die(fromName);
@@ -279,17 +167,69 @@ export class HeroBot{
     return this.hp;
   }
 
+  /* C2:死亡表现 —— 倒地 0.7s → 尸体淡出 → 5.5s 重生;不再爆炸 */
   die(byName){
+    if(!this.alive)return;
     this.alive=false;
-    this.respawnT=3.5;
+    this.state='dying';
+    this.deathT=0;
+    this.respawnT=5.5;
     this.game.onHeroKill(byName,this);
-    this.fx.explosion(new THREE.Vector3(this.pos.x,this.pos.y+1,this.pos.z),.5);
-    this.group.rotation.x=-Math.PI/2.2;
-    this.group.position.y=this.pos.y+.3;
+    this.bark('bark_down',true);
+    this.fx.bloodPuff(new THREE.Vector3(this.pos.x,this.pos.y+1.1,this.pos.z));
+    this.dropRifle();
+  }
+
+  dropRifle(){
+    const r=this.parts.rifle;
+    if(!r||this.rifleFalling)return;
+    this.rifleHome=this.rifleHome||{
+      parent:r.parent,
+      position:r.position.clone(),
+      rotation:r.rotation.clone(),
+      scale:r.scale.clone(),
+    };
+    this.scene.attach(r);
+    this._rifleVel.set((Math.random()-.5)*1.2,1.6+Math.random(),(Math.random()-.5)*1.2);
+    this._rifleSpin.set((Math.random()-.5)*6,(Math.random()-.5)*6,(Math.random()-.5)*6);
+    this.rifleFalling=true;
+  }
+
+  _updateDroppedRifle(dt){
+    if(!this.rifleFalling)return;
+    const r=this.parts.rifle;
+    if(!r)return;
+    this._rifleVel.y-=9.8*dt;
+    r.position.addScaledVector(this._rifleVel,dt);
+    r.rotation.x+=this._rifleSpin.x*dt;
+    r.rotation.y+=this._rifleSpin.y*dt;
+    r.rotation.z+=this._rifleSpin.z*dt;
+    if(r.position.y<=.06){
+      r.position.y=.06;
+      this._rifleVel.set(0,0,0);
+      this.rifleFalling=false;
+    }
+  }
+
+  _restoreRifle(){
+    const r=this.parts.rifle,h=this.rifleHome;
+    if(!r||!h)return;
+    h.parent.add(r);
+    r.position.copy(h.position);
+    r.rotation.copy(h.rotation);
+    r.scale.copy(h.scale);
+    this.rifleFalling=false;
   }
 
   respawn(){
-    this.alive=true;this.hp=this.maxHp;
+    this._restoreRifle();
+    fadeMaterials(this.materials,1);
+    this.alive=true;this.state='active';this.deathT=0;this.hp=this.maxHp;
+    this.animState='idle';this.animT=0;this.recoilKick=0;this.reloadT=0;this.hitT=0;
+    this.ammo=this.magSize;this.burst=0;this.flashT=0;this._lowBarked=false;
+    if(this.nameTag&&this.nameTag.bar)this.nameTag.bar.scale.x=1;
+    if(this.torso)this.torso.position.y=this.baseTorsoY;
+    if(this.parts.head)this.parts.head.rotation.x=0;
     this.group.rotation.x=0;
     const base=this.team==='A'?new THREE.Vector3(0,0,24):new THREE.Vector3(0,0,-24);
     this.place(base.clone().add(new THREE.Vector3((Math.random()-.5)*8,0,(Math.random()-.5)*8)),
@@ -315,18 +255,44 @@ export class HeroBot{
   }
 
   update(dt,time,losCheck){
-    if(!this.alive){
-      this.respawnT-=dt;
-      this.group.position.y=Math.max(this.pos.y+.3-dt*.2,this.pos.y+.1);
-      if(this.respawnT<=0)this.respawn();
+    if(this.state!=='active'){
+      this.deathT+=dt;
+      if(this.state==='dying'){
+        const k=Math.min(1,this.deathT/.7);
+        this.group.rotation.x=-Math.PI/2.2*k;
+        this.group.position.y=this.pos.y+.3*k;
+        if(k>=1)this.state='dead';
+      }else{
+        fadeMaterials(this.materials,Math.max(0,1-(this.deathT-.7)/4));
+      }
+      this._updateDroppedRifle(dt);
+      if(this.deathT>this.respawnT)this.respawn();
       return;
     }
+    // M2-A5:名牌按距离淡出(30m 内全亮,46m 外隐藏)
+    if(this.nameTag){
+      const d=this.game.camera.position.distanceTo(this.pos);
+      const a=Math.max(0,Math.min(1,(46-d)/16));
+      this.nameTag.group.visible=a>.01;
+      this.nameTag.sprite.material.opacity=a;
+      this.nameTag.bg.material.opacity=a*.75;
+      this.nameTag.bar.material.opacity=a*.95;
+    }
+    if(this._barkT>0)this._barkT-=dt;
     if(this.flashT>0){
       this.flashT-=dt;
-      if(this.flashT<=0)for(const m of this.flashable)m.emissiveIntensity=0;
+      if(this.flashT<=0)for(const m of this.flashable){
+        m.emissiveIntensity=m.userData.baseEI??0;
+        if(m.userData.baseEH!=null)m.emissive.setHex(m.userData.baseEH);
+      }
     }
+    // M2-A1:动画计时器(热路径无新分配)
+    if(this.reloadT>0)this.reloadT=Math.max(0,this.reloadT-dt);
+    if(this.hitT>0)this.hitT=Math.max(0,this.hitT-dt);
+    if(this.recoilKick>0)this.recoilKick=Math.max(0,this.recoilKick-dt*4.5);
 
     // 选目标:最近的敌方(角色 或 玩家)
+    const hadTarget=this.hasTarget;
     let target=null,tDist=1e9;
     const eye=this._eyeT.set(this.pos.x,this.pos.y+1.4,this.pos.z);
     for(const h of this.game.heroes.list){
@@ -340,14 +306,19 @@ export class HeroBot{
       if(d<tDist){tDist=d;target='player';this._tPosT.copy(pe);}
     }
     const tPos=this._tPosT;
+    if(target&&!hadTarget)this.bark('bark_spot');
 
-    const P=BOT_PROFILE[this.hero];
+    const P=BOT_PROFILE[this.faction];
     if(target){
       const dx=tPos.x-this.pos.x,dz=tPos.z-this.pos.z;
       const wantYaw=Math.atan2(dx,dz);
       let dy=wantYaw-this.yaw;
       while(dy>Math.PI)dy-=Math.PI*2;while(dy<-Math.PI)dy+=Math.PI*2;
       this.yaw+=dy*Math.min(1,6*dt);
+      // 瞄准偏移:头部俯仰 + 躯干轻微转向(动画状态机读取)
+      this.aimYaw=Math.max(-.6,Math.min(.6,dy));
+      const dist0=Math.max(.001,Math.hypot(dx,dz));
+      this.aimPitch=Math.max(-.5,Math.min(.5,Math.atan2(tPos.y-(this.pos.y+1.4),dist0)));
 
       // 走位:保持交战距离 + 横向游走
       this.strafeT-=dt;
@@ -367,9 +338,9 @@ export class HeroBot{
       this.pos.z+=this.vel.z*dt;
       this._collide(this.game.world.colliders);
 
-      // 点射/扫射
+      // 点射/扫射(换弹期间不开火)
       this.fireT-=dt;
-      if(this.fireT<=0){
+      if(this.fireT<=0&&this.reloadT<=0){
         const clear=losCheck(eye,tPos);
         if(clear){
           if(this.burst<P.burst){this.burst++;this.fireT=P.burstT;}
@@ -377,14 +348,57 @@ export class HeroBot{
           this._shoot(tPos,target,dist,P);
         }else this.fireT=.4;
       }
+    }else{
+      this.aimPitch*=.9;this.aimYaw*=.9;
     }
 
+    this.moving=this.vel.length()>.5;
+    this.hasTarget=!!target;
+    this._decideAnim(target,dt);
     this._animate(dt,time,this.vel.length());
     this.group.position.set(this.pos.x,this.group.position.y,this.pos.z);
     this.group.rotation.y=this.yaw;
   }
 
+  /* M2-A2:电台台词(每 bot 6s 冷却,静音由音频总线处理) */
+  bark(key,force=false){
+    if(!force&&this._barkT>0)return false;
+    this._barkT=6;
+    if(this.ui&&this.ui.bark)this.ui.bark(this.name,t(key),this.faction);
+    if(this.audio&&this.audio.radio)this.audio.radio();
+    return true;
+  }
+
+  /* M2-A1:动画状态决策(独立方法便于 e2e 验证) */
+  _decideAnim(target,dt=.016){
+    let st;
+    if(this.state!=='active')st=this.state;
+    else if(this.reloadT>0)st='reload';
+    else if(this.hitT>0)st='hit';
+    else if(this.recoilKick>.2)st='fire';
+    else if(this.moving)st='walk';
+    else if(target)st='aim';
+    else st='idle';
+    if(st!==this.animState){this.animState=st;this.animT=0;}
+    else this.animT+=dt;
+    return st;
+  }
+
+  /* 弹匣消耗:打空后 1.2s 换弹,期间由 update 屏蔽开火 */
+  _consumeAmmo(){
+    this.ammo--;
+    this.recoilKick=1;
+    if(this.ammo<=0){
+      this.ammo=this.magSize;
+      this.reloadT=1.2;
+      this.burst=0;
+      this.fireT=1.2;
+      this.bark('bark_reload');
+    }
+  }
+
   _shoot(tPos,target,dist,P){
+    this._consumeAmmo();
     const from=this._fromT;
     this.gunTip.getWorldPosition(from);
     const dir=this._dirT.copy(tPos).sub(from).normalize();
@@ -399,7 +413,7 @@ export class HeroBot{
     this.audio.botShot(this.game.player.pos.distanceTo(this.pos));
     if(!miss){
       if(target==='player'){
-        this.game.damagePlayerFromBot(P.dmgP,this.name);
+        this.game.damagePlayerFromBot(P.dmgP,this.name,this.pos);
       }else{
         target.takeDamage(P.dmgH,this.name);
         this.game.botDamageFx(target,tPos);
@@ -412,13 +426,38 @@ export class HeroBot{
     if(moving)this.walkT+=dt*spd*2.1;
     const swing=moving?Math.sin(this.walkT)*.6:0;
     if(this.legL){this.legL.rotation.x=swing;this.legR.rotation.x=-swing;}
-    // 行走起伏 + 女性髋部摆动
-    const bob=moving?Math.abs(Math.cos(this.walkT))*.035:0;
+    // 行走起伏 + 女性髋部摆动(低血量步伐加重)
+    let bob=moving?Math.abs(Math.cos(this.walkT))*.035:0;
+    if(this.hp/this.maxHp<.35)bob*=1.4;
     this.group.position.y=this.pos.y+bob;
     let rz=this.group.rotation.z;
     if(this.gender==='f')rz+=(Math.sin(this.walkT)*(moving?.045:0)-rz)*Math.min(1,8*dt);
     else rz*=Math.max(0,1-8*dt);
+    // 受击侧倾
+    if(this.hitT>0)rz+=this.hitDir*this.hitT*.3;
     this.group.rotation.z=rz;
+
+    // 呼吸:躯干微起伏(基准值来自 buildBody,避免累积漂移)
+    if(this.torso)this.torso.position.y=this.baseTorsoY+Math.sin(time*1.8)*.003;
+    // 瞄准:头部俯仰 + 躯干跟随(平滑)
+    const k=Math.min(1,8*dt);
+    if(this.parts.head){
+      const want=-this.aimPitch*.5;
+      this.parts.head.rotation.x+=(want-this.parts.head.rotation.x)*k;
+    }
+    if(this.torso){
+      const want=this.aimYaw*.3;
+      this.torso.rotation.y+=(want-this.torso.rotation.y)*k;
+    }
+    // 持枪基准姿态 + 后坐 / 换弹叠加
+    if(this.armR)this.armR.rotation.x=this.baseArmR[0]+this.recoilKick*.35;
+    if(this.armL)this.armL.rotation.x=this.baseArmL[0]+this.recoilKick*.12;
+    if(this.reloadT>0){
+      const ph=1-this.reloadT/1.2;
+      const a=Math.sin(ph*Math.PI)*.8;
+      if(this.armL)this.armL.rotation.x=this.baseArmL[0]-a;
+      if(this.armR)this.armR.rotation.x=this.baseArmR[0]-a*.35;
+    }
     // 马尾随动(发丝物理近似)
     if(this.pony){
       this.pony.rotation.x=-.15+Math.sin(time*1.7)*.05+(moving?swing*.18:0);
@@ -429,38 +468,49 @@ export class HeroBot{
 
   dispose(){
     this.scene.remove(this.group);
-    this.group.traverse(o=>{
-      if(o.isMesh)o.geometry.dispose();
-      if(o.isSprite&&o.material.map)o.material.map.dispose();
-    });
+    if(this.parts.rifle&&this.parts.rifle.parent===this.scene)this.scene.remove(this.parts.rifle);
+    if(this.nameTag){
+      if(this.nameTag.tex)this.nameTag.tex.dispose();
+      if(this.nameTag.sprite&&this.nameTag.sprite.material)this.nameTag.sprite.material.dispose();
+      if(this.nameTag.bg&&this.nameTag.bg.material)this.nameTag.bg.material.dispose();
+      if(this.nameTag.bar&&this.nameTag.bar.material)this.nameTag.bar.material.dispose();
+      this.nameTag=null;
+    }
+    // 只释放本角色克隆材质;几何体为模块级共享缓存
+    for(const m of this.materials)m.dispose();
   }
 }
 
-/* 阵营队伍管理器:玩家所在阵营 vs 敌对阵营(性别混编) */
+/* 阵营队伍管理器:玩家所在阵营 2 名队友 vs 敌对阵营 3 名敌人(8 干员不重样) */
 export class HeroTeam{
   constructor(game){
     this.game=game;
     this.list=[];
   }
-  setup(playerFaction='ct',playerName=''){
+  setup(playerFaction='ct',playerName='',playerOpId=DEFAULT_OP){
     this.clear();
     const g=this.game,scene=g.scene,assets=g.assets,fx=g.effects,audio=g.audio,ui=g.ui;
-    const pf=HERO_DEFS[playerFaction]?playerFaction:'ct';
+    const pf=playerFaction==='t'?'t':'ct';
     const ef=pf==='ct'?'t':'ct';
-    const nm=b=>isEN()&&b.nEn?b.nEn:b.n;
-    const pool=f=>BOT_NAMES[f].filter(b=>nm(b)!==playerName);
-    const own=pool(pf),foe=pool(ef);
+    const own=byFaction(pf).filter(o=>o.id!==playerOpId).slice(0,2);
+    const foe=byFaction(ef).slice(0,3);
+    const used=new Set([playerName]);
+    const nm=o=>{
+      let n=isEN()?o.name.en:o.name.zh;
+      if(used.has(n)){let i=2;while(used.has(n+' '+i))i++;n=n+' '+i;}
+      used.add(n);
+      return n;
+    };
     const defs=[
-      {hero:pf,team:'A',name:nm(own[0]),gender:own[0].g},
-      {hero:pf,team:'A',name:nm(own[1]),gender:own[1].g},
-      {hero:ef,team:'B',name:nm(foe[0]),gender:foe[0].g},
-      {hero:ef,team:'B',name:nm(foe[1]),gender:foe[1].g},
-      {hero:ef,team:'B',name:nm(foe[2]),gender:foe[2].g},
+      ...own.map(o=>({operator:o,team:'A'})),
+      ...foe.map(o=>({operator:o,team:'B'})),
     ];
     for(const d of defs){
-      const h=new HeroBot(g,scene,assets,fx,audio,ui,d);
-      const base=d.team==='A'?new THREE.Vector3(0,0,24):new THREE.Vector3(0,0,-24);
-      h.place(base.clone().add(new THREE.Vector3((Math.random()-.5)*10,0,(Math.random()-.5)*10)),
+      const base=d.operator;
+      const op=g.camoFor?{...base,camo:g.camoFor(base)}:{...base};
+      const h=new HeroBot(g,scene,assets,fx,audio,ui,{operator:op,team:d.team,name:nm(base)});
+      const b=d.team==='A'?new THREE.Vector3(0,0,24):new THREE.Vector3(0,0,-24);
+      h.place(b.clone().add(new THREE.Vector3((Math.random()-.5)*10,0,(Math.random()-.5)*10)),
         d.team==='A'?Math.PI:0);
       this.list.push(h);
     }

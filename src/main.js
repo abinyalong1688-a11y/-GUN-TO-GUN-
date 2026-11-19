@@ -1,5 +1,5 @@
 // main.js —— 引导 / 状态机 / 射击判定(角色+爆炸) / 乱斗对战 / 主循环 / 验证钩子
-import {t,applyStatic,detectIPCountry,setLang,lang} from './i18n.js';
+import {t,applyStatic,detectIPCountry,setLang,lang,isEN} from './i18n.js';
 import * as THREE from 'three';
 import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
 import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
@@ -17,12 +17,16 @@ import {Enemies} from './enemies.js';
 import {Waves} from './waves.js';
 import {HeroTeam} from './heroes.js';
 import {UI} from './ui.js';
+import {PortraitRenderer} from './portraits.js';
+import {settings} from './settings.js';
+import {InputManager,KeyboardMouseAdapter} from './input.js';
+import {OPERATORS,byId,byFaction,DEFAULT_OP,CAMOS} from './operators.js';
 import {store,num,escHTML} from './util.js';
 
 const $=id=>document.getElementById(id);
 const UP=new THREE.Vector3(0,1,0);
 const FOV_H=106; // 腰射水平视野(度):横向视野锁定,不随窗口宽高比缩水(16:9 下垂直约72.7°)
-const VERSION='1.3.0';
+const VERSION='1.4.1';
 const _rsO=new THREE.Vector3(); // 射线-球判定复用向量(热路径零分配)
 
 class Game{
@@ -31,15 +35,21 @@ class Game{
     this.selftestMode=new URLSearchParams(location.search).has('selftest');
     this.e2eMode=new URLSearchParams(location.search).has('e2e');
     this.perfMode=new URLSearchParams(location.search).has('perf');
-    if(this.shotMode||this.selftestMode||this.e2eMode)window.__game=this; // 调试探针:仅测试钩子下暴露
+    this.rosterMode=new URLSearchParams(location.search).has('roster');
+    this.portraitsMode=new URLSearchParams(location.search).has('portraits');
+    if(this.shotMode||this.selftestMode||this.e2eMode||this.rosterMode||this.portraitsMode)window.__game=this; // 调试探针:仅测试钩子下暴露
     this.perf={frames:0,slow:0,maxDt:0}; // 卡顿监控:慢帧(>25ms)计数
     this.state='menu'; // menu | playing | paused | dying | over
     this.keys=new Set();
     this.input={firing:false,ads:false};
     this.fallbackAim=false;
-    this.sensMul=num(store.get('o07_sens'))??1;   // 脏数据兜底
-    this.volume=num(store.get('o07_vol'))??.8;
-    this.quality=store.get('o07_quality')==='low'?'low':'high';
+    // S1.4 设置中心:统一读取 + 旧 key 迁移
+    this.settings=settings;
+    this.settings.load();
+    this.baseHFov=this.settings.get('fov');
+    this.sensMul=this.settings.get('sens');
+    this.volume=this.settings.get('volume');
+    this.quality=this.settings.get('quality');
     this.score=0;this.shake=0;this.dyingT=0;this.time=0;
     this.stats={shots:0,hits:0,kills:0,critKills:0,time:0,bestCombo:0};
     this.comboKills=0;this.comboT=0;
@@ -101,6 +111,8 @@ class Game{
     }catch(e){}
 
     this.assets=initAssets();
+    this.portraits=new PortraitRenderer(this.assets);
+    this.ui.portraits=this.portraits; // C4:菜单干员卡立绘
     this.audio=new AudioFX();
     this.buildWorldFor(this.ui.sel.map);
 
@@ -110,7 +122,10 @@ class Game{
     this.weapon=new Weapon(this.viewScene,this.assets,this.audio,this.ui,this.quality);
     this.enemies=new Enemies(this.scene,this.assets,this.effects,this.audio,this.ui);
     this.enemies.onKill=(e,crit)=>this._onKill(e,crit);
-    this.enemies.onPlayerHit=()=>{this.shake=Math.max(this.shake,.12);this.audio.hurt();};
+    this.enemies.onPlayerHit=pos=>{
+      this.shake=Math.max(this.shake,.12);this.audio.hurt();
+      this._showDamageDirection(pos);
+    };
     this.waves=new Waves(this);
     this.heroes=new HeroTeam(this);
     this.ray=new THREE.Raycaster();
@@ -129,20 +144,25 @@ class Game{
     });
     $('m-quality').value=this.quality;
     $('m-quality').addEventListener('change',e=>{
-      store.set('o07_quality',e.target.value);location.reload();
+      this.settings.set('quality',e.target.value);location.reload();
     });
-    $('m-start').addEventListener('click',()=>{this.audio.init();this.audio.resume();this.audio.uiClick();this.ui.saveName();this.startGame();});
+    $('m-start').addEventListener('click',()=>{this.audio.init();this.audio.resume();this._applyAudioSettings();this.audio.uiClick();this.ui.saveName();this.startGame();});
     $('p-resume').addEventListener('click',()=>{this.audio.uiClick();this.resume();});
     $('p-restart').addEventListener('click',()=>{this.audio.uiClick();this.startGame();});
     $('p-menu').addEventListener('click',()=>{this.audio.uiClick();this.toMenu();});
     $('o-restart').addEventListener('click',()=>{this.audio.uiClick();this.startGame();});
     $('o-menu').addEventListener('click',()=>{this.audio.uiClick();this.toMenu();});
-    $('p-sens').value=this.sensMul;
-    $('p-sens-v').textContent=this.sensMul.toFixed(2);
-    $('p-sens').addEventListener('input',e=>{this.sensMul=parseFloat(e.target.value)||1;$('p-sens-v').textContent=this.sensMul.toFixed(2);store.set('o07_sens',this.sensMul);});
-    $('p-vol').value=this.volume;
-    $('p-vol-v').textContent=Math.round(this.volume*100)+'%';
-    $('p-vol').addEventListener('input',e=>{this.volume=parseFloat(e.target.value)||0;$('p-vol-v').textContent=Math.round(this.volume*100)+'%';this.audio.setVolume(this.volume);store.set('o07_vol',this.volume);});
+    $('o-share').addEventListener('click',()=>{
+      this.audio.uiClick();
+      if(this.ui.downloadShareCard())this.ui.banner(t('share_hint'),'');
+    });
+    // U1:设置面板统一绑定(灵敏度/FOV/音量/音效/音乐/准星/反转/蹲伏切换/ADS 切换)
+    this.ui.bindSettings(this.settings,(path)=>{
+      if(path==='fov'||path==='reset')this.baseHFov=this.settings.get('fov');
+      if(path==='sens'||path==='reset')this.sensMul=this.settings.get('sens');
+      if(path==='volume'||path==='reset')this.volume=this.settings.get('volume');
+      if(path==='volume'||path==='sfx'||path==='music'||path==='reset')this._applyAudioSettings();
+    });
 
     this.bestScore=parseInt(store.get('o07_best','0'))||0;
     this.ui.showBest(this.bestScore);
@@ -157,11 +177,25 @@ class Game{
       this.weapon.group.visible=false;
     }catch(e){}
 
+    // C1/C5 调试钩子:?op=raven&camo=snow 指定干员与迷彩
+    const qs=new URLSearchParams(location.search);
+    const forcedOp=qs.get('op');
+    if(forcedOp&&byId(forcedOp))this.ui.selectOperator(forcedOp);
+    const forcedCamo=qs.get('camo');
+    if(forcedCamo&&CAMOS[forcedCamo]){
+      this.ui.sel.camo=forcedCamo;
+      this.ui.buildOperators();
+    }
+
     if(this.shotMode==='combat')this._shotCombat();
     else if(this.shotMode==='dm')this._shotDm();
     else if(this.shotMode==='over')this._shotOver();
+    else if(this.shotMode==='killcard')this._shotKillcard();
+    else if(this.shotMode==='mvp')this._shotMvp();
     if(this.selftestMode)this.selftest();
     if(this.e2eMode)this.e2e();
+    if(this.rosterMode)this._debugRoster();
+    if(this.portraitsMode)this._debugPortraits();
     // 异步 IP 探测:非中国 IP → 英文界面(结果缓存供下次首帧使用);?ipcc= 可强制(测试钩子)
     const forcedIPCC=new URLSearchParams(location.search).get('ipcc');
     (forcedIPCC?Promise.resolve(forcedIPCC):detectIPCountry()).then(cc=>{
@@ -189,6 +223,14 @@ class Game{
     this._resize();
     // PWA 离线支持:云端部署后首次访问即缓存,断网可从缓存重开(file:// 本地打开无需 SW)
     if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol)){
+      const hadController=!!navigator.serviceWorker.controller;
+      navigator.serviceWorker.addEventListener('controllerchange',()=>{
+        if(!hadController||this._swReloaded)return;
+        const toast=$('sw-toast');
+        if(toast)toast.classList.add('show');
+      });
+      const swBtn=$('sw-reload');
+      if(swBtn)swBtn.addEventListener('click',()=>{this._swReloaded=true;location.reload();});
       addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').catch(()=>{});});
     }
   }
@@ -204,10 +246,11 @@ class Game{
     applyStatic();
     this.assets.refreshAd&&this.assets.refreshAd();
     this.weapon.refreshLang&&this.weapon.refreshLang();
-    const hero=this.ui.sel.hero;
-    this.ui.setHero(this.playerName,t(hero==='ct'?'hero_ct_role':'hero_t_role'));
+    const op=byId(this.ui.sel.operator)||byId(DEFAULT_OP);
+    this.ui.setHero(this.playerName,`${t('faction_'+op.faction)} · ${isEN()?op.name.en:op.name.zh}`);
     this.ui.showBest(parseInt(store.get('o07_best','0'))||0);
     this.ui.buildPrimaries&&this.ui.buildPrimaries();
+    this.ui.buildOperators&&this.ui.buildOperators();
   }
 
   _setupComposer(){
@@ -234,7 +277,7 @@ class Game{
   _resize(){
     this.camera.aspect=innerWidth/innerHeight;
     // 视野以水平角为准:先定横向角度,再换算当前宽高比下的垂直 FOV
-    this.camera.fov=THREE.MathUtils.radToDeg(2*Math.atan(Math.tan(THREE.MathUtils.degToRad(this._hfovCur||FOV_H)*.5)/this.camera.aspect));
+    this.camera.fov=THREE.MathUtils.radToDeg(2*Math.atan(Math.tan(THREE.MathUtils.degToRad(this._hfovCur||this.baseHFov||FOV_H)*.5)/this.camera.aspect));
     this.camera.updateProjectionMatrix();
     this.viewCam.aspect=innerWidth/innerHeight;this.viewCam.updateProjectionMatrix();
     this.renderer.setSize(innerWidth,innerHeight);
@@ -242,59 +285,38 @@ class Game{
   }
 
   /* ================= 输入 ================= */
+  /* S1.5:输入抽象;键鼠监听在 KeyboardMouseAdapter 内,M4 可叠加触屏/手柄 */
   _setupInput(){
-    const dom=this.renderer.domElement;
-    addEventListener('keydown',e=>{
-      if(e.code==='Tab'){e.preventDefault();if(this.state==='playing'&&this.mode==='dm')this._showBoard();}
-      if(e.code==='Tab')return;
-      this.keys.add(e.code);
-      if(this.state!=='playing')return;
-      if(e.code==='KeyR')this.weapon.switchT<0&&this.weapon.startReload();
-      if(e.code==='Digit1')this.weapon.switchTo(0);                            // 主武器槽(反复按循环 4 把)
-      if(e.code==='Digit2')this.weapon.switchTo(this.weapon.primaryCount);     // 沙漠之鹰
-      if(e.code==='Digit3')this.weapon.switchTo(this.weapon.primaryCount+1);   // 军刀
-      if(e.code==='Escape'&&this.fallbackAim)this.pause();
-    });
-    addEventListener('keyup',e=>{
-      this.keys.delete(e.code);
-      if(e.code==='Tab')this.ui.hideBoard();
-    });
-    addEventListener('mousedown',e=>{
-      if(this.state!=='playing')return;
-      if(e.button===0)this.input.firing=true;
-      if(e.button===2)this.input.ads=true;
-    });
-    addEventListener('mouseup',e=>{
-      if(e.button===0)this.input.firing=false;
-      if(e.button===2)this.input.ads=false;
-    });
-    // 滚轮换枪:下滚下一把,上滚上一把(循环)
-    addEventListener('wheel',e=>{
-      if(this.state!=='playing')return;
-      e.preventDefault();
-      const n=this.weapon.defs.length;
-      this.weapon.switchTo((this.weapon.cur+(e.deltaY>0?1:n-1))%n);
-    },{passive:false});
-    addEventListener('contextmenu',e=>e.preventDefault());
-    addEventListener('mousemove',e=>{
-      this._mx=e.clientX;this._my=e.clientY;
-      if(this.state!=='playing')return;
-      if(!document.pointerLockElement&&!this.fallbackAim)return;
-      // 变焦补偿灵敏度:按当前水平视野占比缩放(开镜/ADS 视角越窄,鼠标对应角度越小)
-      const zoom=Math.max(.28,(this._hfovCur||FOV_H)/FOV_H);
-      const s=.0021*this.sensMul*zoom;
-      this.player.yaw-=e.movementX*s;
-      // 水平角度规约,防长时间累积浮点漂移
-      if(this.player.yaw>Math.PI)this.player.yaw-=Math.PI*2;
-      else if(this.player.yaw<-Math.PI)this.player.yaw+=Math.PI*2;
-      this.player.pitch-=e.movementY*s;
-      // 行业标准(CS/瓦/网页FPS通用):俯仰钳制在 ±89°,越过天顶会天地颠倒、左右旋转反向
-      this.player.pitch=Math.max(-1.553,Math.min(1.553,this.player.pitch));
-    });
-    document.addEventListener('pointerlockchange',()=>{
-      if(!document.pointerLockElement&&this.state==='playing'&&!this.fallbackAim)this.pause();
-    });
-    document.addEventListener('pointerlockerror',()=>{this.fallbackAim=true;});
+    this.inputMgr=new InputManager(this);
+    this.inputMgr.attach(new KeyboardMouseAdapter(this));
+  }
+
+  /* 视角输入统一入口(鼠标/触屏/手柄共用) */
+  applyLook(dx,dy){
+    if(!this.player)return;
+    const base=this.baseHFov||FOV_H;
+    const zoom=Math.max(.28,(this._hfovCur||base)/base);
+    const sens=this.settings?this.settings.get('sens'):this.sensMul;
+    const adsSens=this.settings?this.settings.get('adsSens'):1;
+    const inv=this.settings&&this.settings.get('yInvert')?-1:1;
+    const s=.0021*sens*adsSens*zoom;
+    this.player.yaw-=dx*s;
+    // 水平角度规约,防长时间累积浮点漂移
+    if(this.player.yaw>Math.PI)this.player.yaw-=Math.PI*2;
+    else if(this.player.yaw<-Math.PI)this.player.yaw+=Math.PI*2;
+    this.player.pitch-=dy*s*inv;
+    // 行业标准(CS/瓦/网页FPS通用):俯仰钳制在 ±89°,越过天顶会天地颠倒、左右旋转反向
+    this.player.pitch=Math.max(-1.553,Math.min(1.553,this.player.pitch));
+  }
+
+  /* S1.6:音频分轨音量应用(init 之后调用) */
+  _applyAudioSettings(){
+    if(!this.audio)return;
+    this.audio.setVolume(this.settings.get('volume'));
+    this.audio.setBus('sfx',this.settings.get('sfx'));
+    this.audio.setBus('music',this.settings.get('music'));
+    this.audio.setBus('radio',1);
+    this.audio.setBus('ambient',1);
   }
 
   _requestLock(){
@@ -331,34 +353,46 @@ class Game{
     if(rate)this.player.yaw-=rate*dt;
   }
 
+  /* C5:迷彩来源(玩家用当前选择,机器人用各自存档/解锁) */
+  camoFor(op){
+    if(this.ui&&this.ui.sel&&op.id===this.ui.sel.operator&&this.ui.sel.camo)return this.ui.sel.camo;
+    return this.ui&&this.ui.camoOf?this.ui.camoOf(op):'default';
+  }
+
   /* ================= 状态切换 ================= */
   startGame(){
     const sel=this.ui.sel;
     this.mode=sel.mode;
     this.playerName=this.ui.playerName;
     if(sel.map!==this.world.mapKey)this.buildWorldFor(sel.map);
-    // CS 阵营角色:CT=防弹护甲+M4A4 / T=轻装快速+AK-47
-    const hero=sel.hero;
+    // C5:玩家干员 = 名册选择;属性/武器/第一人称手臂全部按干员定义
+    const op=byId(sel.operator)||byId(DEFAULT_OP);
+    const hero=op.faction;
+    this.playerOperator=op;
+    this.ui.shareOp=op;
     this.playerFaction=hero;
+    this.playerCamo=sel.camo||this.camoFor(op);
     this.player.god=false;this.invulnT=0;this.dmRespawnT=-1;
-    this.player.maxHealth=hero==='ct'?115:100;
-    this.player.speed=hero==='t'?5.2*1.12:5.2;
-    this.player.sprintSpeed=hero==='t'?7.8*1.12:7.8;
-    this.weapon.reloadSpeedMul=hero==='t'?1.25:1;
-    // 基础移速 × 阵营 × 武器负重(CS 机制)
-    this.baseSpeed=5.2*(hero==='t'?1.12:1);
-    this.baseSprint=7.8*(hero==='t'?1.12:1);
+    this.player.maxHealth=op.hp;
+    this.player.speed=5.2*op.speedMul;
+    this.player.sprintSpeed=7.8*op.speedMul;
+    this.weapon.reloadSpeedMul=op.reloadMul;
+    this.weapon.recoilMul=op.recoilMul;
+    // 基础移速 × 干员 × 武器负重(CS 机制)
+    this.baseSpeed=5.2*op.speedMul;
+    this.baseSprint=7.8*op.speedMul;
     this.weapon.speedCb=mul=>{
       this.player.speed=this.baseSpeed*mul;
       this.player.sprintSpeed=this.baseSprint*mul;
     };
+    this.weapon.setFaction(op);
     // 主武器:阵营全部 4 把随身,菜单所选为出厂手持(CS 槽位:1 循环/2 沙鹰/3 军刀)
     const CT_P=['m4a4','aug','awp','mp5'],T_P=['ak47','sg553','awp','mp5'];
     const pool=hero==='ct'?CT_P:T_P;
     const first=pool.includes(sel.primary)?sel.primary:pool[0];
     const prims=[first,...pool.filter(x=>x!==first)];
     this.weapon.setLoadout(prims,0);
-    this.ui.setHero(this.playerName,t(hero==='ct'?'hero_ct_role':'hero_t_role'));
+    this.ui.setHero(this.playerName,`${t('faction_'+hero)} · ${isEN()?op.name.en:op.name.zh}`);
     this.ui.abilityCd(-1);
 
     this.player.reset();
@@ -374,10 +408,10 @@ class Game{
       this.ui.setDmMode(true);
       this.waves.state='idle';
       this.dm={scores:new Map(),timer:240,winKills:25};
-      this.dm.scores.set(this.playerName,{name:this.playerName,team:'A',kills:0,deaths:0,me:true});
-      this.heroes.setup(this.playerFaction,this.playerName);
+      this.dm.scores.set(this.playerName,{name:this.playerName,team:'A',kills:0,deaths:0,me:true,op:this.playerOperator});
+      this.heroes.setup(this.playerFaction,this.playerName,op.id);
       for(const h of this.heroes.list)
-        this.dm.scores.set(h.name,{name:h.name,team:h.team,kills:0,deaths:0,me:false});
+        this.dm.scores.set(h.name,{name:h.name,team:h.team,kills:0,deaths:0,me:false,op:h.def});
       this.ui.banner(t('dm_start'),t('dm_sub'));
       this.audio.waveStart();
       this.ui.setScore(0);
@@ -388,6 +422,8 @@ class Game{
     }
 
     this.state='playing';
+    this.audio.musicStart('combat');
+    this._musicLow=false;
     this.ui.showOnly(null);
     this.ui.setScore(this.score);
     this.ui.setHealth(this.player.health,this.player.maxHealth);
@@ -401,11 +437,13 @@ class Game{
     if(this.state!=='playing')return;
     this.state='paused';
     this.input.firing=false;this.input.ads=false;
+    this.audio.musicSet(.2);
     this.ui.showOnly('pause');
     if(document.pointerLockElement)document.exitPointerLock();
   }
   resume(){
     this.state='playing';
+    this.audio.musicSet(.7);
     this.ui.showOnly(null);
     this._requestLock();
   }
@@ -413,6 +451,8 @@ class Game{
     this.enemies.clearAll();
     this.heroes.clear();
     this.state='menu';
+    this.audio.musicStart('menu');
+    this.audio.musicSet(1);
     this.ui.showOnly('menu');
     this.ui.showBest(parseInt(localStorage.getItem('o07_best')||'0'));
     this._menuDrones();
@@ -577,6 +617,7 @@ class Game{
     this.stats.kills++;
     if(crit)this.stats.critKills++;
     this.comboT=4;this.comboKills++;
+    if(this.comboKills>=2)this.ui.combo(this.comboKills);
     const comboMul=[1,1.25,1.5,2,2.5][Math.min(4,this.comboKills-1)];
     this.stats.bestCombo=Math.max(this.stats.bestCombo,comboMul);
     const pts=Math.round(e.T.score*(crit?1.5:1)*comboMul);
@@ -593,6 +634,12 @@ class Game{
     if(v)v.deaths++;
     const mine=killerName===this.playerName;
     this.ui.killFeed(killerName,victimHero.name,t('kill_verb'),mine);
+    const ks=this.dm.scores.get(killerName);
+    this.ui.killCard({
+      killer:killerName,victim:victimHero.name,
+      weapon:(ks&&ks.op&&ks.op.rifle||'rifle').toUpperCase(),
+      mine,killerOp:ks&&ks.op||this.playerOperator,victimOp:victimHero.def,
+    });
     if(mine){
       this.stats.kills++;
       this.addScore(200,victimHero.pos.clone().add(new THREE.Vector3(0,1.4,0)));
@@ -603,12 +650,33 @@ class Game{
   botDamageFx(hero,pos){
     this.effects.impact(pos,UP,'metal');
   }
-  damagePlayerFromBot(dmg,fromName){
+  damagePlayerFromBot(dmg,fromName,fromPos){
     if(this.player.god||this.invulnT>0||!this.player.alive)return;
     this.player.damage(dmg,this.time);
     this.ui.damageFlash(.55);
     this.shake=Math.max(this.shake,.1);
     this.audio.hurt();
+    this._showDamageDirection(fromPos);
+    if(this.player.health<=0){
+      const src=this.heroes.list.find(h=>h.name===fromName);
+      this.ui.killCard({
+        killer:fromName,victim:this.playerName,
+        weapon:(src&&src.def.rifle||'rifle').toUpperCase(),
+        mine:false,killerOp:src&&src.def,victimOp:this.playerOperator,
+      });
+    }
+  }
+  /* U2:世界坐标 → 屏幕方向(0 正前,正值顺时针),0.8s 淡出 */
+  _showDamageDirection(fromPos){
+    if(!fromPos||!this.player)return;
+    const dx=fromPos.x-this.player.pos.x;
+    const dz=fromPos.z-this.player.pos.z;
+    const world=Math.atan2(dx,dz);
+    const forward=this.player.yaw+Math.PI;
+    let rel=forward-world;
+    while(rel>Math.PI)rel-=Math.PI*2;
+    while(rel<-Math.PI)rel+=Math.PI*2;
+    this.ui.damageDirection(rel);
   }
   shakeFrom(pos,amt){
     const d=this.camera.position.distanceTo(pos);
@@ -637,13 +705,15 @@ class Game{
     const lab=this._factionLabels();
     const rows=[...this.dm.scores.values()].sort((x,y)=>y.kills-x.kills)
       .map(r=>`<tr class="${r.me?'me':''}"><td>${escHTML(r.name)}</td><td><span class="${r.team==='A'?'tA':'tB'}">${r.team==='A'?lab.A:lab.B}</span></td><td>${r.kills}</td><td>${r.deaths}</td></tr>`).join('');
+    const mvpRow=[...this.dm.scores.values()].sort((a,b)=>b.kills-a.kills)[0];
+    const mvp=mvpRow?{name:mvpRow.name,op:mvpRow.op||this.playerOperator,kills:mvpRow.kills,deaths:mvpRow.deaths}:null;
     const best=parseInt(store.get('o07_best','0'))||0;
     if(this.score>best)store.set('o07_best',this.score);
     this.audio.gameOver();
     this.ui.showOver({
       title:win?t('win'):t('lose'),
       win,kicker:t('dm_over_kicker'),
-      stats:{...this.stats,waveLabel:t('dur_label'),wave:t('dur_fmt',{m:Math.floor(this.stats.time/60),s:Math.floor(this.stats.time%60)}),score:this.score,best:Math.max(best,this.score)},
+      stats:{...this.stats,waveLabel:t('dur_label'),wave:t('dur_fmt',{m:Math.floor(this.stats.time/60),s:Math.floor(this.stats.time%60)}),score:this.score,best:Math.max(best,this.score),mvp},
       board:`<table><tr><th>${t('sb_role')}</th><th>${t('sb_faction')}</th><th>${t('sb_kills')}</th><th>${t('sb_deaths')}</th></tr>${rows}</table>`,
     });
     if(document.pointerLockElement)document.exitPointerLock();
@@ -659,6 +729,7 @@ class Game{
     if(dtRaw>this.perf.maxDt)this.perf.maxDt=dtRaw;
     if(this.perfMode&&this.perf.frames%180===0)
       console.log(`[PERF] frames=${this.perf.frames} slow=${this.perf.slow} max=${(this.perf.maxDt*1000).toFixed(1)}ms`);
+    this.inputMgr&&this.inputMgr.update(dtRaw);
     if(this.state==='dying'){
       dt*=.3;
       this.dyingT-=dtRaw;
@@ -778,6 +849,11 @@ class Game{
     this.effects.setCamPos(this.camera.position);
     this.effects.update(dt);
     this.ui.update(dt,this.player.health,this.player.maxHealth);
+    // M2-A6:低血量 BGM 紧张度(状态翻转时才写,避免每帧调度)
+    if(this.state==='playing'){
+      const low=this.player.health/this.player.maxHealth<.35;
+      if(low!==this._musicLow){this._musicLow=low;this.audio.musicSet(low?.9:.7);}
+    }
     this.audio.setWind(this.state==='menu'?.08:.05);
 
     // 阴影隔帧渲染(autoUpdate 已关):奇数帧重算投影,偶数帧沿用上帧深度
@@ -796,7 +872,7 @@ class Game{
     this.viewCam.updateProjectionMatrix();
     // 开镜/ADS 缩放沿用原垂直 FOV 比例(scopeFov 或 62 对 75),作用到水平视野上
     const zoomH=this.weapon.def.scope?(this.weapon.def.scopeFov||30)/75:62/75;
-    const hFov=FOV_H*(1-(1-zoomH)*this.weapon.adsAmt);
+    const hFov=(this.baseHFov||FOV_H)*(1-(1-zoomH)*this.weapon.adsAmt);
     this._hfovCur=hFov;
     const targetFov=THREE.MathUtils.radToDeg(2*Math.atan(Math.tan(THREE.MathUtils.degToRad(hFov)*.5)/this.camera.aspect));
     if(Math.abs(this.camera.fov-targetFov)>.01){
@@ -814,6 +890,56 @@ class Game{
   }
 
   /* ================= 验证钩子 ================= */
+  /* S1.1:?roster=1 打印干员名册(名册 UI 在 M1-C4 落地) */
+  _debugRoster(){
+    const rows=OPERATORS.map(o=>({
+      id:o.id,faction:o.faction,gender:o.gender,role:o.role.zh,
+      hp:o.hp,speedMul:o.speedMul,reloadMul:o.reloadMul,rifle:o.rifle,
+    }));
+    console.table(rows);
+    console.log(`[ROSTER] ${OPERATORS.length} operators · CT ${byFaction('ct').length} / T ${byFaction('t').length}`);
+    return rows;
+  }
+
+  /* S1.3:?portraits=1 生成 8 张立绘并打印耗时/体积 */
+  _debugPortraits(){
+    const t0=performance.now();
+    const rows=OPERATORS.map(o=>{
+      const url=this.portraits.render(o);
+      return {id:o.id,ok:!!url,bytes:url?url.length:0};
+    });
+    const ms=performance.now()-t0;
+    console.table(rows);
+    console.log(`[PORTRAITS] ${rows.filter(r=>r.ok).length}/${rows.length} in ${ms.toFixed(0)}ms`);
+    return {ms,rows};
+  }
+
+  /* C1:控制台切换 1 号机器人外观(看剪影/配色) */
+  debugSetOperator(id){
+    const op=byId(id);
+    if(!op)return false;
+    const h=this.heroes&&this.heroes.list[0];
+    if(h)h.setOperator({...op,camo:this.camoFor(op)});
+    return !!h;
+  }
+
+  /* M2-A1:调试击杀指定 bot(看死亡动画/击杀卡) */
+  debugKillBot(id){
+    const h=this.heroes.list.find(x=>x.opId===id);
+    if(h)h.takeDamage(9999,'DEBUG');
+    return !!h;
+  }
+
+  /* C6:内存快照(10 次 DM 进出不增长验收) */
+  debugMemory(){
+    const m=this.renderer.info.memory;
+    const geos=new Set(),mats=new Set();
+    for(const h of this.heroes.list)h.group.traverse(o=>{
+      if(o.isMesh){geos.add(o.geometry);if(o.material)mats.add(o.material);}
+    });
+    return {geometries:m.geometries,textures:m.textures,heroGeos:geos.size,heroMats:mats.size};
+  }
+
   _shotCombat(){
     this.startGame();
     this.fallbackAim=true;
@@ -831,10 +957,32 @@ class Game{
     this.startGame();
     this.fallbackAim=true;
     this.player.god=true;
-    this.ui.killFeed('夜莺','火狐','AK-47',false);
+    this.ui.killFeed('雪狼','火狐','AK-47',false);
     this.ui.killFeed(this.playerName,'秃鹫','M4A4',true);
     this.ui.setDmScore(7,5,213);
   }
+  /* M2-A3:击杀卡截图 */
+  _shotKillcard(){
+    const k=byId('frost'),v=byId('raven');
+    this.ui.killCard({
+      killer:isEN()?k.name.en:k.name.zh,victim:isEN()?v.name.en:v.name.zh,
+      weapon:'M4A4',mine:true,killerOp:k,victimOp:v,
+    });
+  }
+
+  /* M2-A4:MVP 结算截图 */
+  _shotMvp(){
+    const op=byId('frost');
+    this.ui.showOver({
+      title:t('win'),win:true,kicker:t('dm_over_kicker'),
+      stats:{time:312,waveLabel:t('dur_label'),wave:t('dur_fmt',{m:5,s:12}),
+        kills:42,critKills:11,hits:280,shots:430,score:18960,best:21450,bestCombo:4,
+        mvp:{name:isEN()?op.name.en:op.name.zh,op,kills:19,deaths:2}},
+      board:`<table><tr><th>${t('sb_role')}</th><th>${t('sb_faction')}</th><th>${t('sb_kills')}</th><th>${t('sb_deaths')}</th></tr>
+        <tr class="me"><td>${isEN()?op.name.en:op.name.zh}</td><td>CT</td><td>19</td><td>2</td></tr></table>`,
+    });
+  }
+
   _shotOver(){
     this.ui.showOver({
       title:'哨站失守',win:false,kicker:'信号中断 · SIGNAL LOST',
@@ -859,7 +1007,7 @@ class Game{
       assert(!this.ui.errors.some(e=>e.startsWith('ERR')),'启动期存在错误: '+this.ui.errors.join(';'));
     });
     await run('loadout-ct-aug',()=>{
-      this.ui.sel.hero='ct';this.ui.sel.primary='aug';this.ui.sel.mode='waves';
+      this.ui.sel.operator='frost';this.ui.sel.hero='ct';this.ui.sel.primary='aug';this.ui.sel.mode='waves';
       this.startGame();this.fallbackAim=true;this.player.god=true;
       assert(this.weapon.def.id==='aug','应为 AUG,实际 '+this.weapon.def.id);
     });
@@ -976,6 +1124,205 @@ class Game{
       this.player.pitch=-Math.PI;this.player.update(.016,this.input,this.keys,this.time,this.audio);
       assert(this.camera.rotation.x>-.01-Math.PI/2,'俯仰下限同样钳制,实际 '+this.camera.rotation.x.toFixed(2));
       this.player.pitch=0;this.player.update(.016,this.input,this.keys,this.time,this.audio);
+    });
+
+    await run('operators-8',()=>{
+      this.ui.sel.operator='frost';this.ui.sel.hero='ct';this.ui.sel.primary='m4a4';this.ui.sel.mode='dm';
+      this.startGame();
+      const ids=this.heroes.list.map(h=>h.opId);
+      assert(ids.length===5,'DM 应有 5 名 bot,实际 '+ids.length);
+      assert(new Set(ids).size===5,'同局不应出现重复干员: '+ids.join(','));
+      assert(!ids.includes('frost'),'机器人不应与玩家干员重复');
+      assert(this.heroes.list.filter(h=>h.team==='A').length===2,'队友应为 2 人');
+      assert(this.heroes.list.filter(h=>h.team==='B').length===3,'敌人应为 3 人');
+      for(const h of this.heroes.list){
+        assert(h.materials.length===12,'每角色材质应≤12,实际 '+h.materials.length);
+        assert(h.parts.head&&h.parts.gunTip,'角色部件应完整');
+      }
+    });
+    await run('fp-arms-faction',()=>{
+      this.weapon.setFaction(byId('frost'));
+      const ct=this.weapon._armSleeves[0].color.getHex();
+      this.weapon.setFaction(byId('raven'));
+      const t=this.weapon._armSleeves[0].color.getHex();
+      assert(ct!==t,'CT/T 第一人称袖套颜色应不同: '+ct.toString(16)+' vs '+t.toString(16));
+    });
+    await run('anim-state',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const h=this.heroes.list[0];
+      h.vel.set(0,0,0);h.reloadT=0;h.hitT=0;h.recoilKick=0;h.moving=false;
+      assert(h._decideAnim(null)==='idle','静止无目标 → idle');
+      h.moving=true;
+      assert(h._decideAnim(null)==='walk','移动 → walk');
+      h.moving=false;
+      assert(h._decideAnim({})==='aim','有目标 → aim');
+      h.hitT=.2;
+      assert(h._decideAnim(null)==='hit','受击 → hit');
+      h.hitT=0;h.recoilKick=.5;
+      assert(h._decideAnim(null)==='fire','开火 → fire');
+      h.recoilKick=0;h.reloadT=.5;
+      assert(h._decideAnim(null)==='reload','换弹 → reload');
+      h.ammo=1;h.reloadT=0;h._consumeAmmo();
+      assert(h.reloadT>1.1&&h.ammo===h.magSize,'打空弹匣应进入 1.2s 换弹');
+      h.reloadT=0;h.recoilKick=0;
+      h._animate(.016,1,0);
+      assert(Number.isFinite(h.armR.rotation.x)&&Number.isFinite(h.torso.position.y),'动画姿态应有限');
+      assert(Math.abs(h.armR.rotation.x-h.baseArmR[0])<.01,'静止持枪姿态应回到基准(无 T-pose)');
+    });
+    await run('radio-barks',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const h=this.heroes.list[0];
+      h._barkT=0;
+      assert(h.bark('bark_spot'),'首个台词应触发');
+      assert(!h.bark('bark_spot'),'6s 冷却内不应重复');
+      assert(this.ui.barkPool.some(p=>p.t>0),'台词槽应显示');
+      h._barkT=0;h.hp=h.maxHp*.2;h._lowBarked=false;
+      h.takeDamage(1,'E2E');
+      assert(h._lowBarked,'低血量应触发台词');
+      assert(!h.bark('bark_spot'),'台词后应进入冷却');
+    });
+    await run('nametag-hp',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const h=this.heroes.list[0];
+      assert(h.nameTag&&h.nameTag.bar&&h.nameTag.group,'名牌应含血条组件');
+      assert(Math.abs(h.nameTag.bar.scale.x-1)<.01,'满血血条应为 1');
+      h.takeDamage(h.maxHp*.5,'E2E');
+      assert(Math.abs(h.nameTag.bar.scale.x-.5)<.02,'半血血条应为 .5');
+      this.camera.position.copy(h.pos);
+      h.update(.016,this.time,()=>false);
+      assert(h.nameTag.group.visible,'近距离名牌应可见');
+      assert(h.nameTag.sprite.material.opacity>.9,'30m 内名牌应全亮');
+      this.camera.position.set(999,0,999);
+      h.update(.016,this.time,()=>false);
+      assert(!h.nameTag.group.visible,'远距离名牌应淡出隐藏');
+      h.respawn();
+      assert(Math.abs(h.nameTag.bar.scale.x-1)<.01,'重生后血条应恢复');
+      this.camera.position.set(0,1.6,8);
+    });
+    await run('mvp-card',()=>{
+      const op=byId('vulture');
+      this.ui.showOver({title:'X',win:true,kicker:'X',mvp:null,
+        stats:{time:60,waveLabel:'W',wave:'1',kills:10,critKills:2,hits:20,shots:30,score:100,best:0,bestCombo:2,
+          mvp:{name:'秃鹫',op,kills:10,deaths:1}}});
+      const el=document.getElementById('o-mvp');
+      assert(!el.classList.contains('hidden'),'MVP 卡片应显示');
+      assert(el.textContent.includes('秃鹫'),'MVP 名字应显示');
+      assert(el.querySelector('.mvp-face'),'MVP 应有立绘或首字母兜底');
+      this.ui.showOnly(null);
+    });
+    await run('share-card',()=>{
+      const cv=this.ui.buildShareCard({score:12345,wave:9,kills:63,hits:412,shots:648,bestCombo:4,waveLabel:'WAVE'},byId('frost'));
+      assert(cv&&cv.width===1200&&cv.height===630,'分享卡应为 1200×630');
+      const d=cv.getContext('2d').getImageData(600,315,1,1).data;
+      assert(d[3]>0,'分享卡应绘制不透明背景');
+      assert(typeof this.ui.downloadShareCard==='function','应提供下载入口');
+    });
+    await run('killcard',()=>{
+      const evil='<img src=x onerror=alert(1)>';
+      this.ui.killCard({killer:evil,victim:'霜华',weapon:'AK47',mine:false,
+        killerOp:byId('raven'),victimOp:byId('frost')});
+      const el=document.getElementById('killcard');
+      assert(!el.classList.contains('hidden'),'击杀卡应显示');
+      assert(this.ui.killcardT>1.5,'击杀卡应持续 1.6s');
+      assert(!el.innerHTML.includes('<img'),'玩家名应转义,无 XSS');
+      assert(el.classList.contains('death'),'被击杀应使用死亡配色');
+      this.ui.update(1.7,100,100);
+      assert(el.classList.contains('hidden'),'1.6s 后应自动隐藏');
+    });
+    await run('music-bgm',()=>{
+      const a=this.audio;
+      a.musicStart('menu');a.musicSet(.9);a.musicMode('combat');a.musicStop();
+      a.musicStart('combat');a.musicSet(.2);
+      this.pause();
+      assert(this.state==='paused','暂停应进入 paused 状态');
+      this.resume();
+      assert(this.state==='playing','恢复应回到 playing');
+      this.toMenu();
+      assert(this.state==='menu','返回菜单应进入 menu');
+      assert(!this.ui.errors.some(e=>e.startsWith('ERR')),'BGM 切换不应产生运行错误');
+    });
+    await run('death-no-explosion',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      let boom=0;
+      const orig=this.effects.explosion;
+      this.effects.explosion=(...a)=>{boom++;return orig.apply(this.effects,a);};
+      const h=this.heroes.list[0];
+      h.takeDamage(9999,'E2E');
+      assert(!h.alive&&h.state==='dying','角色应进入死亡倒地状态');
+      assert(boom===0,'人类单位死亡不应触发爆炸');
+      assert(h.parts.rifle.parent===this.scene,'死亡时步枪应脱手掉落');
+      h.update(1,this.time,()=>true);
+      assert(h.state==='dead','0.7s 后应进入尸体状态');
+      h.deathT=5.6;
+      h.update(.016,this.time,()=>true);
+      assert(h.alive&&h.state==='active','5.5s 后应重生');
+      assert(h.parts.rifle.parent===h.group,'重生后步枪应回到手部');
+      assert(Math.abs(h.materials[0].opacity-1)<.01,'重生后材质应恢复不透明');
+      this.effects.explosion=orig;
+    });
+    await run('damage-direction',()=>{
+      this.player.god=false;this.invulnT=0;this.player.alive=true;
+      this.player.health=999;this.player.maxHealth=999;
+      this.player.pos.set(0,0,0);this.player.yaw=0;
+      const check=(x,z,want)=>{
+        this.ui.lastDmgAngle=999;
+        this.damagePlayerFromBot(1,'E2E',new THREE.Vector3(x,0,z));
+        let d=this.ui.lastDmgAngle-want;
+        while(d>Math.PI)d-=Math.PI*2;while(d<-Math.PI)d+=Math.PI*2;
+        assert(Math.abs(d)<.2,`方向误差 ${d.toFixed(2)}rad(期望 ${want.toFixed(2)},实际 ${this.ui.lastDmgAngle.toFixed(2)})`);
+      };
+      check(0,-10,0);            // 正前
+      check(0,10,Math.PI);       // 正后
+      check(10,0,Math.PI/2);     // 正右
+      check(-10,0,-Math.PI/2);   // 正左
+      this.player.god=true;this.player.health=this.player.maxHealth;
+    });
+    await run('combo-callout',()=>{
+      this.comboKills=1;this.comboT=4;
+      this._onKill({T:{score:100},pos:new THREE.Vector3()},false);
+      assert(this.comboKills===2,'4 秒内第二次击杀应累计连杀');
+      const el=document.getElementById('combo-callout');
+      assert(el.classList.contains('show'),'连杀播报应显示');
+      assert(el.textContent.length>0,'连杀播报应有文案');
+    });
+    await run('settings-persist',()=>{
+      this.settings.set('fov',90);
+      this.settings.set('crosshair.color','#ff8800');
+      const raw=JSON.parse(localStorage.getItem('o07_settings_v2'));
+      assert(raw.fov===90,'FOV 应写入存档');
+      assert(raw.crosshair.color==='#ff8800','准星颜色应写入存档');
+      this.settings.load();
+      assert(this.settings.get('fov')===90,'重新载入后 FOV 应保留');
+      this.settings.set('fov',106);
+      this.settings.set('crosshair.color','#7fe3ff');
+    });
+    await run('fov-apply',()=>{
+      this.baseHFov=90;this._hfovCur=90;this._applyCameraState();
+      const want=THREE.MathUtils.radToDeg(2*Math.atan(Math.tan(THREE.MathUtils.degToRad(90)*.5)/this.camera.aspect));
+      assert(Math.abs(this.camera.fov-want)<.5,`FOV 应生效: ${this.camera.fov.toFixed(2)} vs ${want.toFixed(2)}`);
+      this.baseHFov=106;this._hfovCur=106;this._applyCameraState();
+    });
+    await run('operator-camo-persist',()=>{
+      this.ui.selectOperator('viper');
+      this.ui.setCamo('desert');
+      assert(store.get('o07_operator')==='viper','干员选择应持久化');
+      assert(store.get('o07_camo_viper')==='desert','迷彩选择应持久化');
+      assert(this.ui.camoOf(byId('viper'))==='desert','camoOf 应返回存档迷彩');
+      assert(this.ui.sel.hero==='t','选择 T 干员后阵营应切换');
+      assert(this.ui.sel.primary==='ak47','切换阵营后主武器应回落到阵营合法武器');
+      this.ui.selectOperator('frost');
+      assert(this.ui.sel.hero==='ct','切回 CT 干员阵营应恢复');
+      assert(this.ui.sel.camo===this.ui.camoOf(byId('frost')),'迷彩应随干员恢复');
+    });
+    await run('memory-stable',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const before=this.debugMemory();
+      for(let i=0;i<10;i++){this.startGame();this.toMenu();}
+      this.startGame();
+      const after=this.debugMemory();
+      assert(after.geometries<=before.geometries+2,`几何体不应增长: ${before.geometries} → ${after.geometries}`);
+      assert(after.heroMats===before.heroMats,`角色材质数量应稳定: ${before.heroMats} → ${after.heroMats}`);
+      assert(after.textures<=before.textures+5,`贴图不应持续增长: ${before.textures} → ${after.textures}`);
     });
 
     const fail=results.length-pass;

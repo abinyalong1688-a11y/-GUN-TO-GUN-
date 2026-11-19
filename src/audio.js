@@ -1,6 +1,6 @@
 // audio.js —— WebAudio 实时合成音效,零音频文件
 export class AudioFX{
-  constructor(){this.ctx=null;this.ok=false;this._whine=null;this._droneGain=null;}
+  constructor(){this.ctx=null;this.ok=false;this._whine=null;this._droneGain=null;this.buses=null;}
 
   init(){
     if(this.ok)return;
@@ -11,6 +11,14 @@ export class AudioFX{
     const comp=this.ctx.createDynamicsCompressor();
     comp.threshold.value=-16;comp.knee.value=18;comp.ratio.value=7;comp.attack.value=.003;
     this.master.connect(comp);comp.connect(this.ctx.destination);
+    // 分轨:音效 / 音乐 / 无线电 / 环境;全部汇入 master
+    this.buses={
+      sfx:this.ctx.createGain(),
+      music:this.ctx.createGain(),
+      radio:this.ctx.createGain(),
+      ambient:this.ctx.createGain(),
+    };
+    for(const k of ['sfx','music','radio','ambient'])this.buses[k].connect(this.master);
     // 噪声缓冲
     const len=this.ctx.sampleRate*2;
     this.noiseBuf=this.ctx.createBuffer(1,len,this.ctx.sampleRate);
@@ -26,8 +34,13 @@ export class AudioFX{
   }
   resume(){if(this.ctx&&this.ctx.state==='suspended')this.ctx.resume();}
   setVolume(v){if(this.master)this.master.gain.value=v*.95;}
+  setBus(name,v){
+    if(!this.buses||!this.buses[name])return;
+    this.buses[name].gain.value=Math.max(0,Math.min(1,v));
+  }
+  _bus(name){return (this.buses&&this.buses[name])||this.master;}
 
-  _noise(t0,dur,gain,{freq=800,q=.7,type='bandpass',slide=null}={}){
+  _noise(t0,dur,gain,{freq=800,q=.7,type='bandpass',slide=null,bus='sfx'}={}){
     const src=this.ctx.createBufferSource();src.buffer=this.noiseBuf;src.loop=true;
     src.playbackRate.value=.9+Math.random()*.2;
     const f=this.ctx.createBiquadFilter();f.type=type;f.frequency.setValueAtTime(freq,t0);f.Q.value=q;
@@ -35,18 +48,18 @@ export class AudioFX{
     const g=this.ctx.createGain();
     g.gain.setValueAtTime(0,t0);g.gain.linearRampToValueAtTime(gain,t0+.004);
     g.gain.exponentialRampToValueAtTime(.001,t0+dur);
-    src.connect(f);f.connect(g);g.connect(this.master);
+    src.connect(f);f.connect(g);g.connect(this._bus(bus));
     src.start(t0);src.stop(t0+dur+.05);
     return f;
   }
-  _tone(t0,dur,gain,{freq=440,end=null,type='sine'}={}){
+  _tone(t0,dur,gain,{freq=440,end=null,type='sine',bus='sfx'}={}){
     const o=this.ctx.createOscillator();o.type=type;
     o.frequency.setValueAtTime(freq,t0);
     if(end)o.frequency.exponentialRampToValueAtTime(Math.max(1,end),t0+dur);
     const g=this.ctx.createGain();
     g.gain.setValueAtTime(0,t0);g.gain.linearRampToValueAtTime(gain,t0+.005);
     g.gain.exponentialRampToValueAtTime(.001,t0+dur);
-    o.connect(g);g.connect(this.master);
+    o.connect(g);g.connect(this._bus(bus));
     o.start(t0);o.stop(t0+dur+.05);
     return o;
   }
@@ -58,7 +71,7 @@ export class AudioFX{
     const lfo=this.ctx.createOscillator();lfo.frequency.value=.08;
     const lg=this.ctx.createGain();lg.gain.value=180;
     lfo.connect(lg);lg.connect(f.frequency);
-    src.connect(f);f.connect(g);g.connect(this.master);
+    src.connect(f);f.connect(g);g.connect(this._bus('ambient'));
     src.start();lfo.start();
     this._windGain=g;
   }
@@ -69,13 +82,66 @@ export class AudioFX{
     const f=this.ctx.createBiquadFilter();f.type='lowpass';f.frequency.value=260;
     const o1=this.ctx.createOscillator();o1.type='sawtooth';o1.frequency.value=52;
     const o2=this.ctx.createOscillator();o2.type='sawtooth';o2.frequency.value=55.5;
-    o1.connect(f);o2.connect(f);f.connect(g);g.connect(this.master);
+    o1.connect(f);o2.connect(f);f.connect(g);g.connect(this._bus('ambient'));
     o1.start();o2.start();
     this._droneGain=g;
   }
   setDrone(level){ // 0~1 无人机接近紧张度
     if(!this.ctx)return;
     this._droneGain.gain.setTargetAtTime(level*.14,this.ctx.currentTime,.3);
+  }
+
+  /* ---- M2-A6 自适应 BGM:两层振荡器 + 滤波噪声,menu pad / combat 脉冲 ---- */
+  musicStart(mode='menu'){
+    if(!this.ok||!this.ctx)return;
+    const t=this.ctx.currentTime;
+    if(this._music){
+      this.musicSet(1);
+      this.musicMode(mode);
+      return;
+    }
+    const ctx=this.ctx;
+    const gain=ctx.createGain();gain.gain.value=0;gain.connect(this._bus('music'));
+    const trem=ctx.createGain();trem.gain.value=1;trem.connect(gain);
+    const filter=ctx.createBiquadFilter();filter.type='lowpass';filter.frequency.value=600;filter.Q.value=.5;
+    filter.connect(trem);
+    const o1=ctx.createOscillator();o1.type='sine';o1.frequency.value=55;
+    const o2=ctx.createOscillator();o2.type='triangle';o2.frequency.value=82.4;
+    const g2=ctx.createGain();g2.gain.value=.35;
+    o1.connect(filter);o2.connect(g2);g2.connect(filter);
+    const ns=ctx.createBufferSource();ns.buffer=this.noiseBuf;ns.loop=true;
+    const nf=ctx.createBiquadFilter();nf.type='bandpass';nf.frequency.value=420;nf.Q.value=.8;
+    const ng=ctx.createGain();ng.gain.value=.06;
+    ns.connect(nf);nf.connect(ng);ng.connect(trem);
+    // 脉冲 LFO:depth 接到 trem.gain,战斗时增强起伏
+    const lfo=ctx.createOscillator();lfo.type='sine';lfo.frequency.value=.35;
+    const depth=ctx.createGain();depth.gain.value=.02;
+    lfo.connect(depth);depth.connect(trem.gain);
+    o1.start();o2.start();ns.start();lfo.start();
+    this._music={gain,trem,filter,o1,o2,ns,lfo,depth};
+    this.musicMode(mode);
+    this.musicSet(1);
+  }
+  musicMode(mode){
+    if(!this._music||!this.ctx)return;
+    const t=this.ctx.currentTime,c=mode==='combat';
+    this._music.filter.frequency.setTargetAtTime(c?1100:600,t,.5);
+    this._music.lfo.frequency.setTargetAtTime(c?2.4:.35,t,.5);
+    this._music.depth.gain.setTargetAtTime(c?.25:.02,t,.5);
+  }
+  musicSet(level){
+    if(!this._music||!this.ctx)return;
+    const v=Math.max(0,Math.min(1,level));
+    this._music.gain.gain.setTargetAtTime(v*.12,this.ctx.currentTime,.25);
+  }
+  musicStop(){
+    const m=this._music;
+    if(!m||!this.ctx)return;
+    const t=this.ctx.currentTime;
+    m.gain.gain.setTargetAtTime(0,t,.15);
+    const stopAt=t+.5;
+    try{m.o1.stop(stopAt);m.o2.stop(stopAt);m.ns.stop(stopAt);m.lfo.stop(stopAt);}catch(e){}
+    this._music=null;
   }
 
   /* ---- 具体 SFX ---- */
@@ -120,7 +186,7 @@ export class AudioFX{
     if(!this.ok||this._whine)return;
     const o=this.ctx.createOscillator();o.type='sawtooth';o.frequency.value=420;
     const g=this.ctx.createGain();g.gain.value=0;
-    o.connect(g);g.connect(this.master);o.start();
+    o.connect(g);g.connect(this._bus('sfx'));o.start();
     this._whine={o,g};
   }
   whineSet(level,freq){
@@ -195,6 +261,13 @@ export class AudioFX{
   respawn(){
     if(!this.ok)return;const t=this.ctx.currentTime;
     this._tone(t,.1,.2,{freq:660});this._tone(t+.1,.16,.2,{freq:990});
+  }
+  /* M2-A2:无线电按键提示音(走 radio 分轨,受音乐/无线电音量控制) */
+  radio(){
+    if(!this.ok)return;
+    const t=this.ctx.currentTime;
+    this._noise(t,.06,.12,{freq:1800,q:1.2,bus:'radio'});
+    this._tone(t+.04,.05,.08,{freq:880,bus:'radio'});
   }
   gameOver(){
     if(!this.ok)return;const t=this.ctx.currentTime;

@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import {escHTML,store} from './util.js';
 import {t,isEN} from './i18n.js';
+import {OPERATORS,byId,byFaction,CAMOS,DEFAULT_OP} from './operators.js';
 
 const $=id=>document.getElementById(id);
 
@@ -24,10 +25,12 @@ export class UI{
       dmg:$('dmg-vignette'),lowhp:$('lowhp'),flash:$('flash-white'),
       reloadRing:$('reload-ring'),rrArc:$('rr-arc'),
       mBest:$('m-best'),oStats:$('o-stats'),oBest:$('o-best'),
-      oKicker:$('o-kicker'),oTitle:$('o-title'),oBoard:$('o-board'),
+      oKicker:$('o-kicker'),oTitle:$('o-title'),oBoard:$('o-board'),oMvp:$('o-mvp'),
       debug:$('debug'),
       dmTop:$('dm-top'),dmTimer:$('dm-timer'),dmA:$('dm-a'),dmB:$('dm-b'),
-      killfeed:$('killfeed'),board:$('board'),
+      killfeed:$('killfeed'),killcard:$('killcard'),barks:$('barks'),board:$('board'),
+      dmgDir:$('dmg-dir'),combo:$('combo-callout'),
+      mOperators:$('m-operators'),mCamos:$('m-camos'),
       wslots:[...document.querySelectorAll('.wslot')],
       scope:$('scope-overlay'),
     };
@@ -47,26 +50,47 @@ export class UI{
       this.el.killfeed.appendChild(d);
       this.kfPool.push({el:d,t:0});
     }
+    // M2-A2:无线电台词池(复用 4 槽位,无逐条 DOM 分配)
+    this.barkPool=[];
+    for(let i=0;i<4;i++){
+      const d=document.createElement('div');
+      d.className='bk';d.style.display='none';
+      if(this.el.barks)this.el.barks.appendChild(d);
+      this.barkPool.push({el:d,t:0});
+    }
+    this._barkIdx=0;
+    this.killcardT=0;
     this.errors=[];
     this._pv=new THREE.Vector3(); // 每帧计分浮字复用
+    this.dmgDirT=0;this.comboT=0;
     // 菜单选择状态(校验持久化旧值,脏数据回落默认)
-    const HOK=['ct','t'],MOK=['desert','snow','snowtown','ember'],KOK=['waves','dm'];
-    const h=store.get('o07_hero'),m=store.get('o07_map'),k=store.get('o07_mode');
+    const MOK=['desert','snow','snowtown','ember'],KOK=['waves','dm'];
+    const m=store.get('o07_map'),k=store.get('o07_mode');
     const p=store.get('o07_primary');
+    const op=byId(store.get('o07_operator'))||byId(DEFAULT_OP);
     this.sel={
-      hero:HOK.includes(h)?h:'ct',
+      hero:op.faction,
+      operator:op.id,
+      camo:'default',
       map:MOK.includes(m)?m:'desert',
       mode:KOK.includes(k)?k:'waves',
       primary:['m4a4','aug','awp','mp5','sg553','ak47'].includes(p)?p:'m4a4',
     };
+    // 干员与主武器阵营匹配 + 迷彩存档恢复(C4/C5:刷新后仍选中)
+    if(!PRIMARIES[this.sel.hero].some(w=>w.id===this.sel.primary)){
+      this.sel.primary=PRIMARIES[this.sel.hero][0].id;
+    }
+    this.sel.camo=this.camoOf(op);
   }
 
   /* ---------- 菜单选择 ---------- */
   bindMenu(onChange){
     const s=this.sel;
+    this._onChange=onChange;
     // 主武器 chips 按阵营重建(AUG 仅 CT)
     const buildPrimaries=()=>{
       const box=$('m-primaries');
+      if(!box)return;
       box.innerHTML=PRIMARIES[s.hero].map(p=>{
         const label=isEN()&&p.nEn?p.nEn:p.n;
         return `<div class="chip${p.id===s.primary?' selected':''}" data-primary="${p.id}">${label}</div>`;
@@ -77,19 +101,22 @@ export class UI{
     };
     this.buildPrimaries=buildPrimaries; // 语言切换时重建
     const refresh=()=>{
-      document.querySelectorAll('.hero-card').forEach(c=>c.classList.toggle('selected',c.dataset.hero===s.hero));
       document.querySelectorAll('#m-maps .chip').forEach(c=>c.classList.toggle('selected',c.dataset.map===s.map));
       document.querySelectorAll('#m-modes .chip').forEach(c=>c.classList.toggle('selected',c.dataset.mode===s.mode));
       buildPrimaries();
+      this.buildOperators();
     };
-    document.querySelectorAll('.hero-card').forEach(c=>c.addEventListener('click',()=>{
-      s.hero=c.dataset.hero;store.set('o07_hero',s.hero);
-      // 阵营切换后主武器合法性校验
-      if(!PRIMARIES[s.hero].some(p=>p.id===s.primary)){
-        s.primary=PRIMARIES[s.hero][0].id;store.set('o07_primary',s.primary);
-      }
-      refresh();onChange&&onChange();
-    }));
+    this.refreshMenu=refresh;
+    // C4:干员卡 / 迷彩 chips(事件委托,重建无需重新绑定)
+    if(this.el.mOperators)this.el.mOperators.addEventListener('click',e=>{
+      const card=e.target.closest('.op-card');
+      if(card)this.selectOperator(card.dataset.op);
+    });
+    if(this.el.mCamos)this.el.mCamos.addEventListener('click',e=>{
+      const chip=e.target.closest('.camo-chip');
+      if(!chip||chip.classList.contains('locked'))return;
+      this.setCamo(chip.dataset.camo);
+    });
     document.querySelectorAll('#m-maps .chip').forEach(c=>c.addEventListener('click',()=>{
       s.map=c.dataset.map;store.set('o07_map',s.map);refresh();onChange&&onChange();
     }));
@@ -98,6 +125,156 @@ export class UI{
     }));
     refresh();
     $('m-name').value=store.get('o07_name');
+    this.applyTheme(byId(s.operator)?.faction||'ct');
+  }
+
+  /* ---------- C4 干员名册 ---------- */
+  camoNeed(camo){return {default:0,desert:0,snow:5,urban:10}[camo]||0;}
+  camoLocked(camo){
+    const best=parseInt(store.get('o07_best_wave','0'),10)||0;
+    return best<this.camoNeed(camo);
+  }
+  camoOf(op){
+    let c=store.get('o07_camo_'+op.id)||'default';
+    if(!CAMOS[c]||this.camoLocked(c))c='default';
+    return c;
+  }
+  buildOperators(){
+    const box=this.el.mOperators;
+    if(!box)return;
+    const s=this.sel;
+    const html=[];
+    for(const f of ['ct','t']){
+      html.push(`<div class="op-group"><div class="op-group-t"><span class="${f==='ct'?'tA':'tB'}">${t('faction_'+f)}</span> · ${byFaction(f).length}</div><div class="op-row">`);
+      for(const o of byFaction(f)){
+        const camo=this.camoOf(o);
+        const url=this.portraits?this.portraits.render(o,camo,256,{frame:'bust'}):null;
+        const name=isEN()?o.name.en:o.name.zh;
+        const role=isEN()?o.role.en:o.role.zh;
+        const bio=isEN()?o.bio.en:o.bio.zh;
+        const quote=isEN()?o.quote.en:o.quote.zh;
+        const selected=o.id===s.operator;
+        const speed=(5.2*o.speedMul).toFixed(1);
+        html.push(`<div class="op-card ${f}${selected?' selected':''}${url?'':' no-art'}" data-op="${o.id}">
+          <div class="op-portrait"${url?` style="background-image:url('${url}')"`:''}><span class="op-faction">${t('faction_'+f)}</span></div>
+          <div class="op-name">${escHTML(name)}</div>
+          <div class="op-role">${escHTML(role)}</div>
+          <div class="op-stats">${t('op_hp')} ${o.hp} · ${t('op_speed')} ${speed}</div>
+          ${selected?`<div class="op-bio">${escHTML(bio)}</div><div class="op-quote">“${escHTML(quote)}”</div>`:''}
+        </div>`);
+      }
+      html.push('</div></div>');
+    }
+    box.innerHTML=html.join('');
+    this.buildCamos();
+  }
+  buildCamos(){
+    const box=this.el.mCamos;
+    const op=byId(this.sel.operator);
+    if(!box||!op)return;
+    box.innerHTML=`<span class="camo-label">${t('op_camo')}</span>`+Object.keys(CAMOS).map(c=>{
+      const locked=this.camoLocked(c);
+      const label=t('camo_'+c);
+      const title=locked?t('camo_locked',{n:this.camoNeed(c)}):label;
+      return `<div class="camo-chip${c===this.sel.camo?' selected':''}${locked?' locked':''}" data-camo="${c}" title="${escHTML(title)}">${label}</div>`;
+    }).join('');
+  }
+  selectOperator(id){
+    const op=byId(id);
+    if(!op)return;
+    const s=this.sel;
+    s.operator=op.id;s.hero=op.faction;
+    store.set('o07_operator',op.id);
+    store.set('o07_hero',op.faction);
+    // 阵营切换后主武器合法性校验
+    if(!PRIMARIES[s.hero].some(p=>p.id===s.primary)){
+      s.primary=PRIMARIES[s.hero][0].id;store.set('o07_primary',s.primary);
+    }
+    s.camo=this.camoOf(op);
+    this.applyTheme(op.faction);
+    this.refreshMenu?this.refreshMenu():this.buildOperators();
+    this._onChange&&this._onChange();
+  }
+  setCamo(camo){
+    if(!CAMOS[camo]||this.camoLocked(camo))return;
+    const op=byId(this.sel.operator);
+    if(!op)return;
+    this.sel.camo=camo;
+    store.set('o07_camo_'+op.id,camo);
+    this.buildOperators();
+  }
+  applyTheme(faction){
+    const root=document.documentElement.style;
+    const ct=faction!=='t';
+    root.setProperty('--accent',ct?'#7fd4ff':'#ff8a6a');
+    root.setProperty('--line',ct?'rgba(127,212,255,.35)':'rgba(255,138,106,.35)');
+  }
+
+  /* ---------- U1 设置面板 ---------- */
+  bindSettings(settings,onChange){
+    this.settings=settings;
+    const el=id=>document.getElementById(id);
+    const bind=(id,path,labelId,fmt)=>{
+      const c=el(id);
+      if(!c)return;
+      c.addEventListener('input',()=>{
+        const raw=c.type==='checkbox'?c.checked:c.value;
+        const val=settings.set(path,raw);
+        if(val===undefined)return;
+        if(labelId){const l=el(labelId);if(l)l.textContent=fmt?fmt(val):val;}
+        if(path.startsWith('crosshair.'))this.applyCrosshair();
+        onChange&&onChange(path,val);
+      });
+    };
+    bind('p-sens','sens','p-sens-v',v=>Number(v).toFixed(2));
+    bind('p-ads','adsSens','p-ads-v',v=>Number(v).toFixed(2));
+    bind('p-fov','fov','p-fov-v');
+    bind('p-vol','volume','p-vol-v',v=>Math.round(v*100)+'%');
+    bind('p-sfx','sfx','p-sfx-v',v=>Math.round(v*100)+'%');
+    bind('p-music','music','p-music-v',v=>Math.round(v*100)+'%');
+    bind('p-xh-color','crosshair.color');
+    bind('p-xh-size','crosshair.size','p-xh-size-v');
+    bind('p-xh-gap','crosshair.gap','p-xh-gap-v');
+    bind('p-yinv','yInvert');
+    bind('p-crouch','crouchToggle');
+    bind('p-ads-toggle','adsToggle');
+    const reset=el('p-reset');
+    if(reset)reset.addEventListener('click',()=>{
+      settings.reset();
+      this.syncSettings();
+      this.applyCrosshair();
+      onChange&&onChange('reset',true);
+    });
+    this.syncSettings();
+    this.applyCrosshair();
+  }
+  syncSettings(){
+    const s=this.settings;
+    if(!s)return;
+    const set=(id,v)=>{const c=document.getElementById(id);if(c)c.value=v;};
+    const check=(id,v)=>{const c=document.getElementById(id);if(c)c.checked=!!v;};
+    const txt=(id,v)=>{const c=document.getElementById(id);if(c)c.textContent=v;};
+    set('p-sens',s.get('sens'));txt('p-sens-v',Number(s.get('sens')).toFixed(2));
+    set('p-ads',s.get('adsSens'));txt('p-ads-v',Number(s.get('adsSens')).toFixed(2));
+    set('p-fov',s.get('fov'));txt('p-fov-v',s.get('fov'));
+    set('p-vol',s.get('volume'));txt('p-vol-v',Math.round(s.get('volume')*100)+'%');
+    set('p-sfx',s.get('sfx'));txt('p-sfx-v',Math.round(s.get('sfx')*100)+'%');
+    set('p-music',s.get('music'));txt('p-music-v',Math.round(s.get('music')*100)+'%');
+    set('p-xh-color',s.get('crosshair.color'));
+    set('p-xh-size',s.get('crosshair.size'));txt('p-xh-size-v',s.get('crosshair.size'));
+    set('p-xh-gap',s.get('crosshair.gap'));txt('p-xh-gap-v',s.get('crosshair.gap'));
+    check('p-yinv',s.get('yInvert'));
+    check('p-crouch',s.get('crouchToggle'));
+    check('p-ads-toggle',s.get('adsToggle'));
+  }
+  applyCrosshair(){
+    const s=this.settings;
+    if(!s)return;
+    const c=s.get('crosshair');
+    const r=document.documentElement.style;
+    r.setProperty('--xh-color',c.color);
+    r.setProperty('--xh-w',c.size+'px');
+    r.setProperty('--xh-len',(c.size*2)+'px');
   }
   get playerName(){
     return ($('m-name').value.trim()||t('default_name')).slice(0,10);
@@ -170,7 +347,8 @@ export class UI{
   }
   crosshair(spreadRad,fovDeg,screenH,ads){
     // DOM 写入去重:准星参数未变时跳过
-    const gap=ads>.6?'0':(6+Math.tan(spreadRad)*(screenH/2)/Math.tan(fovDeg*Math.PI/180)).toFixed(1);
+    const base=this.settings?this.settings.get('crosshair.gap'):6;
+    const gap=ads>.6?'0':(base+Math.tan(spreadRad)*(screenH/2)/Math.tan(fovDeg*Math.PI/180)).toFixed(1);
     const key=gap+'|'+ads;
     if(key===this._xhKey)return;
     this._xhKey=key;
@@ -209,6 +387,36 @@ export class UI{
     slot.el.innerHTML=`<b>${escHTML(killer)}</b> <span class="w">[${escHTML(weapon)}]</span> ${mine?'✖':t('killed')} <i>${escHTML(victim)}</i>`;
     slot.el.style.display='block';
   }
+  /* M2-A3:击杀卡(双方立绘 + 代号 + 武器,1.6s) */
+  killCard({killer,victim,weapon,mine,killerOp,victimOp}){
+    const el=this.el.killcard;
+    if(!el)return;
+    const face=(op,name)=>{
+      let url=null;
+      try{if(op&&this.portraits)url=this.portraits.render(op,'default',128,{frame:'bust'});}catch(e){}
+      return url
+        ?`<div class="kc-face" style="background-image:url('${url}')"></div>`
+        :`<div class="kc-face kc-fallback">${escHTML(String(name||'?').slice(0,1))}</div>`;
+    };
+    el.classList.remove('hidden');
+    el.classList.add('show');
+    el.classList.toggle('death',!mine);
+    el.innerHTML=`
+      <div class="kc-side">${face(killerOp,killer)}<div class="kc-name">${escHTML(killer)}</div></div>
+      <div class="kc-mid"><div class="kc-w">${escHTML(weapon||'')}</div><div class="kc-arrow">▶</div></div>
+      <div class="kc-side">${face(victimOp,victim)}<div class="kc-name">${escHTML(victim)}</div></div>`;
+    this.killcardT=1.6;
+  }
+  /* M2-A2:无线电台词(名字来自 operator def,文案来自 i18n) */
+  bark(name,text,faction){
+    const pool=this.barkPool;
+    if(!pool||!pool.length)return;
+    const slot=pool[this._barkIdx++%pool.length];
+    slot.t=2.5;
+    slot.el.className='bk'+(faction==='t'?' t':'');
+    slot.el.textContent=`${name}: ${text}`;
+    slot.el.style.display='block';
+  }
   scoreboard(rows,labels={}){
     const la=labels.A||'CT',lb=labels.B||'T';
     let html=`<h3>${t('sb_title')}</h3><table><tr><th>${t('sb_role')}</th><th>${t('sb_faction')}</th><th>${t('sb_kills')}</th><th>${t('sb_deaths')}</th></tr>`;
@@ -222,6 +430,23 @@ export class UI{
   hideBoard(){this.el.board.classList.add('hidden');}
 
   damageFlash(v){this.dmgLevel=Math.min(1,this.dmgLevel+v);}
+  /* U2:受伤方向指示(angle=0 正前,正值顺时针) */
+  damageDirection(angle){
+    if(!this.el.dmgDir)return;
+    this.lastDmgAngle=angle;
+    this.el.dmgDir.style.transform=`rotate(${angle}rad)`;
+    this.el.dmgDir.classList.add('show');
+    this.dmgDirT=.8;
+  }
+  /* U3:连杀播报 */
+  combo(n){
+    if(!this.el.combo)return;
+    this.el.combo.textContent=t('combo_'+Math.min(5,Math.max(2,n)));
+    this.el.combo.classList.remove('show');
+    void this.el.combo.offsetWidth;
+    this.el.combo.classList.add('show');
+    this.comboT=1.1;
+  }
   deathFlash(){
     const f=this.el.flash;
     f.style.transition='none';f.style.opacity=.85;
@@ -258,7 +483,19 @@ export class UI{
   }
   update(dt,health,max){
     if(this.bannerT>0){this.bannerT-=dt;if(this.bannerT<=0)this.el.banner.classList.remove('show');}
+    if(this.dmgDirT>0){this.dmgDirT-=dt;if(this.dmgDirT<=0)this.el.dmgDir&&this.el.dmgDir.classList.remove('show');}
+    if(this.comboT>0){this.comboT-=dt;if(this.comboT<=0)this.el.combo&&this.el.combo.classList.remove('show');}
     this.dmgLevel=Math.max(0,this.dmgLevel-dt*1.6);
+    if(this.barkPool)for(const p of this.barkPool){
+      if(p.t>0){p.t-=dt;if(p.t<=0)p.el.style.display='none';}
+    }
+    if(this.killcardT>0){
+      this.killcardT-=dt;
+      if(this.killcardT<=0&&this.el.killcard){
+        this.el.killcard.classList.remove('show');
+        this.el.killcard.classList.add('hidden');
+      }
+    }
     const low=Math.max(0,1-health/max*2.2)*(0.55+Math.sin(performance.now()*.006)*.2);
     this.el.dmg.style.opacity=Math.min(1,this.dmgLevel+low*.7);
     this.el.lowhp.style.opacity=health<35?low:0;
@@ -266,10 +503,31 @@ export class UI{
   }
 
   /* ---------- 结算 ---------- */
-  showOver({title,win,kicker,stats,board,boardTitle}){
+  showOver({title,win,kicker,stats,board,boardTitle,mvp}){
+    mvp=mvp||(stats&&stats.mvp);
     this.el.oKicker.textContent=kicker||t('kicker_lost');
     this.el.oTitle.textContent=title||t('fail_title');
     this.el.oTitle.className=win?'o-win':'o-lose';
+    // M2-A4:MVP 立绘 + 代号 + 台词(无立绘时回退首字母)
+    if(this.el.oMvp){
+      if(mvp&&mvp.op){
+        let url=null;
+        try{if(this.portraits)url=this.portraits.render(mvp.op,'default',160,{frame:'bust'});}catch(e){}
+        const face=url
+          ?`<div class="mvp-face" style="background-image:url('${url}')"></div>`
+          :`<div class="mvp-face mvp-fallback">${escHTML(String(mvp.name||'?').slice(0,1))}</div>`;
+        const quote=isEN()?mvp.op.quote.en:mvp.op.quote.zh;
+        this.el.oMvp.innerHTML=`<div class="mvp-kicker">${t('mvp_title')}</div>
+          <div class="mvp-row">${face}<div class="mvp-info">
+            <b>${escHTML(mvp.name)}</b><span>“${escHTML(quote)}”</span>
+            <em>${t('over_kills')} ${mvp.kills} · ${t('sb_deaths')} ${mvp.deaths}</em>
+          </div></div>`;
+        this.el.oMvp.classList.remove('hidden');
+      }else{
+        this.el.oMvp.innerHTML='';
+        this.el.oMvp.classList.add('hidden');
+      }
+    }
     const mm=String(Math.floor(stats.time/60)).padStart(2,'0');
     const ss=String(Math.floor(stats.time%60)).padStart(2,'0');
     const rows=[
@@ -284,7 +542,66 @@ export class UI{
     this.el.oBoard.innerHTML=board||'';
     this.el.oBest.innerHTML=stats.best!=null?`${t('over_score')} <b style="font-family:var(--mono);font-size:20px;color:var(--amber)">${stats.score}</b>`+
       (stats.best>0?t('over_best',{n:stats.best}):''):'';
+    // M2-A7:结算时同步生成分享卡(MVP 优先,否则玩家干员)
+    try{this.buildShareCard(stats,(mvp&&mvp.op)||this.shareOp);}catch(e){}
     this.showOnly('over');
+  }
+
+  /* M2-A7:1200×630 战绩分享卡(离屏 canvas,零外部资源) */
+  buildShareCard(stats,op){
+    const cv=document.createElement('canvas');cv.width=1200;cv.height=630;
+    const g=cv.getContext('2d');
+    const grad=g.createLinearGradient(0,0,1200,630);
+    grad.addColorStop(0,'#0d1424');grad.addColorStop(.55,'#1a2740');grad.addColorStop(1,'#3a1717');
+    g.fillStyle=grad;g.fillRect(0,0,1200,630);
+    g.strokeStyle='rgba(255,255,255,.035)';g.lineWidth=2;
+    for(let x=-620;x<1200;x+=26){g.beginPath();g.moveTo(x,630);g.lineTo(x+420,0);g.stroke();}
+    g.fillStyle='#f0a860';g.fillRect(64,60,6,96);
+    g.font='bold 62px "Segoe UI",sans-serif';g.fillStyle='#fff';g.fillText('GUN TO GUN',92,116);
+    g.font='20px "Segoe UI",sans-serif';g.fillStyle='#9ba7c0';
+    g.fillText(isEN()?'TACTICAL FPS · OFFLINE':'战术阵营射击 · 离线可玩',94,152);
+    let art=null;
+    try{if(op&&this.portraits)art=this.portraits.renderCanvas(op,'default',512,{frame:'bust'});}catch(e){}
+    if(art){
+      g.drawImage(art,690,70,460,500);
+    }else{
+      g.fillStyle='rgba(127,212,255,.12)';g.fillRect(720,90,400,460);
+      g.font='bold 220px "Segoe UI",sans-serif';g.fillStyle='#7fd4ff';g.textAlign='center';
+      g.fillText(String((op&&(isEN()?op.name.en:op.name.zh))||'?').slice(0,1),920,360);
+      g.textAlign='left';
+    }
+    const rows=[
+      [t('over_score'),stats.score],
+      [stats.waveLabel||t('over_waves'),stats.wave],
+      [t('over_kills'),stats.kills],
+      [t('over_acc'),stats.shots?Math.round(stats.hits/stats.shots*100)+'%':'-'],
+      [t('over_combo'),'x'+(stats.bestCombo||0)],
+    ];
+    rows.forEach(([k,v],i)=>{
+      const y=248+i*62;
+      g.font='17px "Segoe UI",sans-serif';g.fillStyle='#9ba7c0';g.fillText(k,96,y);
+      g.font='bold 38px Consolas,monospace';g.fillStyle=i===0?'#f0a860':'#eef0f6';g.fillText(String(v),96,y+40);
+    });
+    g.fillStyle='rgba(240,168,96,.7)';g.fillRect(64,560,1072,1);
+    g.font='16px "Segoe UI",sans-serif';g.fillStyle='#9ba7c0';g.fillText(t('share_footer'),66,598);
+    this._shareCanvas=cv;
+    return cv;
+  }
+  downloadShareCard(){
+    const cv=this._shareCanvas;
+    if(!cv)return false;
+    const name='gun-to-gun-score.png';
+    if(cv.toBlob){
+      cv.toBlob(blob=>{
+        if(!blob)return;
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement('a');a.href=url;a.download=name;a.click();
+        setTimeout(()=>URL.revokeObjectURL(url),2000);
+      },'image/png');
+    }else{
+      const a=document.createElement('a');a.href=cv.toDataURL('image/png');a.download=name;a.click();
+    }
+    return true;
   }
   showBest(best){
     this.el.mBest.innerHTML=best>0?`${t('best_hit')}<b>${best}</b>`:t('best_none');

@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#0a0c14">
+<meta name="description" content="GUN TO GUN · 单文件 3D FPS · 8 名干员 · 4 张地图 · 7 种武器 · 离线可玩">
+<meta property="og:title" content="GUN TO GUN · 战术阵营射击">
+<meta property="og:description" content="单文件 3D FPS · 8 名干员 · 4 张地图 · 7 种武器 · 离线可玩">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://abin-studio.github.io/gun-to-gun/">
 <link rel="manifest" href="manifest.webmanifest">
 <title>GUN TO GUN · CS 风格反恐射击</title>
 <style>/*__CSS__*/</style>
@@ -27,7 +32,11 @@
       <div id="dm-score"><span class="teamA" id="dm-a">0</span><i>:</i><span class="teamB" id="dm-b">0</span></div>
     </div>
     <div id="killfeed"></div>
+    <div id="killcard" class="hidden"></div>
+    <div id="barks"></div>
     <div id="board" class="hidden"></div>
+    <div id="dmg-dir"><i></i></div>
+    <div id="combo-callout"></div>
     <div id="xh"><i class="xh-dot"></i><i class="xh-l t"></i><i class="xh-l b"></i><i class="xh-l l"></i><i class="xh-l r"></i></div>
     <div id="scope-overlay"><i class="h"></i><i class="v"></i><i class="dot"></i></div>
     <div id="hitmark"><i></i><i></i><i></i><i></i></div>
@@ -59,19 +68,9 @@
           <input id="m-name" class="m-input" maxlength="10" placeholder="输入昵称(默认 守卫-07)">
         </div>
         <div class="m-sec">
-          <div class="m-sec-t" data-i="sec_role">选择角色 · CS 阵营 · 3D 真人风</div>
-          <div class="hero-cards">
-            <div class="hero-card selected" data-hero="ct">
-              <div class="hc-avatar hc-ct">CT</div>
-              <div class="hc-name">霜华 · CT 特勤</div>
-              <div class="hc-desc">SAS 空勤特勤 · 模特身形女干员 · 长发马尾 · 战术耳麦<br>生命 115 · 主武器 M4A4 · 稳定精准</div>
-            </div>
-            <div class="hero-card" data-hero="t">
-              <div class="hc-avatar hc-t">T</div>
-              <div class="hc-name">赤鸦 · T 佣兵</div>
-              <div class="hc-desc">凤凰线佣兵 · 硬朗帅气突击手 · 挽袖红夹克 · V 型身躯<br>移速 +12% 换弹 +25% · 主武器 AK-47</div>
-            </div>
-          </div>
+          <div class="m-sec-t" data-i="sec_role">选择干员 · CT vs T · 8 名干员</div>
+          <div id="m-operators" class="op-grid"></div>
+          <div id="m-camos" class="camo-row"></div>
         </div>
         <div class="m-sec">
           <div class="m-sec-t" data-i="sec_primary">初始主武器(阵营全部 4 把随身,按 1 循环切换)</div>
@@ -113,7 +112,20 @@
       <span class="m-kicker" data-i="pause_kicker">作战暂停</span>
       <h2 data-i="pause_title">行动中止</h2>
       <div class="p-row"><label><span data-i="p_sens">鼠标灵敏度</span> <input id="p-sens" type="range" min="0.3" max="2.2" step="0.05" value="1"><span id="p-sens-v">1.00</span></label></div>
+      <div class="p-row"><label><span data-i="p_ads">ADS 灵敏度</span> <input id="p-ads" type="range" min="0.5" max="1.5" step="0.05" value="1"><span id="p-ads-v">1.00</span></label></div>
+      <div class="p-row"><label><span data-i="p_fov">视野 FOV</span> <input id="p-fov" type="range" min="70" max="110" step="1" value="106"><span id="p-fov-v">106</span></label></div>
       <div class="p-row"><label><span data-i="p_vol">音量</span> <input id="p-vol" type="range" min="0" max="1" step="0.05" value="0.8"><span id="p-vol-v">80%</span></label></div>
+      <div class="p-row"><label><span data-i="p_sfx">音效</span> <input id="p-sfx" type="range" min="0" max="1" step="0.05" value="0.9"><span id="p-sfx-v">90%</span></label></div>
+      <div class="p-row"><label><span data-i="p_music">音乐</span> <input id="p-music" type="range" min="0" max="1" step="0.05" value="0.6"><span id="p-music-v">60%</span></label></div>
+      <div class="p-row"><label><span data-i="p_xh_color">准星颜色</span> <input id="p-xh-color" type="color" value="#7fe3ff"></label></div>
+      <div class="p-row"><label><span data-i="p_xh_size">准星大小</span> <input id="p-xh-size" type="range" min="2" max="8" step="1" value="4"><span id="p-xh-size-v">4</span></label></div>
+      <div class="p-row"><label><span data-i="p_xh_gap">准星间隙</span> <input id="p-xh-gap" type="range" min="0" max="20" step="1" value="6"><span id="p-xh-gap-v">6</span></label></div>
+      <div class="p-row checks">
+        <label><input id="p-yinv" type="checkbox"> <span data-i="p_yinv">Y 轴反转</span></label>
+        <label><input id="p-crouch" type="checkbox"> <span data-i="p_crouch">蹲伏切换</span></label>
+        <label><input id="p-ads-toggle" type="checkbox"> <span data-i="p_ads_toggle">ADS 切换</span></label>
+      </div>
+      <div class="p-row"><button id="p-reset" class="btn" data-i="p_reset">恢复默认设置</button></div>
       <div class="p-row btns">
         <button id="p-resume" class="btn-primary" data-i="resume">继续作战</button>
         <button id="p-restart" class="btn" data-i="redeploy">重新部署</button>
@@ -126,14 +138,21 @@
     <div class="over-box">
       <span class="o-kicker" id="o-kicker">信号中断 · SIGNAL LOST</span>
       <h2 id="o-title">哨站失守</h2>
+      <div id="o-mvp" class="hidden"></div>
       <div class="o-stats" id="o-stats"></div>
       <div class="o-board" id="o-board"></div>
       <div class="o-best" id="o-best"></div>
       <div class="p-row btns">
         <button id="o-restart" class="btn-primary" data-i="redeploy">重新部署</button>
         <button id="o-menu" class="btn" data-i="main_menu">返回主菜单</button>
+        <button id="o-share" class="btn" data-i="o_share">保存战绩</button>
       </div>
     </div>
+  </div>
+
+  <div id="sw-toast">
+    <span data-i="sw_update">新版本已就绪</span>
+    <button id="sw-reload" class="btn-primary" data-i="sw_reload">立即刷新</button>
   </div>
 
   <div id="debug" class="hidden"></div>

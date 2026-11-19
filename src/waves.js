@@ -1,6 +1,7 @@
 // waves.js —— 无尽波次调度 + 补给
 import * as THREE from 'three';
 import {t} from './i18n.js';
+import {store} from './util.js';
 
 const GATES=4;
 
@@ -37,6 +38,8 @@ export class Waves{
       this.timer-=dt;
       if(this.timer<=0){
         this.n++;
+        const bestWave=parseInt(store.get('o07_best_wave','0'),10)||0;
+        if(this.n>bestWave)store.set('o07_best_wave',this.n);
         this.queue=this.composition(this.n);
         this.spawnT=.6;
         this.state='active';

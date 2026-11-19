@@ -413,6 +413,16 @@ export function initAssets(){
     gloveDark:new THREE.MeshStandardMaterial({color:0x3a3733,roughness:.6,metalness:.05}),
     bootDark:new THREE.MeshStandardMaterial({color:0x1a1815,roughness:.45,metalness:.08}),
     armSleeve:new THREE.MeshStandardMaterial({color:0x2a2e36,roughness:.7}),
+    // C1/C3:阵营识别件(臂章发光 / 头盔 / 头巾 / 镜片 / 第一人称袖套手套)
+    ctAccent:new THREE.MeshStandardMaterial({color:0x2b3140,emissive:0x7fd4ff,emissiveIntensity:.9,roughness:.6}),
+    tAccent:new THREE.MeshStandardMaterial({color:0x3a201a,emissive:0xff8a6a,emissiveIntensity:.9,roughness:.6}),
+    helmet:new THREE.MeshStandardMaterial({color:0x454f61,roughness:.58,metalness:.3}),
+    shemagh:new THREE.MeshStandardMaterial({color:0x5a2a24,roughness:.92,metalness:0}),
+    goggleGlass:new THREE.MeshStandardMaterial({color:0x101820,emissive:0x7fd4ff,emissiveIntensity:1.2,roughness:.2,metalness:.6}),
+    armSleeveCT:new THREE.MeshStandardMaterial({color:0x3d4a5e,roughness:.7}),
+    armSleeveT:new THREE.MeshStandardMaterial({color:0x5a2420,roughness:.75}),
+    gloveCT:new THREE.MeshStandardMaterial({color:0x2c3138,roughness:.55,metalness:.05}),
+    gloveT:new THREE.MeshStandardMaterial({color:0x3a2e26,roughness:.6,metalness:.05}),
     // CS 枪械木件 / 不锈钢件
     gunWood:new THREE.MeshStandardMaterial({color:0x6b4a2a,roughness:.68,metalness:.05}),
     gunSteel:new THREE.MeshStandardMaterial({color:0x9aa2ac,roughness:.35,metalness:.85}),

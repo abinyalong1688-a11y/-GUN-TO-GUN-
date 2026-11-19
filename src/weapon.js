@@ -63,6 +63,9 @@ export function recoilShot(def,i,ads){
 export class Weapon{
   constructor(viewScene,assets,audio,ui,quality){
     this.audio=audio;this.ui=ui;this.viewScene=viewScene;this.assets=assets;
+    this.faction='ct';
+    this.armMats={sleeve:assets.mats.armSleeveCT,glove:assets.mats.gloveCT,skin:assets.mats.skinM};
+    this._armSleeves=[];this._armGloves=[];this._armSkins=[]; // 第一人称手臂材质克隆(C3 按阵营换色)
     this.group=new THREE.Group();
     viewScene.add(this.group);
     this.models={};
@@ -77,6 +80,7 @@ export class Weapon{
     this.state=this.defs.map(d=>({ammo:d.mag,reserve:d.reserve}));
     this.reloading=false;this.reloadT=0;this._reloadSnd=0;
     this.fireT=0;this.adsAmt=0;this.heat=0;
+    this.recoilMul=1;this.reloadSpeedMul=1;
     this.camKick=0;this.gunKickZ=0;this.gunKickRX=0;this.gunKickRY=0;this._slide=0;
     this.camKickYaw=0;this.recoilIdx=0;this.recoilReset=0;
     this.bobT=0;this._trigWasDown=false;this._adsWas=false;
@@ -290,16 +294,21 @@ export class Weapon{
     const dir=entry.clone().sub(tip);
     const len=dir.length();
     const dirN=dir.clone().normalize();
-    const fore=new THREE.Mesh(new THREE.CylinderGeometry(r*.78,r,len,12),M.skinN.clone());
+    const skinMat=M.skinN.clone();
+    this._armSkins.push(skinMat);
+    const fore=new THREE.Mesh(new THREE.CylinderGeometry(r*.78,r,len,12),skinMat);
     fore.position.copy(tip).addScaledVector(dir,.45);
     fore.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),dirN);
     g.add(fore);
-    const slv=new THREE.Mesh(new THREE.CylinderGeometry(r*1.1,r*1.3,Math.min(.14,len*.45),12),M.armSleeve.clone());
+    const sleeveMat=M.armSleeve.clone();
+    this._armSleeves.push(sleeveMat);
+    const slv=new THREE.Mesh(new THREE.CylinderGeometry(r*1.1,r*1.3,Math.min(.14,len*.45),12),sleeveMat);
     slv.position.copy(tip).addScaledVector(dir,.82);
     slv.quaternion.copy(fore.quaternion);
     g.add(slv);
     /* 战术手套:掌体 + 四指横排包裹 + 拇指(组空间:指节朝 -z 包住握把前缘) */
     const glove=M.gloveDark.clone();
+    this._armGloves.push(glove);
     const fist=new THREE.Group();
     const palm=new THREE.Mesh(new THREE.BoxGeometry(r*1.55,r*2.0,r*1.1),glove);
     palm.position.y=r*.1;fist.add(palm);
@@ -312,7 +321,7 @@ export class Weapon{
     th.position.set((opts.side||-1)*r*.9,r*.25,-r*.3);th.rotation.z=.55*(opts.side||-1);
     fist.add(th);
     // 腕口
-    const cuff=new THREE.Mesh(new THREE.BoxGeometry(r*1.7,r*.5,r*1.2),M.armSleeve.clone());
+    const cuff=new THREE.Mesh(new THREE.BoxGeometry(r*1.7,r*.5,r*1.2),sleeveMat);
     cuff.position.y=r*1.15;fist.add(cuff);
     fist.position.copy(tip);
     fist.position.z+=r*.4; // 拳体后移露出指节,别埋进握把
@@ -356,6 +365,29 @@ export class Weapon{
     this._arm(dg,new THREE.Vector3(.045,-.058,.02),new THREE.Vector3(-.12,-.22,.14),.03,{tilt:.5,side:1});
     // 军刀:单手反握
     this._arm(this.models.knife,new THREE.Vector3(0,-.045,.05),new THREE.Vector3(.13,-.22,.24),.033,{tilt:.45,side:-1});
+  }
+
+  /* C3:第一人称手臂按干员阵营/性别换色(CT 蓝灰 / T 暗红;女性肤色) */
+  setFaction(op){
+    if(!op)return;
+    const A=this.assets.mats;
+    this.faction=op.faction==='t'?'t':'ct';
+    const sleeve=this.faction==='ct'?A.armSleeveCT:A.armSleeveT;
+    const glove=this.faction==='ct'?A.gloveCT:A.gloveT;
+    const skin=op.gender==='f'?A.skinF:A.skinM;
+    this.armMats={sleeve,glove,skin};
+    for(const m of this._armSleeves){
+      m.color.copy(sleeve.color);
+      m.roughness=sleeve.roughness;m.metalness=sleeve.metalness;
+    }
+    for(const m of this._armGloves){
+      m.color.copy(glove.color);
+      m.roughness=glove.roughness;m.metalness=glove.metalness;
+    }
+    for(const m of this._armSkins){
+      m.color.copy(skin.color);
+      m.roughness=skin.roughness;m.metalness=skin.metalness;
+    }
   }
 
   /* ================= 装填(阵营定装:全部主武器随身) ================= */
@@ -512,11 +544,12 @@ export class Weapon{
         s.ammo--;
         this.heat=Math.min(d.heatMax,this.heat+d.heatShot);
         const ads=this.adsAmt;
-        this.camKick+= ads>.7?d.kickAds:d.kick;
+        const rm=this.recoilMul||1;
+        this.camKick+=(ads>.7?d.kickAds:d.kick)*rm;
         // 后坐力弹道模式:确定性垂直爬升 + 水平漂移(CS 风格压枪)
         const rec=recoilShot(d,this.recoilIdx,ads>.7);
-        this.camKick+=rec.up;
-        this.camKickYaw+=rec.right;
+        this.camKick+=rec.up*rm;
+        this.camKickYaw+=rec.right*rm;
         this.recoilIdx=Math.min(40,this.recoilIdx+1);
         this.recoilReset=.35;
         this.gunKickZ=Math.min(.07,this.gunKickZ+(d.id==='deagle'?.03:.018));
