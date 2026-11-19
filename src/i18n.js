@@ -4,6 +4,7 @@ import {store} from './util.js';
 
 const STR={
   zh:{
+    title:'GUN TO GUN · 战术阵营射击',
     kicker:'◆ 单文件 · 离线可玩 · Three.js / WebGL2',
     sub:'CS 风格反恐射击 · CT vs T · 7 种真实武器 · 真实物理',
     callsign:'呼号登录',
@@ -79,6 +80,7 @@ const STR={
     best_score:'本局得分',
   },
   en:{
+    title:'GUN TO GUN · Tactical Faction Shooter',
     kicker:'◆ Single file · Offline · Three.js / WebGL2',
     sub:'CS-style tactical shooter · CT vs T · 7 real weapons · real physics',
     callsign:'CALLSIGN',
@@ -209,6 +211,7 @@ export async function detectIPCountry(){
 export function applyStatic(){
   if(typeof document==='undefined')return;
   if(typeof window!=='undefined')window.__i18n={lang,t,applyStatic}; // 调试探针
+  document.title=t('title');
   document.querySelectorAll('[data-i]').forEach(el=>{el.innerHTML=t(el.dataset.i);});
   const name=document.getElementById('m-name');
   if(name)name.placeholder=t('name_ph');

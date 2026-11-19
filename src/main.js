@@ -201,6 +201,7 @@ class Game{
 
   /* 语言切换后的动态文案刷新(静态部分由 applyStatic 覆盖) */
   _refreshLang(){
+    applyStatic();
     this.assets.refreshAd&&this.assets.refreshAd();
     this.weapon.refreshLang&&this.weapon.refreshLang();
     const hero=this.ui.sel.hero;
