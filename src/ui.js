@@ -155,7 +155,6 @@ export class UI{
         const url=this.portraits?this.portraits.render(o,camo,256,{frame:'bust'}):null;
         const name=isEN()?o.name.en:o.name.zh;
         const role=isEN()?o.role.en:o.role.zh;
-        const quote=isEN()?o.quote.en:o.quote.zh;
         const selected=o.id===s.operator;
         const speed=(5.2*o.speedMul).toFixed(1);
         html.push(`<div class="op-card ${f}${selected?' selected':''}${url?'':' no-art'}" data-op="${o.id}">
@@ -163,7 +162,6 @@ export class UI{
           <div class="op-name">${escHTML(name)}</div>
           <div class="op-role">${escHTML(role)}</div>
           <div class="op-stats">${t('op_hp')} ${o.hp} · ${t('op_speed')} ${speed}</div>
-          ${selected?`<div class="op-quote">“${escHTML(quote)}”</div>`:''}
         </div>`);
       }
       html.push('</div></div>');

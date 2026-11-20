@@ -232,8 +232,6 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
 .op-name{font-size:13px;font-weight:700;color:#fff;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .op-role{font-size:10.5px;color:var(--accent);letter-spacing:.06em}
 .op-stats{font-size:10px;color:var(--muted);margin-top:2px;font-family:var(--mono)}
-.op-quote{font-size:10.5px;color:var(--accent);margin-top:4px;font-style:italic}
-.op-card:not(.selected) .op-quote{display:none}
 .camo-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px}
 .camo-label{font-size:10px;letter-spacing:.14em;color:var(--muted)}
 .camo-chip{cursor:pointer;font-size:11px;padding:4px 10px;border-radius:999px;border:1px solid rgba(155,167,192,.3);color:#c9d1e2;background:rgba(255,255,255,.04)}
