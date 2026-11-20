@@ -5,7 +5,6 @@ import {store} from './util.js';
 const STR={
   zh:{
     title:'GUN TO GUN · 战术阵营射击',
-    kicker:'◆ 单文件 · 离线可玩 · Three.js / WebGL2',
     sub:'战术阵营射击 · 新星 vs 浪人 · 8 种真实武器 · 真实物理',
     callsign:'呼号登录',
     name_ph:'输入昵称(默认 守卫-07)',
@@ -131,7 +130,6 @@ const STR={
   },
   en:{
     title:'GUN TO GUN · Tactical Faction Shooter',
-    kicker:'◆ Single file · Offline · Three.js / WebGL2',
     sub:'Tactical faction shooter · NOVA vs ROGUE · 8 real weapons · real physics',
     callsign:'CALLSIGN',
     name_ph:'Enter callsign (default Guard-07)',

@@ -5,7 +5,7 @@ import {t,setLang,lang,isEN} from '../src/i18n.js';
 
 test('dictionary completeness: zh and en key sets match',()=>{
   // Checked indirectly via t()'s fallback: for every zh key, the EN lookup must not fall back to the zh text
-  const zhKeys=['kicker','sub','callsign','deploy','hud_wave','hint_reload','sb_title','wave_banner','win','sponsor'];
+  const zhKeys=['sub','callsign','deploy','hud_wave','hint_reload','sb_title','wave_banner','win','sponsor'];
   for(const k of zhKeys){
     setLang('en');
     const v=t(k);
