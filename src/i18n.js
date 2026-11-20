@@ -1,25 +1,25 @@
-// i18n.js —— 界面双语(zh/en):同步首帧判定(缓存 IP 国家/浏览器语言)
-// + 异步 IP 探测修正(双端点兜底 + 超时,失败静默回退,不影响离线可玩)
+// i18n.js — bilingual UI (zh/en): synchronous first-frame detection (cached IP country / browser language)
+// + async IP probe correction (two endpoints + timeout; failures silently fall back, offline play unaffected)
 import {store} from './util.js';
 
 const STR={
   zh:{
     title:'GUN TO GUN · 战术阵营射击',
     kicker:'◆ 单文件 · 离线可玩 · Three.js / WebGL2',
-    sub:'CS 风格反恐射击 · CT vs T · 7 种真实武器 · 真实物理',
+    sub:'战术阵营射击 · 新星 vs 浪人 · 8 种真实武器 · 真实物理',
     callsign:'呼号登录',
     name_ph:'输入昵称(默认 守卫-07)',
     default_name:'守卫-07',
-    sec_role:'选择干员 · CT vs T · 8 名干员',
+    sec_role:'选择干员 · 新星 vs 浪人 · 8 名干员',
     sec_primary:'初始主武器(阵营全部 4 把随身,按 1 循环切换)',
     sec_map:'作战地图',
     sec_mode:'作战模式',
-    hero_ct_name:'霜华 · CT 特勤',
-    hero_ct_desc:'SAS 空勤特勤 · 模特身形女干员 · 长发马尾 · 战术耳麦<br>生命 115 · 主武器 M4A4 · 稳定精准',
-    hero_t_name:'赤鸦 · T 佣兵',
-    hero_t_desc:'凤凰线佣兵 · 硬朗帅气突击手 · 挽袖红夹克 · V 型身躯<br>移速 +12% 换弹 +25% · 主武器 AK-47',
-    hero_ct_role:'CT 特勤 · 霜华',
-    hero_t_role:'T 佣兵 · 赤鸦',
+    hero_ct_name:'霜华 · 新星特勤',
+    hero_ct_desc:'北境空勤特勤 · 模特身形女干员 · 长发马尾 · 战术耳麦<br>生命 115 · 主武器 M4A4 · 稳定精准',
+    hero_t_name:'赤鸦 · 浪人佣兵',
+    hero_t_desc:'赤线佣兵 · 硬朗帅气突击手 · 挽袖红夹克 · V 型身躯<br>移速 +12% 换弹 +25% · 主武器 AK-47',
+    hero_ct_role:'新星特勤 · 霜华',
+    hero_t_role:'浪人佣兵 · 赤鸦',
     op_locked:'未解锁',
     op_select:'选择',
     op_camo:'迷彩',
@@ -33,11 +33,11 @@ const STR={
     camo_snow:'雪地',
     camo_urban:'城市',
     camo_locked:'完成第 {n} 波解锁',
-    faction_ct:'CT',
-    faction_t:'T',
+    faction_ct:'新星',
+    faction_t:'浪人',
     map_desert:'沙漠哨站 · 日落',
     map_snow:'雪夜要塞 · 极寒',
-    map_snowtown:'雪地小镇 · de_snow',
+    map_snowtown:'雪地小镇 · 晴昼',
     map_ember:'熔岩废都 · 烈焰',
     mode_waves:'无尽波次 · 守卫哨站',
     mode_dm:'6 人乱斗 · 3v3 对战',
@@ -47,7 +47,7 @@ const STR={
     best_hit:'历史最佳战绩:',
     best_none:'首次部署 · 祝你好运,守卫。',
     sponsor:'广告 · <b>AbinStudio</b> AI 短剧制作软件 · <a href="https://app.agents100.com" target="_blank" rel="noopener">app.agents100.com</a>',
-    foot:'空格 跳跃 · Ctrl 蹲伏 · 反复按 1 循环 4 把主武器 · 2 沙漠之鹰 · 3 军刀 · 滚轮顺序切换 · 开镜 · 360° 视野 ·',
+    foot:'空格 跳跃 · Ctrl 蹲伏 · 反复按 1 循环 4 把主武器 · 2 沙漠之鹰 · 3 军刀 · 滚轮顺序切换 · 开镜 · G/F/V 手雷 ·',
     pause_kicker:'作战暂停',
     pause_title:'行动中止',
     p_sens:'鼠标灵敏度',
@@ -78,7 +78,7 @@ const STR={
     tut_kicker:'新兵训练',tut_next:'下一步',tut_skip:'跳过训练',
     tut_keys:'WASD 移动 · 鼠标瞄准 · 左键开火 · 右键开镜 · R 换弹 · 1 切枪 · G 投雷',
     level_up:'等级提升',daily_ready:'每日挑战已完成',progress_lv:'等级',
-    mode_koth:'占点争夺',koth_name:'控制点',koth_a:'CT',koth_b:'T',koth_win:'占据成功',koth_lose:'据点失守',
+    mode_koth:'占点争夺',koth_name:'控制点',koth_a:'新星',koth_b:'浪人',koth_win:'占据成功',koth_lose:'据点失守',
     upgrade_kicker:'补给投放',upgrade_title:'选择一项强化',
     upgrade_hint:'点击卡片立即生效 · 可按 1/2/3 快速选择',upgrade_applied:'强化已生效',
     g_frag:'破片',g_flash:'闪光',g_smoke:'烟雾',
@@ -101,9 +101,10 @@ const STR={
     wave_banner:'第 {n} 波',
     wave_sub:'敌方无人机接近 · ENGAGE',
     wave_clear:'波次肃清',
+    hud_melee:'近战',hud_reloading:'装填中…',hud_ready:'就绪',rotate_hint:'请横屏游玩',no_webgl:'当前浏览器不支持 WebGL2<br>请使用 Edge / Chrome 等现代浏览器打开',
     supply_sub:'补给投放中 · 弹药 +90 生命 +25 · 奖励 +{n}',
     dm_start:'对局开始',
-    dm_sub:'CT vs T · 3v3 · 先到 25 击杀获胜',
+    dm_sub:'新星 vs 浪人 · 3v3 · 先到 25 击杀获胜',
     fail_title:'哨站失守',
     kicker_lost:'信号中断 · SIGNAL LOST',
     win:'胜利 · VICTORY',
@@ -111,7 +112,7 @@ const STR={
     dm_over_kicker:'对局结束 · MATCH OVER',
     dur_label:'参战时长',
     dur_fmt:'{m}分{s}秒',
-    sb_title:'计分板 · CT vs T',
+    sb_title:'计分板 · 新星 vs 浪人',
     sb_role:'角色',
     sb_faction:'阵营',
     sb_kills:'击杀',
@@ -131,20 +132,20 @@ const STR={
   en:{
     title:'GUN TO GUN · Tactical Faction Shooter',
     kicker:'◆ Single file · Offline · Three.js / WebGL2',
-    sub:'CS-style tactical shooter · CT vs T · 7 real weapons · real physics',
+    sub:'Tactical faction shooter · NOVA vs ROGUE · 8 real weapons · real physics',
     callsign:'CALLSIGN',
     name_ph:'Enter callsign (default Guard-07)',
     default_name:'Guard-07',
-    sec_role:'OPERATOR · CT vs T · 8 operators',
+    sec_role:'OPERATOR · NOVA vs ROGUE · 8 operators',
     sec_primary:'PRIMARY (all 4 carried · press 1 to cycle)',
     sec_map:'MAP',
     sec_mode:'MODE',
-    hero_ct_name:'Frost · CT Operator',
-    hero_ct_desc:'SAS airborne · Model-figure female operative · Long ponytail · Tactical headset<br>HP 115 · Primary M4A4 · Stable & precise',
-    hero_t_name:'Raven · T Mercenary',
-    hero_t_desc:'Phoenix-line mercenary · Handsome assault · Rolled-sleeve red jacket · V-frame<br>Speed +12% Reload +25% · Primary AK-47',
-    hero_ct_role:'CT OPERATOR · FROST',
-    hero_t_role:'T MERCENARY · RAVEN',
+    hero_ct_name:'Frost · Nova Operator',
+    hero_ct_desc:'Northern airborne · Model-figure female operative · Long ponytail · Tactical headset<br>HP 115 · Primary M4A4 · Stable & precise',
+    hero_t_name:'Raven · Rogue Mercenary',
+    hero_t_desc:'Redline mercenary · Handsome assault · Rolled-sleeve red jacket · V-frame<br>Speed +12% Reload +25% · Primary AK-47',
+    hero_ct_role:'NOVA OPERATOR · FROST',
+    hero_t_role:'ROGUE MERCENARY · RAVEN',
     op_locked:'LOCKED',
     op_select:'SELECT',
     op_camo:'CAMO',
@@ -158,11 +159,11 @@ const STR={
     camo_snow:'Snow',
     camo_urban:'Urban',
     camo_locked:'Unlock at wave {n}',
-    faction_ct:'CT',
-    faction_t:'T',
+    faction_ct:'NOVA',
+    faction_t:'ROGUE',
     map_desert:'Desert Outpost · Sunset',
     map_snow:'Snow Keep · Night',
-    map_snowtown:'Snow Town · de_snow',
+    map_snowtown:'Snow Town · Daylight',
     map_ember:'Lava Ruins · Ember',
     mode_waves:'Wave Survival · Defend the Outpost',
     mode_dm:'6-Player Brawl · 3v3',
@@ -172,7 +173,7 @@ const STR={
     best_hit:'BEST SCORE:',
     best_none:'First deploy · Good luck, operator.',
     sponsor:'AD · <b>AbinStudio</b> AI Short-Drama Studio · <a href="https://app.agents100.com" target="_blank" rel="noopener">app.agents100.com</a>',
-    foot:'Space Jump · Ctrl Crouch · Press 1 to cycle 4 primaries · 2 Desert Eagle · 3 Knife · Wheel to switch · Scope · 360° view ·',
+    foot:'Space Jump · Ctrl Crouch · Press 1 to cycle 4 primaries · 2 Desert Eagle · 3 Knife · Wheel to switch · Scope · G/F/V Grenades ·',
     pause_kicker:'PAUSED',
     pause_title:'STAND BY',
     p_sens:'Mouse Sens.',
@@ -203,7 +204,7 @@ const STR={
     tut_kicker:'BOOTCAMP',tut_next:'NEXT',tut_skip:'SKIP',
     tut_keys:'WASD move · mouse aim · LMB fire · RMB ADS · R reload · 1 switch · G grenade',
     level_up:'LEVEL UP',daily_ready:'DAILY COMPLETE',progress_lv:'LV',
-    mode_koth:'KING OF THE HILL',koth_name:'CONTROL POINT',koth_a:'CT',koth_b:'T',koth_win:'POINT SECURED',koth_lose:'POINT LOST',
+    mode_koth:'KING OF THE HILL',koth_name:'CONTROL POINT',koth_a:'NOVA',koth_b:'ROGUE',koth_win:'POINT SECURED',koth_lose:'POINT LOST',
     upgrade_kicker:'SUPPLY DROP',upgrade_title:'CHOOSE AN UPGRADE',
     upgrade_hint:'Click to apply · or press 1/2/3',upgrade_applied:'UPGRADE APPLIED',
     g_frag:'FRAG',g_flash:'FLASH',g_smoke:'SMOKE',
@@ -226,9 +227,10 @@ const STR={
     wave_banner:'WAVE {n}',
     wave_sub:'Enemy drones inbound · ENGAGE',
     wave_clear:'WAVE CLEARED',
+    hud_melee:'MELEE',hud_reloading:'RELOADING…',hud_ready:'READY',rotate_hint:'Rotate your device to landscape',no_webgl:'This browser does not support WebGL2<br>Please open the game in a modern browser such as Edge or Chrome',
     supply_sub:'Supply drop · Ammo +90 HP +25 · Bonus +{n}',
     dm_start:'MATCH START',
-    dm_sub:'CT vs T · 3v3 · First to 25 kills',
+    dm_sub:'NOVA vs ROGUE · 3v3 · First to 25 kills',
     fail_title:'MISSION FAILED',
     kicker_lost:'CONNECTION LOST',
     win:'VICTORY',
@@ -236,7 +238,7 @@ const STR={
     dm_over_kicker:'MATCH OVER',
     dur_label:'DURATION',
     dur_fmt:'{m}m {s}s',
-    sb_title:'SCOREBOARD · CT vs T',
+    sb_title:'SCOREBOARD · NOVA vs ROGUE',
     sb_role:'OPERATOR',
     sb_faction:'FACTION',
     sb_kills:'KILLS',
@@ -265,7 +267,7 @@ export function setLang(l){
 }
 export function isEN(){ return lang.cur==='en'; }
 
-/* 取词:支持 {var} 占位 */
+/* Lookup with {var} placeholders */
 export function t(k,vars){
   const s=STR[lang.cur]||STR.zh;
   let v=s[k]??STR.zh[k]??k;
@@ -273,7 +275,7 @@ export function t(k,vars){
   return v;
 }
 
-/* 同步首帧判定:?ipcc= 测试钩子 → 上次 IP 探测缓存 → 浏览器语言兜底(默认中文) */
+/* Synchronous first-frame detection: ?ipcc= test hook → cached IP probe → browser language fallback (default Chinese) */
 (function detectInitial(){
   let l=null;
   try{
@@ -295,7 +297,7 @@ export function t(k,vars){
   }
 })();
 
-/* 异步 IP 探测:非中国 IP → 英文界面;失败静默(默认中文) */
+/* Async IP probe: non-China IP → English UI; silent on failure (default Chinese) */
 async function tryFetchJSON(url,ms=2200){
   const c=new AbortController();
   const to=setTimeout(()=>c.abort(),ms);
@@ -313,18 +315,25 @@ export async function detectIPCountry(){
   return null;
 }
 
-/* 静态 DOM 文案应用:全部带 data-i 标记的元素(字典内容可信,允许含 <a>/<br> 标记) */
+/* Apply static DOM copy to every element tagged with data-i (dictionary content is trusted and may contain <a>/<br>)
+   字典缺 key 时保留原内容不回写——防止 data-i 与其他业务属性(如槽位序号)碰撞时抹掉结构 */
 export function applyStatic(){
   if(typeof document==='undefined')return;
-  if(typeof window!=='undefined')window.__i18n={lang,t,applyStatic}; // 调试探针
+  if(typeof window!=='undefined')window.__i18n={lang,t,applyStatic}; // debug probe
   document.title=t('title');
-  document.querySelectorAll('[data-i]').forEach(el=>{el.innerHTML=t(el.dataset.i);});
+  document.documentElement.lang=lang.cur==='en'?'en':'zh-CN';
+  const zh=STR.zh;
+  document.querySelectorAll('[data-i]').forEach(el=>{
+    const k=el.dataset.i;
+    const v=(STR[lang.cur]||STR.zh)[k]??zh[k];
+    if(v!=null)el.innerHTML=v;
+  });
   const name=document.getElementById('m-name');
   if(name)name.placeholder=t('name_ph');
   const q=document.getElementById('m-quality');
   if(q&&q.options.length>=2){q.options[0].text=t('quality_high');q.options[1].text=t('quality_low');}
-  // 地图/模式 chips(按 data 属性取词)
+  // Map / mode chips (looked up by data attribute)
   document.querySelectorAll('#m-maps .chip').forEach(c=>{c.textContent=t('map_'+c.dataset.map);});
   document.querySelectorAll('#m-modes .chip').forEach(c=>{c.textContent=t('mode_'+c.dataset.mode);});
-  // 干员卡由 UI.buildOperators() 重建(名称/简介/台词均来自 operators.js)
+  // Operator cards are rebuilt by UI.buildOperators() (names / bios / quotes come from operators.js)
 }

@@ -1,4 +1,4 @@
-// audio.js —— WebAudio 实时合成音效,零音频文件
+// audio.js — real-time WebAudio synthesised sound effects, no audio files
 export class AudioFX{
   constructor(){this.ctx=null;this.ok=false;this._whine=null;this._droneGain=null;this.buses=null;}
 
@@ -11,7 +11,7 @@ export class AudioFX{
     const comp=this.ctx.createDynamicsCompressor();
     comp.threshold.value=-16;comp.knee.value=18;comp.ratio.value=7;comp.attack.value=.003;
     this.master.connect(comp);comp.connect(this.ctx.destination);
-    // 分轨:音效 / 音乐 / 无线电 / 环境;全部汇入 master
+    // Buses: sfx / music / radio / ambience, all routed into master
     this.buses={
       sfx:this.ctx.createGain(),
       music:this.ctx.createGain(),
@@ -19,12 +19,12 @@ export class AudioFX{
       ambient:this.ctx.createGain(),
     };
     for(const k of ['sfx','music','radio','ambient'])this.buses[k].connect(this.master);
-    // 噪声缓冲
+    // Noise buffer
     const len=this.ctx.sampleRate*2;
     this.noiseBuf=this.ctx.createBuffer(1,len,this.ctx.sampleRate);
     const d=this.noiseBuf.getChannelData(0);
     let b0=0,b1=0,b2=0;
-    for(let i=0;i<len;i++){ // 粉噪声近似
+    for(let i=0;i<len;i++){ // approximate pink noise
       const w=Math.random()*2-1;
       b0=.997*b0+.029*w;b1=.985*b1+.032*w;b2=.95*b2+.048*w;
       d[i]=(b0+b1+b2+w*.05)*.55;
@@ -86,12 +86,12 @@ export class AudioFX{
     o1.start();o2.start();
     this._droneGain=g;
   }
-  setDrone(level){ // 0~1 无人机接近紧张度
+  setDrone(level){ // 0~1 tension as drones close in
     if(!this.ctx)return;
     this._droneGain.gain.setTargetAtTime(level*.14,this.ctx.currentTime,.3);
   }
 
-  /* ---- M2-A6 自适应 BGM:两层振荡器 + 滤波噪声,menu pad / combat 脉冲 ---- */
+  /* ---- M2-A6 adaptive BGM: two oscillator layers + filtered noise, menu pad / combat pulse ---- */
   musicStart(mode='menu'){
     if(!this.ok||!this.ctx)return;
     const t=this.ctx.currentTime;
@@ -113,7 +113,7 @@ export class AudioFX{
     const nf=ctx.createBiquadFilter();nf.type='bandpass';nf.frequency.value=420;nf.Q.value=.8;
     const ng=ctx.createGain();ng.gain.value=.06;
     ns.connect(nf);nf.connect(ng);ng.connect(trem);
-    // 脉冲 LFO:depth 接到 trem.gain,战斗时增强起伏
+    // Pulse LFO: depth drives trem.gain, swelling harder in combat
     const lfo=ctx.createOscillator();lfo.type='sine';lfo.frequency.value=.35;
     const depth=ctx.createGain();depth.gain.value=.02;
     lfo.connect(depth);depth.connect(trem.gain);
@@ -144,7 +144,7 @@ export class AudioFX{
     this._music=null;
   }
 
-  /* ---- 具体 SFX ---- */
+  /* ---- Individual SFX ---- */
   shot(){
     if(!this.ok)return;const t=this.ctx.currentTime;
     this._noise(t,.09,.8,{freq:1600,q:.6,slide:500});
@@ -156,7 +156,7 @@ export class AudioFX{
     this._tone(t,.04,.3,{freq:2200,type:'square'});
     this._noise(t,.03,.2,{freq:3000,q:3});
   }
-  reload(stage){ // 0 出弹匣 1 上弹匣 2 拉枪机
+  reload(stage){ // 0 mag out, 1 mag in, 2 charging handle
     if(!this.ok)return;const t=this.ctx.currentTime;
     if(stage===0){this._noise(t,.06,.3,{freq:900,q:2});this._tone(t,.05,.2,{freq:340,end:200,type:'square'});}
     else if(stage===1){this._noise(t,.07,.35,{freq:700,q:2});this._tone(t,.06,.3,{freq:520,end:340,type:'square'});}
@@ -231,17 +231,17 @@ export class AudioFX{
     this._tone(t,.3,.9,{freq:95,end:30,type:'sawtooth'});
     this._tone(t+.02,.4,.5,{freq:1200,end:220,type:'sine'});
   }
-  deagle(){ // 沙漠之鹰:.50 AE 重磅枪声
+  deagle(){ // Desert Eagle: heavy .50 AE report
     if(!this.ok)return;const t=this.ctx.currentTime;
     this._noise(t,.14,.9,{freq:900,q:.6,slide:180});
     this._noise(t,.24,.55,{freq:220,q:.7,type:'lowpass'});
     this._tone(t,.13,.85,{freq:120,end:36,type:'sawtooth'});
   }
-  knifeSwing(){ // 军刀挥空
+  knifeSwing(){ // knife swing (miss)
     if(!this.ok)return;const t=this.ctx.currentTime;
     this._noise(t,.13,.3,{freq:2600,q:1.1,slide:500});
   }
-  knifeHit(){ // 军刀入肉/砍中
+  knifeHit(){ // knife hit
     if(!this.ok)return;const t=this.ctx.currentTime;
     this._noise(t,.08,.5,{freq:1500,q:2,slide:350});
     this._tone(t,.07,.4,{freq:340,end:110,type:'square'});
@@ -262,14 +262,14 @@ export class AudioFX{
     if(!this.ok)return;const t=this.ctx.currentTime;
     this._tone(t,.1,.2,{freq:660});this._tone(t+.1,.16,.2,{freq:990});
   }
-  /* M3-G2:拾取提示音 */
+  /* M3-G2: pickup chime */
   pickup(){
     if(!this.ok)return;
     const t=this.ctx.currentTime;
     this._tone(t,.08,.25,{freq:880,bus:'sfx'});
     this._tone(t+.07,.14,.22,{freq:1320,bus:'sfx'});
   }
-  /* M2-A2:无线电按键提示音(走 radio 分轨,受音乐/无线电音量控制) */
+  /* M2-A2: radio key-up chirp (on the radio bus, follows music/radio volume) */
   radio(){
     if(!this.ok)return;
     const t=this.ctx.currentTime;

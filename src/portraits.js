@@ -1,7 +1,7 @@
-// portraits.js —— 离屏 3D 立绘渲染器(名册 / 击杀卡 / MVP / 分享卡共用):
-//   · 单例 WebGLRenderer(alpha, 透明背景),懒初始化;
-//   · 结果按 def.id|camo|size 缓存为 dataURL,零外部图片;
-//   · 无 WebGL / 初始化失败时 render() 返回 null,UI 用 CSS 渐变兜底。
+// portraits.js — offscreen 3D portrait renderer (roster / kill card / MVP / share card):
+//   · singleton WebGLRenderer (alpha, transparent background), lazily initialised;
+//   · results cached as dataURLs keyed by def.id|camo|size, no external images;
+//   · without WebGL / on init failure render() returns null and the UI falls back to a CSS gradient.
 import * as THREE from 'three';
 import {buildOperatorMesh} from './character.js';
 
@@ -38,7 +38,7 @@ export class PortraitRenderer{
       cam.lookAt(0,1.00,0);
       this.camera=cam;
 
-      // C4:半身立绘机位(菜单卡用,避免全身像在 92px 卡片里看不清)
+      // C4: bust camera (menu cards: a full-body shot is unreadable in a 92px card)
       const bust=new THREE.PerspectiveCamera(36,1,.1,10);
       bust.position.set(0,1.52,1.55);
       bust.lookAt(0,1.32,0);
@@ -48,7 +48,7 @@ export class PortraitRenderer{
     }
   }
 
-  /* 返回 dataURL;失败返回 null;frame: 'full' 全身 / 'bust' 半身 */
+  /* Returns a dataURL, or null on failure; frame: 'full' body / 'bust' */
   render(def,camo='default',size=512,{frame='full'}={}){
     const key=`${def.id}|${camo}|${size}|${frame}`;
     if(this.cache.has(key))return this.cache.get(key);
@@ -78,7 +78,7 @@ export class PortraitRenderer{
     }
   }
 
-  /* M2-A7:返回渲染后的共享 canvas(同步绘制到分享卡,避免异步图片加载) */
+  /* M2-A7: returns the shared canvas after rendering (drawn synchronously into the share card, no async image load) */
   renderCanvas(def,camo='default',size=512,{frame='full'}={}){
     this._init();
     const cam=frame==='bust'?this.bustCam:this.camera;

@@ -1,7 +1,7 @@
 {
   "name": "GUN TO GUN",
   "short_name": "GUN TO GUN",
-  "description": "CS-style tactical shooter · CT vs T · 7 real weapons · real physics",
+  "description": "Tactical faction shooter · NOVA vs ROGUE · 8 real weapons · real physics",
   "start_url": "./",
   "scope": "./",
   "display": "fullscreen",

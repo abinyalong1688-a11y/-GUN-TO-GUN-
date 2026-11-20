@@ -1,6 +1,6 @@
-// input-touch.js —— M4-P1 触屏适配:
-//   左虚拟摇杆写 WASD,右侧拖拽写视角,按钮写开火/开镜/换弹/跳跃/蹲伏/切枪/手雷;
-//   6° 内轻微吸附可在设置中关闭;?touch=1 可在桌面强制开启测试。
+// input-touch.js — M4-P1 touch support:
+//   left virtual stick writes WASD, right-side drag writes look, buttons write fire / aim / reload / jump / crouch / switch / grenade;
+//   light aim assist within 6° can be disabled in settings; ?touch=1 forces it on desktop for testing.
 import * as THREE from 'three';
 
 const DIRS=['KeyW','KeyA','KeyS','KeyD'];
@@ -84,8 +84,8 @@ export class TouchAdapter{
       this._on(btn,'pointerdown',e=>{
         e.preventDefault();
         if(g.state!=='playing')return;
-        if(act==='fire')g.input.firing=true;
-        else if(act==='ads')g.input.ads=!g.input.ads;
+        if(act==='fire'){g.input.firing=true;g._mouseFire=true;} // merged with gamepad polling so it is not overwritten
+        else if(act==='ads'){g._mouseAds=!g._mouseAds;g.input.ads=g._mouseAds;}
         else if(act==='reload')g.weapon.startReload();
         else if(act==='jump'||act==='crouch')g.keys.add(act==='jump'?'Space':'ControlLeft');
         else if(act==='switch')g.weapon.switchTo((g.weapon.cur+1)%g.weapon.primaryCount);
@@ -93,30 +93,30 @@ export class TouchAdapter{
       });
       const end=e=>{
         e.preventDefault();
-        if(act==='fire')g.input.firing=false;
+        if(act==='fire'){g.input.firing=false;g._mouseFire=false;}
         else if(act==='jump'||act==='crouch')g.keys.delete(act==='jump'?'Space':'ControlLeft');
       };
       this._on(btn,'pointerup',end);
       this._on(btn,'pointercancel',end);
     }
 
-    // 竖屏提示
+    // Portrait-orientation hint
     const hint=document.getElementById('rotate-hint');
     const check=()=>{
       if(!hint)return;
       hint.classList.toggle('show',innerHeight>innerWidth&&g.touchMode);
     };
-    addEventListener('resize',check);
+    this._on(window,'resize',check); // tracked in _handlers so detach removes it too
     check();
   }
 
-  /* 6° 轻吸附:只在准星已接近目标时微调 */
+  /* 6° light aim assist: only nudges when the crosshair is already near a target */
   update(dt){
     const g=this.game;
     if(!g.settings.get('touchAssist')||g.state!=='playing')return;
     const cam=g.camera;
     cam.getWorldDirection(this._assistDir);
-    let best=null,bestA=.105; // 6° 弧度
+    let best=null,bestA=.105; // 6° in radians
     for(const e of g.enemies.list){
       if(e.dead||e.decor)continue;
       this._assistTo.copy(e.pos).sub(cam.position).normalize();
@@ -124,7 +124,7 @@ export class TouchAdapter{
       if(a<bestA){bestA=a;best=this._assistTo;}
     }
     if(!best)return;
-    // 把偏差转成小幅视角修正(每帧最多 1.2°)
+    // Turn the offset into a small look correction (at most 1.2° per frame)
     const k=Math.min(1,dt*6);
     const dx=(best.x-this._assistDir.x)*260*k;
     const dy=(best.y-this._assistDir.y)*-260*k;

@@ -1,6 +1,6 @@
-// upgrades.js —— M3-G3 波次三选一强化:
-//   · 8 项升级,各自上限;已满级的不再出现在候选池;
-//   · rollUpgrades(game,n) 从可用池无重复随机抽取。
+// upgrades.js — M3-G3 pick-one-of-three wave upgrades:
+//   · 8 upgrades with individual caps; maxed upgrades leave the candidate pool;
+//   · rollUpgrades(game,n) draws from the available pool without repeats.
 const U=(id,zh,en,descZh,descEn,max,apply)=>({id,name:{zh,en},desc:{zh:descZh,en:descEn},max,apply});
 
 export const UPGRADES=[

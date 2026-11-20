@@ -1,6 +1,6 @@
-// input-gamepad.js —— M4-P2 手柄适配:
-//   左摇杆移动 / 右摇杆视角 / RT 开火 / LT 开镜 / A 跳 / B 蹲 / X 换弹 / Y 切枪;
-//   死区 0.18,按键沿触发,无手柄时完全静默。
+// input-gamepad.js — M4-P2 gamepad support:
+//   left stick move / right stick look / RT fire / LT aim / A jump / B crouch / X reload / Y switch weapon;
+//   dead zone 0.18, buttons trigger on the edge, completely silent without a gamepad.
 export const PAD_MAP={
   axes:{move:'0/1',look:'2/3',deadzone:.18},
   buttons:{A:'jump',B:'crouch',X:'reload',Y:'switch',LT:'ads',RT:'fire'},
@@ -32,8 +32,11 @@ export class GamepadAdapter{
     if(Math.hypot(rx,ry)>.18)g.applyLook(rx*dt*950,ry*dt*950);
 
     const rt=pad.buttons[7],lt=pad.buttons[6];
-    g.input.firing=!!(rt&&(rt.pressed||rt.value>.4));
-    g.input.ads=!!(lt&&(lt.pressed||lt.value>.4));
+    // Gamepad and mouse/keyboard are merged, not overwritten: polling must not clear a held mouse fire
+    const rtDown=!!(rt&&(rt.pressed||rt.value>.4));
+    const ltDown=!!(lt&&(lt.pressed||lt.value>.4));
+    g.input.firing=g._mouseFire||rtDown;
+    g.input.ads=g._mouseAds||ltDown;
 
     this._edge(0,()=>g.keys.add('Space'),()=>g.keys.delete('Space'));
     this._edge(1,()=>g.keys.add('ControlLeft'),()=>g.keys.delete('ControlLeft'));
@@ -53,6 +56,6 @@ export class GamepadAdapter{
     this.prev[i]=pressed;
   }
 
-  // poll 前同步按钮引用,便于 _edge 读取
+  // Sync button references before polling so _edge can read them
   sync(pad){this.gamePadButtons=pad.buttons;}
 }

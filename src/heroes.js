@@ -1,20 +1,20 @@
-// heroes.js —— 3D 真人风阵营角色(第三人称)+ 3v3 人机乱斗:
-//   外观由 character.js 按干员定义构建(8 名干员 / 迷彩 / 剪影);
-//   战斗风格按阵营(CT 稳定点射 / T 猛烈扫射),死亡倒地 → 尸体淡出 → 重生。
+// heroes.js — realistic 3D faction characters (third person) + 3v3 bot deathmatch:
+//   looks are built by character.js from operator definitions (8 operators / camos / silhouettes);
+//   combat style by faction (Nova steady bursts / Rogue heavy spray); death: fall → corpse fade → respawn.
 import * as THREE from 'three';
 import {t,isEN} from './i18n.js';
 import {byId,byFaction,DEFAULT_OP} from './operators.js';
 import {buildOperatorMesh,fadeMaterials} from './character.js';
 
-/* 兼容层:旧逻辑按阵营读取基础属性,数据源统一在 operators.js */
+/* Compatibility layer: legacy code reads base stats per faction; the data lives in operators.js */
 const _opCT=byId('frost'),_opT=byId('raven');
 const _botSpeed=op=>Math.round(5.2*op.speedMul*10)/10;
 export const HERO_DEFS={
-  ct:{label:`${_opCT.name.zh} · CT 特勤`,hp:_opCT.hp,speed:_botSpeed(_opCT),gender:_opCT.gender},
-  t:{label:`${_opT.name.zh} · T 佣兵`,hp:_opT.hp,speed:_botSpeed(_opT),gender:_opT.gender},
+  ct:{label:`${_opCT.name.en} · Nova Operator`,hp:_opCT.hp,speed:_botSpeed(_opCT),gender:_opCT.gender},
+  t:{label:`${_opT.name.en} · Rogue Mercenary`,hp:_opT.hp,speed:_botSpeed(_opT),gender:_opT.gender},
 };
 const FACTION_HEX={ct:'#7fd4ff',t:'#ff8a6a'};
-/* Bot 战斗风格:CT 稳定点射,T 猛烈扫射 */
+/* Bot combat style: Nova fires steady bursts, Rogue sprays hard */
 const BOT_PROFILE={
   ct:{burst:3,burstT:.13,pause:1.2,missK:1.0,dmgP:6,dmgH:12,range:[7,16],reaction:.25,coverBias:.6,flankBias:.3},
   t:{burst:5,burstT:.11,pause:1.5,missK:1.35,dmgP:9,dmgH:15,range:[6,13],reaction:.18,coverBias:.4,flankBias:.6},
@@ -22,7 +22,7 @@ const BOT_PROFILE={
 
 let BID=0;
 
-/* M2-A5:名牌血条 —— 两片几何模块级共享,材质每 bot 独立 */
+/* M2-A5: name tag health bar — both geometries shared at module level, materials per bot */
 const TAG_BG_GEO=new THREE.PlaneGeometry(.62,.075);
 const TAG_BAR_GEO=new THREE.PlaneGeometry(.58,.05).translate(.29,0,0);
 
@@ -33,13 +33,13 @@ function makeNameTag(name,faction){
   g.textAlign='center';g.textBaseline='middle';
   g.shadowColor='rgba(0,0,0,.9)';g.shadowBlur=6;
   g.fillStyle=FACTION_HEX[faction];
-  g.fillText((faction==='ct'?'CT·':'T·')+name,128,32);
+  g.fillText(name,128,32); // faction is shown by the tag colour
   const t=new THREE.CanvasTexture(c);
   t.colorSpace=THREE.SRGBColorSpace;
   const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true,depthTest:true}));
   sp.scale.set(1.9,.44,1);
   sp.userData.tex=t;
-  // 血条挂在名字上方(y+.26),bg 与 fill 的 z 错开避免 z-fighting
+  // Health bar sits above the name (y+.26); bg and fill are offset in z to avoid z-fighting
   const group=new THREE.Group();
   const bg=new THREE.Mesh(TAG_BG_GEO,new THREE.MeshBasicMaterial({
     color:0x0a0f18,transparent:true,opacity:.75,depthTest:true,depthWrite:false}));
@@ -59,7 +59,7 @@ export class HeroBot{
     this.def=operator;
     this.opId=operator.id;
     this.faction=operator.faction;
-    this.hero=operator.faction;      // 兼容字段:战斗风格/阵营标签按 faction
+    this.hero=operator.faction;      // compatibility field: combat style / faction label follow the faction
     this.team=team;this.name=name;
     this.gender=operator.gender;
     this.hp=operator.hp;this.maxHp=operator.hp;
@@ -72,23 +72,23 @@ export class HeroBot{
     this.fireT=1+Math.random();this.burst=0;
     this.flashT=0;this.strafeDir=Math.random()>.5?1:-1;this.strafeT=2+Math.random()*2;
     this.walkT=0;
-    /* M2-A1 动画状态机 */
+    /* M2-A1 animation state machine */
     this.animState='idle';this.animT=0;
     this.aimPitch=0;this.aimYaw=0;
     this.recoilKick=0;this.reloadT=0;this.hitT=0;this.hitDir=1;
     this.magSize=operator.rifle==='awp'?10:30;this.ammo=this.magSize;
     this.moving=false;this.hasTarget=false;
-    /* M2-A2 无线电台词冷却(错开开局,避免刷屏) */
+    /* M2-A2 radio bark cooldown (staggered at match start to avoid spam) */
     this._barkT=1+Math.random()*4;this._lowBarked=false;
     this.blindT=0;
-    /* M3-G6:掩体 / 侧翼 / 反应 */
+    /* M3-G6: cover / flanking / reactions */
     this.coverTarget=null;this.coverT=0;
     this.flankDir=Math.random()>.5?1:-1;
     this.reactionT=0;
     this.difficulty=(game.settings&&game.settings.get('botDifficulty'))||'normal';
     this._coverFrom=new THREE.Vector3();this._coverTo=new THREE.Vector3();this._coverBest=new THREE.Vector3();
     this.baseArmR=[0,0,0];this.baseArmL=[0,0,0];this.baseTorsoY=0;
-    this._eyeT=new THREE.Vector3();this._tPosT=new THREE.Vector3(); // 热路径向量复用
+    this._eyeT=new THREE.Vector3();this._tPosT=new THREE.Vector3(); // hot-path vector reuse
     this._fromT=new THREE.Vector3();this._dirT=new THREE.Vector3();
     this._rifleVel=new THREE.Vector3();this._rifleSpin=new THREE.Vector3();
     this.rifleFalling=false;this.rifleHome=null;
@@ -97,7 +97,7 @@ export class HeroBot{
     scene.add(this.group);
   }
 
-  /* 角色网格由 character.js 构建(几何共享 / 每角色一套材质) */
+  /* Character mesh built by character.js (shared geometry / one material set per character) */
   buildBody(){
     const built=buildOperatorMesh(this.assets,this.def,{camo:this.def.camo||'default'});
     this.group=built.group;
@@ -109,18 +109,18 @@ export class HeroBot{
     this.legL=built.parts.legL;this.legR=built.parts.legR;
     this.pony=built.parts.pony;
     this.gunTip=built.parts.gunTip;
-    // 记录初始持枪姿态:动画在此基准上偏移,避免 T-pose
+    // Record the initial rifle-hold pose: animation offsets from this baseline, avoiding a T-pose
     if(this.armR)this.baseArmR=[this.armR.rotation.x,this.armR.rotation.y,this.armR.rotation.z];
     if(this.armL)this.baseArmL=[this.armL.rotation.x,this.armL.rotation.y,this.armL.rotation.z];
     this.baseTorsoY=this.torso?this.torso.position.y:0;
-    // 受击闪白只影响本角色
+    // Hit flash only affects this character
     this.flashable=this.materials.filter(m=>m.emissive);
-    // 名牌挂点(角色头顶);setOperator 重建时复用旧名牌
+    // Name tag anchor (above the head); rebuilt by setOperator, which reuses the old tag
     if(!this.nameTag)this.nameTag=makeNameTag(this.name,this.faction);
     built.parts.nameTagAnchor.add(this.nameTag.group);
   }
 
-  /* 调试/换装:原地替换干员外观与属性(C1 ?op= / C5 迷彩预览共用) */
+  /* Debug / loadout swap: replace operator looks and stats in place (shared by C1 ?op= and the C5 camo preview) */
   setOperator(op){
     if(!op)return false;
     const tag=this.nameTag;
@@ -174,7 +174,7 @@ export class HeroBot{
     return this.hp;
   }
 
-  /* C2:死亡表现 —— 倒地 0.7s → 尸体淡出 → 5.5s 重生;不再爆炸 */
+  /* C2: death — fall over in 0.7 s → corpse fades → respawn after 5.5 s; no more explosions */
   die(byName){
     if(!this.alive)return;
     this.alive=false;
@@ -234,6 +234,7 @@ export class HeroBot{
     this.alive=true;this.state='active';this.deathT=0;this.hp=this.maxHp;
     this.animState='idle';this.animT=0;this.recoilKick=0;this.reloadT=0;this.hitT=0;
     this.ammo=this.magSize;this.burst=0;this.flashT=0;this._lowBarked=false;this.blindT=0;
+    this._restoreFlash(); // the killing hit's white flash is never restored in the death branch; restore it on respawn or the bot stays white
     this.coverTarget=null;this.coverT=0;
     if(this.nameTag&&this.nameTag.bar)this.nameTag.bar.scale.x=1;
     if(this.torso)this.torso.position.y=this.baseTorsoY;
@@ -243,6 +244,13 @@ export class HeroBot{
     this.place(base.clone().add(new THREE.Vector3((Math.random()-.5)*8,0,(Math.random()-.5)*8)),
       this.team==='A'?Math.PI:0);
     this.audio.respawn();
+  }
+
+  _restoreFlash(){
+    for(const m of this.flashable){
+      m.emissiveIntensity=m.userData.baseEI??0;
+      if(m.userData.baseEH!=null)m.emissive.setHex(m.userData.baseEH);
+    }
   }
 
   _collide(colliders){
@@ -277,7 +285,7 @@ export class HeroBot{
       if(this.deathT>this.respawnT)this.respawn();
       return;
     }
-    // M2-A5:名牌按距离淡出(30m 内全亮,46m 外隐藏)
+    // M2-A5: name tags fade with distance (fully visible within 30 m, hidden beyond 46 m)
     if(this.nameTag){
       const d=this.game.camera.position.distanceTo(this.pos);
       const a=Math.max(0,Math.min(1,(46-d)/16));
@@ -290,17 +298,24 @@ export class HeroBot{
     if(this.blindT>0)this.blindT-=dt;
     if(this.flashT>0){
       this.flashT-=dt;
-      if(this.flashT<=0)for(const m of this.flashable){
-        m.emissiveIntensity=m.userData.baseEI??0;
-        if(m.userData.baseEH!=null)m.emissive.setHex(m.userData.baseEH);
-      }
+      if(this.flashT<=0)this._restoreFlash();
     }
-    // M2-A1:动画计时器(热路径无新分配)
+    if(this.blindT>0){
+      // Flashbang blindness: like drones — loses target awareness, holds fire, coasts to a stop
+      this.vel.x*=Math.max(0,1-4*dt);this.vel.z*=Math.max(0,1-4*dt);
+      this.pos.x+=this.vel.x*dt;this.pos.z+=this.vel.z*dt;
+      this._collide(this.game.world.colliders);
+      this._animate(dt,time,this.vel.length());
+      this.group.position.set(this.pos.x,this.pos.y,this.pos.z);
+      this.group.rotation.y=this.yaw;
+      return;
+    }
+    // M2-A1: animation timers (no new allocations on the hot path)
     if(this.reloadT>0)this.reloadT=Math.max(0,this.reloadT-dt);
     if(this.hitT>0)this.hitT=Math.max(0,this.hitT-dt);
     if(this.recoilKick>0)this.recoilKick=Math.max(0,this.recoilKick-dt*4.5);
 
-    // 选目标:最近的敌方(角色 或 玩家)
+    // Pick a target: the nearest enemy (bot or player)
     const hadTarget=this.hasTarget;
     let target=null,tDist=1e9;
     const eye=this._eyeT.set(this.pos.x,this.pos.y+1.4,this.pos.z);
@@ -315,7 +330,7 @@ export class HeroBot{
       if(d<tDist){tDist=d;target='player';this._tPosT.copy(pe);}
     }
     const tPos=this._tPosT;
-    if(this.blindT>0)target=null; // 闪光致盲期间丢失目标
+    if(this.blindT>0)target=null; // lose the target while blinded
     const P=BOT_PROFILE[this.faction];
     if(target&&!hadTarget){
       this.bark('bark_spot');
@@ -328,12 +343,12 @@ export class HeroBot{
       let dy=wantYaw-this.yaw;
       while(dy>Math.PI)dy-=Math.PI*2;while(dy<-Math.PI)dy+=Math.PI*2;
       this.yaw+=dy*Math.min(1,6*dt);
-      // 瞄准偏移:头部俯仰 + 躯干轻微转向(动画状态机读取)
+      // Aim offset: head pitch + slight torso turn (read by the animation state machine)
       this.aimYaw=Math.max(-.6,Math.min(.6,dy));
       const dist0=Math.max(.001,Math.hypot(dx,dz));
       this.aimPitch=Math.max(-.5,Math.min(.5,Math.atan2(tPos.y-(this.pos.y+1.4),dist0)));
 
-      // 走位:保持交战距离 + 横向游走 + 掩体 / 侧翼(M3-G6)
+      // Movement: keep engagement distance + strafe + cover / flanking (M3-G6)
       this.strafeT-=dt;
       if(this.strafeT<=0){this.strafeT=1.5+Math.random()*2;this.strafeDir*=-1;}
       const dist=Math.max(.001,Math.hypot(dx,dz));
@@ -366,7 +381,7 @@ export class HeroBot{
       this.pos.z+=this.vel.z*dt;
       this._collide(this.game.world.colliders);
 
-      // 点射/扫射(换弹期间不开火)
+      // Bursts / spray (no firing while reloading)
       this.fireT-=dt;
       if(this.fireT<=0&&this.reloadT<=0&&this.reactionT<=0){
         const clear=losCheck(eye,tPos);
@@ -388,7 +403,7 @@ export class HeroBot{
     this.group.rotation.y=this.yaw;
   }
 
-  /* M3-G6:在掩体后方采样一个可藏身点(LOS 被遮挡且离自己最近) */
+  /* M3-G6: sample a hiding spot behind cover (LOS blocked and closest to the bot) */
   _findCover(threat,losCheck){
     let best=null,bestD=1e9;
     const tx=threat.x,ty=threat.y||1.4,tz=threat.z;
@@ -400,7 +415,7 @@ export class HeroBot{
       if(d<.01){dx=this.pos.x-tx;dz=this.pos.z-tz;d=Math.hypot(dx,dz)||1;}
       const hw=(c.maxX-c.minX)/2,hz=(c.maxZ-c.minZ)/2;
       const px=cx+dx/d*(hw+1.4),pz=cz+dz/d*(hz+1.4);
-      // 该点需在竞技场内
+      // The spot must be inside the arena
       if(Math.hypot(px,pz)>50)continue;
       if(losCheck(this._coverFrom.set(px,1.4,pz),this._coverTo.set(tx,ty,tz)))continue;
       const dd=Math.hypot(px-this.pos.x,pz-this.pos.z);
@@ -409,7 +424,7 @@ export class HeroBot{
     return best?best.clone():null;
   }
 
-  /* M2-A2:电台台词(每 bot 6s 冷却,静音由音频总线处理) */
+  /* M2-A2: radio barks (6 s cooldown per bot; muting is handled by the audio bus) */
   bark(key,force=false){
     if(!force&&this._barkT>0)return false;
     this._barkT=6;
@@ -418,7 +433,7 @@ export class HeroBot{
     return true;
   }
 
-  /* M2-A1:动画状态决策(独立方法便于 e2e 验证) */
+  /* M2-A1: animation state decision (separate method so e2e can verify it) */
   _decideAnim(target,dt=.016){
     let st;
     if(this.state!=='active')st=this.state;
@@ -433,7 +448,7 @@ export class HeroBot{
     return st;
   }
 
-  /* 弹匣消耗:打空后 1.2s 换弹,期间由 update 屏蔽开火 */
+  /* Ammo use: reload for 1.2 s after emptying the magazine; update blocks firing meanwhile */
   _consumeAmmo(){
     this.ammo--;
     this.recoilKick=1;
@@ -451,7 +466,7 @@ export class HeroBot{
     const from=this._fromT;
     this.gunTip.getWorldPosition(from);
     const dir=this._dirT.copy(tPos).sub(from).normalize();
-    // 命中精度:距离越远越散(T 更猛但更糙)
+    // Accuracy: spread grows with distance (Rogue hits harder but sloppier)
     const mk=P.missK*(this.difficulty==='hard'?.7:this.difficulty==='easy'?1.4:1);
     const smoked=this.game.grenades&&this.game.grenades.inSmoke(tPos);
     const miss=Math.random()<Math.min(.92,dist*.018*mk+.08+(smoked?.45:0));
@@ -460,7 +475,7 @@ export class HeroBot{
       ?from.clone().addScaledVector(dir,dist+4)
       :tPos.clone();
     this.fx.tracer(from,dir,from.distanceTo(end));
-    this.fx.impact(end,new THREE.Vector3(0,1,0),'metal');
+    // Hit effects come from botDamageFx / player hit feedback; a miss's end point is in mid-air past walls, so no floating bullet hole
     this.audio.botShot(this.game.player.pos.distanceTo(this.pos));
     if(!miss){
       if(target==='player'){
@@ -477,20 +492,20 @@ export class HeroBot{
     if(moving)this.walkT+=dt*spd*2.1;
     const swing=moving?Math.sin(this.walkT)*.6:0;
     if(this.legL){this.legL.rotation.x=swing;this.legR.rotation.x=-swing;}
-    // 行走起伏 + 女性髋部摆动(低血量步伐加重)
+    // Walk bob + female hip sway (heavier steps at low health)
     let bob=moving?Math.abs(Math.cos(this.walkT))*.035:0;
     if(this.hp/this.maxHp<.35)bob*=1.4;
     this.group.position.y=this.pos.y+bob;
     let rz=this.group.rotation.z;
     if(this.gender==='f')rz+=(Math.sin(this.walkT)*(moving?.045:0)-rz)*Math.min(1,8*dt);
     else rz*=Math.max(0,1-8*dt);
-    // 受击侧倾
+    // Lean when hit
     if(this.hitT>0)rz+=this.hitDir*this.hitT*.3;
     this.group.rotation.z=rz;
 
-    // 呼吸:躯干微起伏(基准值来自 buildBody,避免累积漂移)
+    // Breathing: subtle torso rise and fall (baseline from buildBody, avoids accumulated drift)
     if(this.torso)this.torso.position.y=this.baseTorsoY+Math.sin(time*1.8)*.003;
-    // 瞄准:头部俯仰 + 躯干跟随(平滑)
+    // Aiming: head pitch + torso follows (smoothed)
     const k=Math.min(1,8*dt);
     if(this.parts.head){
       const want=-this.aimPitch*.5;
@@ -500,7 +515,7 @@ export class HeroBot{
       const want=this.aimYaw*.3;
       this.torso.rotation.y+=(want-this.torso.rotation.y)*k;
     }
-    // 持枪基准姿态 + 后坐 / 换弹叠加
+    // Rifle-hold base pose + recoil / reload layers
     if(this.armR)this.armR.rotation.x=this.baseArmR[0]+this.recoilKick*.35;
     if(this.armL)this.armL.rotation.x=this.baseArmL[0]+this.recoilKick*.12;
     if(this.reloadT>0){
@@ -509,7 +524,7 @@ export class HeroBot{
       if(this.armL)this.armL.rotation.x=this.baseArmL[0]-a;
       if(this.armR)this.armR.rotation.x=this.baseArmR[0]-a*.35;
     }
-    // 马尾随动(发丝物理近似)
+    // Ponytail follow-through (approximate hair physics)
     if(this.pony){
       this.pony.rotation.x=-.15+Math.sin(time*1.7)*.05+(moving?swing*.18:0);
       this.pony.rotation.z=Math.sin(time*1.3)*.06;
@@ -527,12 +542,12 @@ export class HeroBot{
       if(this.nameTag.bar&&this.nameTag.bar.material)this.nameTag.bar.material.dispose();
       this.nameTag=null;
     }
-    // 只释放本角色克隆材质;几何体为模块级共享缓存
+    // Free only this character's cloned materials; geometry is a shared module-level cache
     for(const m of this.materials)m.dispose();
   }
 }
 
-/* 阵营队伍管理器:玩家所在阵营 2 名队友 vs 敌对阵营 3 名敌人(8 干员不重样) */
+/* Faction team manager: 2 teammates on the player's faction vs 3 enemies on the other (8 operators, no repeats) */
 export class HeroTeam{
   constructor(game){
     this.game=game;

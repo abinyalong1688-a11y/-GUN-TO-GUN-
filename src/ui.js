@@ -1,4 +1,4 @@
-// ui.js —— HUD / 菜单(登录+角色+地图+模式)/ 暂停 / 结算 / 击杀播报 / 计分板
+// ui.js — HUD / menu (callsign + operator + map + mode) / pause / results / killfeed / scoreboard
 import * as THREE from 'three';
 import {escHTML,store} from './util.js';
 import {t,isEN} from './i18n.js';
@@ -6,10 +6,10 @@ import {OPERATORS,byId,byFaction,CAMOS,DEFAULT_OP} from './operators.js';
 
 const $=id=>document.getElementById(id);
 
-/* 主武器目录(按阵营,双语名) */
+/* Primary weapon catalogue (per faction, bilingual names) */
 const PRIMARIES={
-  ct:[{id:'m4a4',n:'M4A4'},{id:'aug',n:'AUG · 瞄准镜',nEn:'AUG · Scoped'},{id:'awp',n:'AWP · 重狙',nEn:'AWP · Sniper'},{id:'mp5',n:'MP5'}],
-  t:[{id:'ak47',n:'AK-47'},{id:'sg553',n:'SG 553 · 瞄准镜',nEn:'SG 553 · Scoped'},{id:'awp',n:'AWP · 重狙',nEn:'AWP · Sniper'},{id:'mp5',n:'MP5'}],
+  ct:[{id:'m4a4',n:'M4A4'},{id:'aug',n:'AUG · 瞄准镜',nEn:'AUG · Scoped'},{id:'awp',n:'长弓 · 重狙',nEn:'LONGBOW · Sniper'},{id:'mp5',n:'MP5'}],
+  t:[{id:'ak47',n:'AK-47'},{id:'sg553',n:'SG 553 · 瞄准镜',nEn:'SG 553 · Scoped'},{id:'awp',n:'长弓 · 重狙',nEn:'LONGBOW · Sniper'},{id:'mp5',n:'MP5'}],
 };
 
 export class UI{
@@ -53,7 +53,7 @@ export class UI{
       this.el.killfeed.appendChild(d);
       this.kfPool.push({el:d,t:0});
     }
-    // M2-A2:无线电台词池(复用 4 槽位,无逐条 DOM 分配)
+    // M2-A2: radio bark pool (4 reused slots, no per-line DOM allocation)
     this.barkPool=[];
     for(let i=0;i<4;i++){
       const d=document.createElement('div');
@@ -64,9 +64,9 @@ export class UI{
     this._barkIdx=0;
     this.killcardT=0;
     this.errors=[];
-    this._pv=new THREE.Vector3(); // 每帧计分浮字复用
+    this._pv=new THREE.Vector3(); // reused for per-frame score popups
     this.dmgDirT=0;this.comboT=0;
-    // 菜单选择状态(校验持久化旧值,脏数据回落默认)
+    // Menu selection state (validates persisted values; dirty data falls back to defaults)
     const MOK=['desert','snow','snowtown','ember'],KOK=['waves','dm','koth'];
     const m=store.get('o07_map'),k=store.get('o07_mode');
     const p=store.get('o07_primary');
@@ -79,18 +79,18 @@ export class UI{
       mode:KOK.includes(k)?k:'waves',
       primary:['m4a4','aug','awp','mp5','sg553','ak47'].includes(p)?p:'m4a4',
     };
-    // 干员与主武器阵营匹配 + 迷彩存档恢复(C4/C5:刷新后仍选中)
+    // Match operator and primary to the faction + restore the saved camo (C4/C5: still selected after a refresh)
     if(!PRIMARIES[this.sel.hero].some(w=>w.id===this.sel.primary)){
       this.sel.primary=PRIMARIES[this.sel.hero][0].id;
     }
     this.sel.camo=this.camoOf(op);
   }
 
-  /* ---------- 菜单选择 ---------- */
+  /* ---------- Menu selection ---------- */
   bindMenu(onChange){
     const s=this.sel;
     this._onChange=onChange;
-    // 主武器 chips 按阵营重建(AUG 仅 CT)
+    // Primary chips are rebuilt per faction (AUG is Nova-only)
     const buildPrimaries=()=>{
       const box=$('m-primaries');
       if(!box)return;
@@ -102,7 +102,7 @@ export class UI{
         s.primary=c.dataset.primary;store.set('o07_primary',s.primary);buildPrimaries();
       }));
     };
-    this.buildPrimaries=buildPrimaries; // 语言切换时重建
+    this.buildPrimaries=buildPrimaries; // rebuilt on language switch
     const refresh=()=>{
       document.querySelectorAll('#m-maps .chip').forEach(c=>c.classList.toggle('selected',c.dataset.map===s.map));
       document.querySelectorAll('#m-modes .chip').forEach(c=>c.classList.toggle('selected',c.dataset.mode===s.mode));
@@ -110,7 +110,7 @@ export class UI{
       this.buildOperators();
     };
     this.refreshMenu=refresh;
-    // C4:干员卡 / 迷彩 chips(事件委托,重建无需重新绑定)
+    // C4: operator cards / camo chips (event delegation, no rebinding after a rebuild)
     if(this.el.mOperators)this.el.mOperators.addEventListener('click',e=>{
       const card=e.target.closest('.op-card');
       if(card)this.selectOperator(card.dataset.op);
@@ -131,7 +131,7 @@ export class UI{
     this.applyTheme(byId(s.operator)?.faction||'ct');
   }
 
-  /* ---------- C4 干员名册 ---------- */
+  /* ---------- C4 operator roster ---------- */
   camoNeed(camo){return {default:0,desert:0,snow:5,urban:10}[camo]||0;}
   camoLocked(camo){
     const best=parseInt(store.get('o07_best_wave','0'),10)||0;
@@ -189,7 +189,7 @@ export class UI{
     s.operator=op.id;s.hero=op.faction;
     store.set('o07_operator',op.id);
     store.set('o07_hero',op.faction);
-    // 阵营切换后主武器合法性校验
+    // Validate the primary after a faction switch
     if(!PRIMARIES[s.hero].some(p=>p.id===s.primary)){
       s.primary=PRIMARIES[s.hero][0].id;store.set('o07_primary',s.primary);
     }
@@ -213,7 +213,7 @@ export class UI{
     root.setProperty('--line',ct?'rgba(127,212,255,.35)':'rgba(255,138,106,.35)');
   }
 
-  /* ---------- U1 设置面板 ---------- */
+  /* ---------- U1 settings panel ---------- */
   bindSettings(settings,onChange){
     this.settings=settings;
     const el=id=>document.getElementById(id);
@@ -281,7 +281,7 @@ export class UI{
     check('p-subtitles',s.get('subtitles'));
     set('p-ui-scale',s.get('uiScale'));txt('p-ui-scale-v',s.get('uiScale')+'%');
   }
-  /* M4-P7:可访问性设置即时生效 */
+  /* M4-P7: accessibility settings apply immediately */
   applyAccessibility(){
     const s=this.settings;
     if(!s)return;
@@ -304,8 +304,8 @@ export class UI{
   }
   saveName(){store.set('o07_name',$('m-name').value.trim());}
 
-  /* ---------- 状态切换 ---------- */
-  showOnly(name){ // 'menu'|'pause'|'over'|null(游戏中)
+  /* ---------- State switching ---------- */
+  showOnly(name){ // 'menu'|'pause'|'over'|null (in game)
     for(const k of ['menu','pause','over'])
       this.el[k].classList.toggle('hidden',k!==name);
     const playing=!name;
@@ -323,17 +323,17 @@ export class UI{
   setScore(s){this.el.score.textContent=s;}
   setHero(name,role){this.el.heroRole.textContent=role;}
   setAmmo(ammo,reserve,reloading,weaponName){
-    // DOM 写入去重:数值未变时跳过(每帧调用的热路径)
+    // Deduplicated DOM writes: skip when values are unchanged (hot path, called every frame)
     const key=ammo+'|'+reserve+'|'+reloading+'|'+weaponName;
     if(key===this._ammoKey)return;
     this._ammoKey=key;
-    if(ammo<0){ // 军刀:无弹药
+    if(ammo<0){ // knife: no ammo
       this.el.ammo.textContent='—';
-      this.el.reserve.textContent='近战';
+      this.el.reserve.textContent=t('hud_melee');
       this.el.ammo.classList.remove('low');
     }else{
       this.el.ammo.textContent=String(ammo);
-      this.el.reserve.textContent=reloading?'装填中…':'/ '+reserve;
+      this.el.reserve.textContent=reloading?t('hud_reloading'):'/ '+reserve;
       this.el.ammo.classList.toggle('low',ammo<=8&&!reloading);
     }
     if(weaponName)this.el.weapon.textContent=weaponName;
@@ -344,18 +344,18 @@ export class UI{
       if(sp&&names[i])sp.textContent=names[i];
     });
   }
-  setScope(on){ // AUG 开镜遮罩
+  setScope(on){ // scope overlay
     if(this.el.scope)this.el.scope.classList.toggle('show',!!on);
   }
   weaponSlots(cur){
     this.el.wslots.forEach((w,i)=>w.classList.toggle('active',i===cur));
   }
-  abilityCd(k){ // CS 角色无技能:元素可缺省
+  abilityCd(k){ // operators have no abilities: the element may be absent
     if(!this.el.ability)return;
     if(k<0){this.el.ability.classList.add('hidden');return;}
     this.el.ability.classList.remove('hidden');
     this.el.ability.classList.toggle('cooling',k<1);
-    this.el.abilityCd.textContent=k>=1?'就绪':(k*100|0)+'%';
+    this.el.abilityCd.textContent=k>=1?t('hud_ready'):(k*100|0)+'%';
   }
   setDmScore(a,b,t){
     this.el.dmA.textContent=a;this.el.dmB.textContent=b;
@@ -369,7 +369,7 @@ export class UI{
     this.el.hp.textContent=Math.ceil(h);
   }
   crosshair(spreadRad,fovDeg,screenH,ads){
-    // DOM 写入去重:准星参数未变时跳过
+    // Deduplicated DOM writes: skip when crosshair parameters are unchanged
     const base=this.settings?this.settings.get('crosshair.gap'):6;
     const gap=ads>.6?'0':(base+Math.tan(spreadRad)*(screenH/2)/Math.tan(fovDeg*Math.PI/180)).toFixed(1);
     const key=gap+'|'+ads;
@@ -406,11 +406,11 @@ export class UI{
     const slot=this.kfPool.find(p=>p.t<=0)||this.kfPool[0];
     slot.t=4;
     slot.el.className='kf'+(mine?' me':'');
-    // 昵称用户可控:转义防 XSS
+    // Callsigns are user-controlled: escape against XSS
     slot.el.innerHTML=`<b>${escHTML(killer)}</b> <span class="w">[${escHTML(weapon)}]</span> ${mine?'✖':t('killed')} <i>${escHTML(victim)}</i>`;
     slot.el.style.display='block';
   }
-  /* M2-A3:击杀卡(双方立绘 + 代号 + 武器,1.6s) */
+  /* M2-A3: kill card (both portraits + callsigns + weapon, 1.6 s) */
   killCard({killer,victim,weapon,mine,killerOp,victimOp}){
     const el=this.el.killcard;
     if(!el)return;
@@ -430,7 +430,7 @@ export class UI{
       <div class="kc-side">${face(victimOp,victim)}<div class="kc-name">${escHTML(victim)}</div></div>`;
     this.killcardT=1.6;
   }
-  /* M2-A2:无线电台词(名字来自 operator def,文案来自 i18n) */
+  /* M2-A2: radio barks (names from the operator def, lines from i18n) */
   bark(name,text,faction){
     const pool=this.barkPool;
     if(!pool||!pool.length)return;
@@ -442,7 +442,7 @@ export class UI{
     slot.el.style.display='block';
   }
   scoreboard(rows,labels={}){
-    const la=labels.A||'CT',lb=labels.B||'T';
+    const la=labels.A||t('faction_ct'),lb=labels.B||t('faction_t');
     let html=`<h3>${t('sb_title')}</h3><table><tr><th>${t('sb_role')}</th><th>${t('sb_faction')}</th><th>${t('sb_kills')}</th><th>${t('sb_deaths')}</th></tr>`;
     for(const r of rows){
       html+=`<tr class="${r.me?'me':''}"><td>${escHTML(r.name)}</td><td><span class="${r.team==='A'?'tA':'tB'}">${r.team==='A'?la:lb}</span></td><td>${r.kills}</td><td>${r.deaths}</td></tr>`;
@@ -454,7 +454,7 @@ export class UI{
   hideBoard(){this.el.board.classList.add('hidden');}
 
   damageFlash(v){this.dmgLevel=Math.min(1,this.dmgLevel+v);}
-  /* U2:受伤方向指示(angle=0 正前,正值顺时针) */
+  /* U2: damage direction indicator (angle=0 straight ahead, positive is clockwise) */
   damageDirection(angle){
     if(!this.el.dmgDir)return;
     this.lastDmgAngle=angle;
@@ -462,7 +462,7 @@ export class UI{
     this.el.dmgDir.classList.add('show');
     this.dmgDirT=.8;
   }
-  /* U3:连杀播报 */
+  /* U3: kill streak callouts */
   combo(n){
     if(!this.el.combo)return;
     this.el.combo.textContent=t('combo_'+Math.min(5,Math.max(2,n)));
@@ -477,7 +477,7 @@ export class UI{
     f.style.transition='none';f.style.opacity=String(v);
     requestAnimationFrame(()=>{f.style.transition='opacity .6s';f.style.opacity='0';});
   }
-  /* M3-G1:手雷余量 HUD */
+  /* M3-G1: grenade count HUD */
   setGrenades(counts){
     if(!counts||!this.el.grenades)return;
     const g=this.el.grenades;
@@ -485,7 +485,7 @@ export class UI{
     if(g.flash)g.flash.textContent=counts.flash;
     if(g.smoke)g.smoke.textContent=counts.smoke;
   }
-  /* M4-P4:KOTH 占点状态条 */
+  /* M4-P4: KOTH capture status bar */
   setKoth(owner,ratio,a,b){
     const k=this.el.koth;
     if(!k||!k.bar)return;
@@ -499,7 +499,7 @@ export class UI{
     const k=this.el.koth;
     if(k&&k.bar)k.bar.classList.add('hidden');
   }
-  /* M3-G4:Boss 血条 */
+  /* M3-G4: boss health bar */
   setBoss(ratio,name){
     const el=document.getElementById('bossbar');
     if(!el)return;
@@ -568,18 +568,18 @@ export class UI{
     this.updatePops(dt);
   }
 
-  /* ---------- 结算 ---------- */
+  /* ---------- Results ---------- */
   showOver({title,win,kicker,stats,board,boardTitle,mvp}){
     mvp=mvp||(stats&&stats.mvp);
     this.el.oKicker.textContent=kicker||t('kicker_lost');
     this.el.oTitle.textContent=title||t('fail_title');
     this.el.oTitle.className=win?'o-win':'o-lose';
-    // M4-P5:等级进度(由 showOver 调用方注入 save)
+    // M4-P5: level progress (save is injected by the showOver caller)
     if(this.el.progress&&this._save&&mvp&&mvp.op){
       const lv=this._save.levelOf(mvp.op.id);
       this.el.progress.textContent=`${t('progress_lv')} ${lv.level} · ${lv.xp} XP`;
     }
-    // M2-A4:MVP 立绘 + 代号 + 台词(无立绘时回退首字母)
+    // M2-A4: MVP portrait + callsign + quote (falls back to the initial without a portrait)
     if(this.el.oMvp){
       if(mvp&&mvp.op){
         let url=null;
@@ -613,12 +613,12 @@ export class UI{
     this.el.oBoard.innerHTML=board||'';
     this.el.oBest.innerHTML=stats.best!=null?`${t('over_score')} <b style="font-family:var(--mono);font-size:20px;color:var(--amber)">${stats.score}</b>`+
       (stats.best>0?t('over_best',{n:stats.best}):''):'';
-    // M2-A7:结算时同步生成分享卡(MVP 优先,否则玩家干员)
+    // M2-A7: build the share card synchronously at the end of a match (MVP first, otherwise the player's operator)
     try{this.buildShareCard(stats,(mvp&&mvp.op)||this.shareOp);}catch(e){}
     this.showOnly('over');
   }
 
-  /* M2-A7:1200×630 战绩分享卡(离屏 canvas,零外部资源) */
+  /* M2-A7: 1200×630 share card (offscreen canvas, no external assets) */
   buildShareCard(stats,op){
     const cv=document.createElement('canvas');cv.width=1200;cv.height=630;
     const g=cv.getContext('2d');
@@ -674,7 +674,7 @@ export class UI{
     }
     return true;
   }
-  /* M3-G7:新手引导 */
+  /* M3-G7: onboarding */
   showTutorial(steps,onDone){
     const root=document.getElementById('tutorial');
     if(!root||!steps||!steps.length)return;
@@ -703,7 +703,7 @@ export class UI{
     this._tutSteps=null;this._tutDone=null;
     if(cb)cb(done);
   }
-  /* M3-G3:三选一强化卡 */
+  /* M3-G3: pick-one-of-three upgrade cards */
   showUpgrades(cards,onPick){
     const box=document.getElementById('upgrade-cards');
     const root=document.getElementById('upgrades');
@@ -727,7 +727,7 @@ export class UI{
     this.el.mBest.innerHTML=best>0?`${t('best_hit')}<b>${best}</b>`:t('best_none');
   }
 
-  /* ---------- 调试 ---------- */
+  /* ---------- Debug ---------- */
   debug(msg,isErr=false){
     this.errors.push(msg);
     this.el.debug.classList.remove('hidden');

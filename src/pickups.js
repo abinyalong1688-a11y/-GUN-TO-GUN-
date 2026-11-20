@@ -1,6 +1,6 @@
-// pickups.js —— M3-G2 击杀掉落与拾取:弹药 / 医疗 / 伤害强化:
-//   · 旋转发光盒 + 光环,2m 磁吸,20s 自动消失;
-//   · 几何/材质单例共享,每次拾取只创建两个 Mesh。
+// pickups.js — M3-G2 kill drops and pickups: ammo / medkit / damage boost:
+//   · spinning glowing box + halo, 2 m magnet radius, despawns after 20 s;
+//   · geometry/material singletons are shared; each pickup only creates two meshes.
 import * as THREE from 'three';
 
 const TYPES=['ammo','med','boost'];
@@ -58,7 +58,7 @@ export class Pickups{
       this.game.damageBoostT=10;
       this.game.damageBoostMul=1.5;
     }
-    this.fx.impact(p.pos,new THREE.Vector3(0,1,0),'metal');
+    this.fx.impact(p.pos,new THREE.Vector3(0,1,0),'metal',{decal:false});
     if(this.audio&&this.audio.pickup)this.audio.pickup();
     return true;
   }

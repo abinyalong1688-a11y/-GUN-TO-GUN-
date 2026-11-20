@@ -1,16 +1,20 @@
-// serve.mjs —— 本地静态服务器(仅用于自动化测试)
+// serve.mjs — local static server (automated testing only)
 import {createServer} from 'http';
-import {readFileSync,existsSync} from 'fs';
-import {join,extname} from 'path';
+import {readFileSync,existsSync,statSync} from 'fs';
+import {join,extname,resolve,sep} from 'path';
 
-const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css','.png':'image/png'};
+const ROOT=resolve('dist');
+const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css','.png':'image/png','.webmanifest':'application/manifest+json'};
 const port=process.env.PORT||8137;
 
 createServer((req,res)=>{
-  let p=decodeURIComponent(req.url.split('?')[0]);
+  let p;
+  try{p=decodeURIComponent(req.url.split('?')[0]);}catch{res.writeHead(400);res.end('bad request');return;}
   if(p==='/')p='/gun-to-gun.html';
-  const file=join('dist',p);
-  if(!existsSync(file)){res.writeHead(404);res.end('not found');return;}
+  const file=join(ROOT,p);
+  // Path traversal guard: requests like /..%2Fpackage.json escape dist once join() normalises them
+  if(!file.startsWith(ROOT+sep)){res.writeHead(403);res.end('forbidden');return;}
+  if(!existsSync(file)||!statSync(file).isFile()){res.writeHead(404);res.end('not found');return;}
   res.writeHead(200,{'Content-Type':MIME[extname(file)]||'application/octet-stream'});
   res.end(readFileSync(file));
 }).listen(port,()=>{

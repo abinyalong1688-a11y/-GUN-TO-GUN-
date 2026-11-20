@@ -1,47 +1,47 @@
-// operators.test.mjs —— 干员注册表数据完整性(M1-S1.1 验收)
+// operators.test.mjs — operator registry data integrity (M1-S1.1 acceptance)
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {OPERATORS,byId,byFaction,DEFAULT_OP,CAMOS,paletteFor} from '../src/operators.js';
 import {WEAPON_DEFS} from '../src/weapon.js';
 
-test('干员数量与阵营分布',()=>{
+test('operator count and faction split',()=>{
   assert.equal(OPERATORS.length,8);
   assert.equal(byFaction('ct').length,4);
   assert.equal(byFaction('t').length,4);
 });
 
-test('干员 id 唯一且默认干员存在',()=>{
+test('operator ids are unique and the default operator exists',()=>{
   const ids=OPERATORS.map(o=>o.id);
-  assert.equal(new Set(ids).size,ids.length,'干员 id 不应重复');
-  assert.ok(byId(DEFAULT_OP),'默认干员必须存在');
-  assert.equal(byId('nope'),null,'未知 id 应返回 null');
+  assert.equal(new Set(ids).size,ids.length,'operator ids must not repeat');
+  assert.ok(byId(DEFAULT_OP),'the default operator must exist');
+  assert.equal(byId('nope'),null,'unknown id should return null');
 });
 
-test('干员武器均在 WEAPON_DEFS 中',()=>{
-  for(const o of OPERATORS)assert.ok(WEAPON_DEFS[o.rifle],`${o.id} 的武器 ${o.rifle} 不存在`);
+test('every operator weapon exists in WEAPON_DEFS',()=>{
+  for(const o of OPERATORS)assert.ok(WEAPON_DEFS[o.rifle],`${o.id}: weapon ${o.rifle} does not exist`);
 });
 
-test('干员必填字段完整',()=>{
+test('operator required fields are complete',()=>{
   for(const o of OPERATORS){
-    assert.ok(o.name.zh&&o.name.en,`${o.id} 缺少名称`);
-    assert.ok(o.role.zh&&o.role.en,`${o.id} 缺少定位`);
-    assert.ok(o.hp>0,`${o.id} hp 非法`);
-    assert.ok(o.speedMul>0&&o.reloadMul>0&&o.recoilMul>0,`${o.id} 属性乘数非法`);
+    assert.ok(o.name.zh&&o.name.en,`${o.id} is missing a name`);
+    assert.ok(o.role.zh&&o.role.en,`${o.id} is missing a role`);
+    assert.ok(o.hp>0,`${o.id} has invalid hp`);
+    assert.ok(o.speedMul>0&&o.reloadMul>0&&o.recoilMul>0,`${o.id} has invalid stat multipliers`);
     for(const k of ['skin','hair','jacket','armor','accent','cloth'])
-      assert.equal(typeof o.palette[k],'number',`${o.id} palette.${k} 应为数字`);
-    assert.ok(Array.isArray(o.extras)&&o.extras.length<=3,`${o.id} extras 应为数组且不超过 3 项`);
-    assert.ok(o.bio.zh&&o.bio.en,`${o.id} 缺少简介`);
-    assert.ok(o.quote.zh&&o.quote.en,`${o.id} 缺少台词`);
-    assert.ok(o.voice.pitch>0,`${o.id} 缺少音高`);
+      assert.equal(typeof o.palette[k],'number',`${o.id} palette.${k} should be a number`);
+    assert.ok(Array.isArray(o.extras)&&o.extras.length<=3,`${o.id} extras should be an array of at most 3`);
+    assert.ok(o.bio.zh&&o.bio.en,`${o.id} is missing a bio`);
+    assert.ok(o.quote.zh&&o.quote.en,`${o.id} is missing a quote`);
+    assert.ok(o.voice.pitch>0,`${o.id} is missing a voice pitch`);
   }
 });
 
-test('迷彩覆盖与未知迷彩回退',()=>{
+test('camo override and unknown camo fallback',()=>{
   const frost=byId('frost');
   assert.deepEqual(paletteFor(frost,'default'),frost.palette);
   const snow=paletteFor(frost,'snow');
-  assert.notEqual(snow.jacket,frost.palette.jacket,'雪地迷彩应覆盖夹克色');
-  assert.equal(snow.accent,frost.palette.accent,'迷彩不应覆盖强调色');
-  assert.equal(paletteFor(frost,'nope').jacket,frost.palette.jacket,'未知迷彩应回退 default');
+  assert.notEqual(snow.jacket,frost.palette.jacket,'snow camo should override the jacket colour');
+  assert.equal(snow.accent,frost.palette.accent,'camo must not override the accent colour');
+  assert.equal(paletteFor(frost,'nope').jacket,frost.palette.jacket,'unknown camo should fall back to default');
   assert.ok(Object.keys(CAMOS).includes('desert')&&Object.keys(CAMOS).includes('urban'));
 });

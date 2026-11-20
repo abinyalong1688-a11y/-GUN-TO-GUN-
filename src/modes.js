@@ -1,4 +1,4 @@
-// modes.js —— M4-P4 占点争夺(KOTH):中心半径 8m,两队争夺,先到 200 分获胜。
+// modes.js — M4-P4 King of the Hill: centre radius 8 m, two teams contest it, first to 200 points wins.
 import * as THREE from 'three';
 import {t} from './i18n.js';
 
@@ -14,7 +14,7 @@ export class KothMode extends GameMode{
     super(game);
     this.pos=new THREE.Vector3(0,0,0);
     this.radius=8;
-    this.capture=0;   // -1 ~ 1,正值为 A
+    this.capture=0;   // -1 ~ 1, positive means team A
     this.owner=null;
     this.score={A:0,B:0};
     this.winScore=200;
@@ -49,7 +49,7 @@ export class KothMode extends GameMode{
 
     if(this.owner){
       this.score[this.owner]+=dt*10;
-      if(a>0&&b>0)this.score[this.owner]+=dt*2; //  contested 加速
+      if(a>0&&b>0)this.score[this.owner]+=dt*2; // contested: faster scoring
       if(this.score[this.owner]>=this.winScore){
         this.done=true;
         g.ui.banner(this.owner==='A'?t('koth_win'):t('koth_lose'),t('koth_name'));

@@ -1,7 +1,7 @@
-// sw.js —— GUN TO GUN 离线缓存(Service Worker,部署到云端时随 dist 一起上传)
-// 策略:导航请求网络优先 + 缓存兜底(在线总是拿到最新版);跨域请求(IP 语言探测等)直连不缓存
-// 注意:本文件不参与 esbuild 打包,build.mjs 原样拷贝到 dist/,版本号与游戏 VERSION 同步
-const CACHE='gtg-v1.3.0';
+// sw.js — GUN TO GUN offline cache (service worker, uploaded alongside dist when deployed)
+// Strategy: navigations are network-first with cache fallback (online always gets the latest); cross-origin requests (IP language probe etc.) bypass the cache
+// Note: this file is not bundled by esbuild; build.mjs copies it into dist/ and syncs the version with the game VERSION
+const CACHE='gtg-v__VERSION__'; // build.mjs injects the package.json version at build time so it cannot drift from the game VERSION
 const ASSETS=['./','./gun-to-gun.html','./manifest.webmanifest'];
 
 self.addEventListener('install',e=>{
@@ -22,9 +22,9 @@ self.addEventListener('fetch',e=>{
   const req=e.request;
   if(req.method!=='GET')return;
   const url=new URL(req.url);
-  if(url.origin!==self.location.origin)return; // 跨域(IP 探测)直连,失败由页面静默兜底
+  if(url.origin!==self.location.origin)return; // cross-origin (IP probe) goes straight to network; the page handles failure silently
   if(req.mode==='navigate'){
-    // 页面导航:网络优先(保证更新),断网回落缓存
+    // Navigations: network-first (picks up updates), fall back to cache when offline
     e.respondWith(
       fetch(req).then(r=>{
         const cp=r.clone();
@@ -34,7 +34,7 @@ self.addEventListener('fetch',e=>{
     );
     return;
   }
-  // 其余同源资源:缓存优先
+  // Other same-origin assets: cache-first
   e.respondWith(
     caches.match(req).then(hit=>hit||fetch(req))
   );

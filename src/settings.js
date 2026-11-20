@@ -1,7 +1,7 @@
-// settings.js —— 设置中心:
-//   · 统一 schema + 点路径读写(crosshair.color 等);
-//   · 所有数值 clamp,脏 JSON 静默回退默认值;
-//   · 首次启动迁移旧 key(o07_sens / o07_vol / o07_quality)。
+// settings.js — settings hub:
+//   · one schema + dotted-path get/set (crosshair.color etc.);
+//   · every number is clamped; dirty JSON silently falls back to defaults;
+//   · migrates legacy keys on first launch (o07_sens / o07_vol / o07_quality).
 import {store,num} from './util.js';
 
 const KEY='o07_settings_v2';
@@ -52,7 +52,7 @@ function sanitize(raw){
   return d;
 }
 
-/* 旧 key 迁移:只在没有 v2 存档时读取一次 */
+/* Legacy key migration: read once, only when there is no v2 save */
 function legacy(){
   const out={};
   const sens=num(store.get('o07_sens'));if(sens!=null)out.sens=sens;

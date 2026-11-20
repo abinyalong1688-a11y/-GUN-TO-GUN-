@@ -1,11 +1,11 @@
-// operators.js —— 干员注册表(纯数据,零依赖):
-//   8 名干员 · 阵营/性别/定位/属性/配色/装备/台词,
-//   供角色构建(character.js)、名册 UI、立绘、击杀卡、MVP 共用。
-// 约定:新增干员只改本文件;所有 rifle 必须是 weapon.js WEAPON_DEFS 的 id。
+// operators.js — operator registry (pure data, no dependencies):
+//   8 operators · faction / gender / role / stats / palette / gear / quotes,
+//   shared by the character builder (character.js), roster UI, portraits, kill cards and MVP.
+// Convention: new operators only touch this file; every rifle must be an id in weapon.js WEAPON_DEFS.
 
 export const DEFAULT_OP='frost';
 
-/* 迷彩覆盖:只覆盖服装色,肤色/发色/强调色保持干员个性 */
+/* Camo override: only clothing colours change; skin / hair / accent keep the operator's identity */
 export const CAMOS={
   default:{},
   desert:{jacket:0x6a5a42,armor:0x3a3226,cloth:0x8a7a5a},
@@ -13,10 +13,10 @@ export const CAMOS={
   urban:{jacket:0x4a4a52,armor:0x2a2a30,cloth:0x6a6a72},
 };
 
-/* 配色约定(60-30-10):
-   60% jacket/cloth 中性色 · 30% armor 阵营色 · 10% accent 高亮(臂章/镜片) */
+/* Palette convention (60-30-10):
+   60% jacket/cloth neutral · 30% armor faction colour · 10% accent highlight (armband / lenses) */
 export const OPERATORS=[
-  /* ---------------- CT ---------------- */
+  /* ---------------- Nova ---------------- */
   {
     id:'frost',faction:'ct',gender:'f',
     name:{zh:'霜华',en:'Frost'},
@@ -25,8 +25,8 @@ export const OPERATORS=[
     palette:{skin:0xf3d0b8,hair:0x3a2418,jacket:0x46536b,armor:0x2b3140,accent:0x7fd4ff,cloth:0x39465c},
     headgear:'headset',hair:'ponytail',extras:['armband','kneepads','holster'],
     bio:{
-      zh:'SAS 空勤特勤,擅长中远距离压制。冷静、话少,习惯在开火前先数三秒。',
-      en:'SAS air service specialist built for mid-to-long range control. Calm, quiet, and always counts three seconds before pulling the trigger.',
+      zh:'北境空勤特勤,擅长中远距离压制。冷静、话少,习惯在开火前先数三秒。',
+      en:'Northern air-service specialist built for mid-to-long range control. Calm, quiet, and always counts three seconds before pulling the trigger.',
     },
     quote:{zh:'呼吸,然后开枪。',en:'Breathe. Then shoot.'},
     voice:{pitch:1.08},
@@ -74,7 +74,7 @@ export const OPERATORS=[
     voice:{pitch:.90},
   },
 
-  /* ---------------- T ---------------- */
+  /* ---------------- Rogue ---------------- */
   {
     id:'raven',faction:'t',gender:'m',
     name:{zh:'赤鸦',en:'Raven'},
@@ -83,8 +83,8 @@ export const OPERATORS=[
     palette:{skin:0xdfab8c,hair:0x1a130e,jacket:0x7e2620,armor:0x1e1c1c,accent:0xff8a6a,cloth:0x2f2c2c},
     headgear:'shemagh',hair:'short',extras:['armband','holster'],
     bio:{
-      zh:'凤凰线佣兵,红夹克比他的履历更出名。他接单只看两件事:难度和价钱。',
-      en:'A Phoenix-line mercenary whose red jacket is more famous than his record. He takes a job for two reasons: difficulty and pay.',
+      zh:'赤线佣兵,红夹克比他的履历更出名。他接单只看两件事:难度和价钱。',
+      en:'A Redline mercenary whose red jacket is more famous than his record. He takes a job for two reasons: difficulty and pay.',
     },
     quote:{zh:'价钱谈好,剩下都好说。',en:'Pay is settled. The rest is easy.'},
     voice:{pitch:.95},
@@ -136,7 +136,7 @@ export const OPERATORS=[
 export const byId=id=>OPERATORS.find(o=>o.id===id)||null;
 export const byFaction=f=>OPERATORS.filter(o=>o.faction===f);
 
-/* 干员基础配色 + 迷彩覆盖;未知迷彩静默回退 default */
+/* Operator base palette + camo override; unknown camos silently fall back to default */
 export function paletteFor(def,camo='default'){
   const c=CAMOS[camo]||CAMOS.default;
   return {...def.palette,...c};

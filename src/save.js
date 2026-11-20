@@ -1,7 +1,7 @@
-// save.js —— M4-P5 存档 / 成长 / 每日挑战:
-//   · v2 结构,自动迁移旧 o07_best / o07_best_wave;
-//   · 结算按击杀/波次给 XP,升级解锁迷彩;
-//   · 每日 3 个挑战(日期种子),本地存储,离线可用。
+// save.js — M4-P5 save data / progression / daily challenges:
+//   · v2 layout, migrates legacy o07_best / o07_best_wave automatically;
+//   · match results award XP for kills / waves; levelling up unlocks camos;
+//   · 3 daily challenges (date-seeded), stored locally, work offline.
 const KEY='o07_save_v2';
 const OPERATOR_IDS=['frost','snowwolf','swift','thunder','raven','fox','vulture','viper'];
 
@@ -41,13 +41,13 @@ export class SaveSystem{
         }
       }catch(e){}
     }else{
-      // 旧档迁移
+      // Legacy save migration
       try{
         d.stats.bestScore=parseInt(localStorage.getItem('o07_best')||'0',10)||0;
         d.stats.bestWave=parseInt(localStorage.getItem('o07_best_wave')||'0',10)||0;
       }catch(e){}
     }
-    // 每日挑战按日期重置
+    // Daily challenges reset by date
     const today=new Date().toISOString().slice(0,10);
     if(d.daily.date!==today){
       d.daily={date:today,progress:{kills:0,wave:0,headshots:0},done:false};
@@ -64,7 +64,7 @@ export class SaveSystem{
     return this.data.operators[id]||{level:1,xp:0,camo:'default'};
   }
 
-  /* 结算奖励:返回本次获得 XP 与升级信息 */
+  /* Match rewards: returns XP earned and level-up info */
   award({kills=0,wave=0,score=0,time=0,opId='frost'}={}){
     const d=this.data;
     const xp=Math.round(kills*12+wave*30+score/100+time/20);
@@ -74,7 +74,7 @@ export class SaveSystem{
     while(op.xp>=need(op.level)){
       op.xp-=need(op.level);
       op.level++;
-      // 等级解锁迷彩
+      // Level-based camo unlocks
       if(op.level>=2&&!d.unlocks.includes('snow'))d.unlocks.push('snow');
       if(op.level>=3&&!d.unlocks.includes('urban'))d.unlocks.push('urban');
     }
@@ -82,7 +82,7 @@ export class SaveSystem{
     d.stats.bestWave=Math.max(d.stats.bestWave,wave|0);
     d.stats.kills+=Math.max(0,kills|0);
     d.stats.playtime+=Math.max(0,Math.round(time));
-    // 每日进度
+    // Daily progress
     const p=d.daily.progress;
     p.kills+=Math.max(0,kills|0);
     p.wave=Math.max(p.wave,wave|0);

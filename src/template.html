@@ -1,16 +1,16 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#0a0c14">
-<meta name="description" content="GUN TO GUN · 单文件 3D FPS · 8 名干员 · 4 张地图 · 7 种武器 · 离线可玩">
-<meta property="og:title" content="GUN TO GUN · 战术阵营射击">
-<meta property="og:description" content="单文件 3D FPS · 8 名干员 · 4 张地图 · 7 种武器 · 离线可玩">
+<meta name="description" content="GUN TO GUN · single-file 3D FPS · 8 operators · 4 maps · 7 weapons · playable offline">
+<meta property="og:title" content="GUN TO GUN · Tactical Faction Shooter">
+<meta property="og:description" content="Single-file 3D FPS · 8 operators · 4 maps · 7 weapons · playable offline">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://abin-studio.github.io/gun-to-gun/">
 <link rel="manifest" href="manifest.webmanifest">
-<title>GUN TO GUN · CS 风格反恐射击</title>
+<title>GUN TO GUN · Tactical Faction Shooter</title>
 <style>/*__CSS__*/</style>
 </head>
 <body>
@@ -23,16 +23,16 @@
 
   <div id="hud" class="hidden">
     <div id="topline">
-      <div class="tl-item"><span class="tl-label" data-i="hud_wave">波次</span><span id="ui-wave" class="tl-val">–</span></div>
-      <div class="tl-item"><span class="tl-label" data-i="hud_left">残余敌机</span><span id="ui-remain" class="tl-val">–</span></div>
-      <div class="tl-item right"><span class="tl-label" data-i="hud_score">得分</span><span id="ui-score" class="tl-val">0</span></div>
+      <div class="tl-item"><span class="tl-label" data-i="hud_wave">WAVE</span><span id="ui-wave" class="tl-val">–</span></div>
+      <div class="tl-item"><span class="tl-label" data-i="hud_left">HOSTILES</span><span id="ui-remain" class="tl-val">–</span></div>
+      <div class="tl-item right"><span class="tl-label" data-i="hud_score">SCORE</span><span id="ui-score" class="tl-val">0</span></div>
     </div>
     <div id="dm-top" class="hidden">
       <div id="dm-timer">04:00</div>
       <div id="dm-score"><span class="teamA" id="dm-a">0</span><i>:</i><span class="teamB" id="dm-b">0</span></div>
     </div>
-    <div id="bossbar" class="hidden"><span id="boss-name">守卫者</span><div class="bb-track"><i id="boss-fill"></i></div></div>
-    <div id="koth-bar" class="hidden"><span id="koth-name">占点争夺</span><div class="bb-track"><i id="koth-fill"></i></div><div id="koth-score"></div></div>
+    <div id="bossbar" class="hidden"><span id="boss-name">WARDEN</span><div class="bb-track"><i id="boss-fill"></i></div></div>
+    <div id="koth-bar" class="hidden"><span id="koth-name">KING OF THE HILL</span><div class="bb-track"><i id="koth-fill"></i></div><div id="koth-score"></div></div>
     <div id="killfeed"></div>
     <div id="killcard" class="hidden"></div>
     <div id="barks"></div>
@@ -44,132 +44,132 @@
     <div id="hitmark"><i></i><i></i><i></i><i></i></div>
     <div id="grenades"><span data-i="g_frag">G</span> <b id="g-frag">2</b> · <span data-i="g_flash">F</span> <b id="g-flash">2</b> · <span data-i="g_smoke">V</span> <b id="g-smoke">1</b></div>
     <canvas id="radar" width="160" height="160"></canvas>
-    <div id="reload-ring"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="16"></circle><circle id="rr-arc" cx="20" cy="20" r="16"></circle></svg><div id="rr-text" data-i="reload">装填</div></div>
+    <div id="reload-ring"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="16"></circle><circle id="rr-arc" cx="20" cy="20" r="16"></circle></svg><div id="rr-text" data-i="reload">RELOAD</div></div>
     <div id="weapon-slots">
-      <div class="wslot" data-i="0"><b>1</b><span id="ws0">主武器</span></div>
-      <div class="wslot" data-i="1"><b>1</b><span id="ws1">AUG</span></div>
-      <div class="wslot" data-i="2"><b>1</b><span id="ws2">AWP</span></div>
-      <div class="wslot" data-i="3"><b>1</b><span id="ws3">MP5</span></div>
-      <div class="wslot" data-i="4"><b>2</b><span id="ws4">沙漠之鹰</span></div>
-      <div class="wslot" data-i="5"><b>3</b><span id="ws5">军刀</span></div>
+      <div class="wslot" data-slot="0"><b>1</b><span id="ws0">PRIMARY</span></div>
+      <div class="wslot" data-slot="1"><b>1</b><span id="ws1">AUG</span></div>
+      <div class="wslot" data-slot="2"><b>1</b><span id="ws2">LONGBOW</span></div>
+      <div class="wslot" data-slot="3"><b>1</b><span id="ws3">MP5</span></div>
+      <div class="wslot" data-slot="4"><b>2</b><span id="ws4">DESERT EAGLE</span></div>
+      <div class="wslot" data-slot="5"><b>3</b><span id="ws5">KNIFE</span></div>
     </div>
     <div id="banner"><div id="banner-main"></div><div id="banner-sub"></div></div>
     <div id="hint"></div>
     <div id="pops"></div>
-    <div id="vitals"><div class="lbl" id="hero-role" data-i="hp">生命</div><div id="hpbar"><div id="hpfill"></div></div><div id="ui-hp" class="hpnum">100</div></div>
+    <div id="vitals"><div class="lbl" id="hero-role" data-i="hp">HP</div><div id="hpbar"><div id="hpfill"></div></div><div id="ui-hp" class="hpnum">100</div></div>
     <div id="ammo"><div id="ui-ammo" class="big">30</div><div id="ui-reserve">/ 90</div><div id="ui-weapon">M4A4 · 5.56×45MM</div></div>
   </div>
 
   <div id="menu" class="overlay">
     <div class="menu-box">
-      <span class="m-kicker" data-i="kicker">◆ 单文件 · 离线可玩 · Three.js / WebGL2</span>
+      <span class="m-kicker" data-i="kicker">◆ Single file · Offline · Three.js / WebGL2</span>
       <h1 class="m-title">GUN <em>TO</em> GUN</h1>
-      <div class="m-sub" data-i="sub">CS 风格反恐射击 · CT vs T · 7 种真实武器 · 真实物理</div>
+      <div class="m-sub" data-i="sub">Tactical faction shooter · NOVA vs ROGUE · 8 real weapons · real physics</div>
 
       <div class="m-grid">
         <div class="m-sec">
-          <div class="m-sec-t" data-i="callsign">呼号登录</div>
-          <input id="m-name" class="m-input" maxlength="10" placeholder="输入昵称(默认 守卫-07)">
+          <div class="m-sec-t" data-i="callsign">CALLSIGN</div>
+          <input id="m-name" class="m-input" maxlength="10" placeholder="Enter callsign (default Guard-07)">
         </div>
         <div class="m-sec">
-          <div class="m-sec-t" data-i="sec_role">选择干员 · CT vs T · 8 名干员</div>
+          <div class="m-sec-t" data-i="sec_role">OPERATOR · NOVA vs ROGUE · 8 operators</div>
           <div id="m-operators" class="op-grid"></div>
           <div id="m-camos" class="camo-row"></div>
         </div>
         <div class="m-sec">
-          <div class="m-sec-t" data-i="sec_primary">初始主武器(阵营全部 4 把随身,按 1 循环切换)</div>
+          <div class="m-sec-t" data-i="sec_primary">PRIMARY (all 4 carried · press 1 to cycle)</div>
           <div class="chips" id="m-primaries"></div>
         </div>
         <div class="m-sec">
-          <div class="m-sec-t" data-i="sec_map">作战地图</div>
+          <div class="m-sec-t" data-i="sec_map">MAP</div>
           <div class="chips" id="m-maps">
-            <div class="chip selected" data-map="desert">沙漠哨站 · 日落</div>
-            <div class="chip" data-map="snow">雪夜要塞 · 极寒</div>
-            <div class="chip" data-map="snowtown">雪地小镇 · de_snow</div>
-            <div class="chip" data-map="ember">熔岩废都 · 烈焰</div>
+            <div class="chip selected" data-map="desert">Desert Outpost · Sunset</div>
+            <div class="chip" data-map="snow">Snow Keep · Night</div>
+            <div class="chip" data-map="snowtown">Snow Town · Daylight</div>
+            <div class="chip" data-map="ember">Lava Ruins · Ember</div>
           </div>
         </div>
         <div class="m-sec">
-          <div class="m-sec-t" data-i="sec_mode">作战模式</div>
+          <div class="m-sec-t" data-i="sec_mode">MODE</div>
           <div class="chips" id="m-modes">
-            <div class="chip selected" data-mode="waves">无尽波次 · 守卫哨站</div>
-            <div class="chip" data-mode="dm">6 人乱斗 · 3v3 对战</div>
-            <div class="chip" data-mode="koth">占点争夺 · 先到 200 分</div>
+            <div class="chip selected" data-mode="waves">Wave Survival · Defend the Outpost</div>
+            <div class="chip" data-mode="dm">6-Player Brawl · 3v3</div>
+            <div class="chip" data-mode="koth">King of the Hill · first to 200</div>
           </div>
         </div>
       </div>
 
       <div class="m-row">
         <select id="m-quality" class="btn">
-          <option value="high">画质:高</option>
-          <option value="low">画质:流畅</option>
+          <option value="high">Quality: High</option>
+          <option value="low">Quality: Smooth</option>
         </select>
-        <button id="m-start" class="btn-primary" data-i="deploy">▶ 开始部署</button>
+        <button id="m-start" class="btn-primary" data-i="deploy">▶ DEPLOY</button>
       </div>
       <div class="m-best" id="m-best"></div>
-      <div class="m-sponsor" data-i="sponsor">广告 · <b>AbinStudio</b> AI 短剧制作软件 · <a href="https://app.agents100.com" target="_blank" rel="noopener">app.agents100.com</a></div>
-      <div class="m-foot"><span data-i="foot">空格 跳跃 · Ctrl 蹲伏 · 反复按 1 循环 4 把主武器 · 2 沙漠之鹰 · 3 军刀 · 滚轮顺序切换 · 开镜 · 360° 视野 ·</span> <span id="m-ver"></span></div>
+      <div class="m-sponsor" data-i="sponsor">Sponsor · <b>AbinStudio</b> AI short-drama studio · <a href="https://app.agents100.com" target="_blank" rel="noopener">app.agents100.com</a></div>
+      <div class="m-foot"><span data-i="foot">Space jump · Ctrl crouch · tap 1 to cycle 4 primaries · 2 Desert Eagle · 3 knife · wheel cycles · ADS · 360° look ·</span> <span id="m-ver"></span></div>
     </div>
   </div>
 
   <div id="pause" class="overlay hidden">
     <div class="pause-box">
-      <span class="m-kicker" data-i="pause_kicker">作战暂停</span>
-      <h2 data-i="pause_title">行动中止</h2>
-      <div class="p-row"><label><span data-i="p_sens">鼠标灵敏度</span> <input id="p-sens" type="range" min="0.3" max="2.2" step="0.05" value="1"><span id="p-sens-v">1.00</span></label></div>
-      <div class="p-row"><label><span data-i="p_ads">ADS 灵敏度</span> <input id="p-ads" type="range" min="0.5" max="1.5" step="0.05" value="1"><span id="p-ads-v">1.00</span></label></div>
-      <div class="p-row"><label><span data-i="p_fov">视野 FOV</span> <input id="p-fov" type="range" min="70" max="110" step="1" value="106"><span id="p-fov-v">106</span></label></div>
-      <div class="p-row"><label><span data-i="p_vol">音量</span> <input id="p-vol" type="range" min="0" max="1" step="0.05" value="0.8"><span id="p-vol-v">80%</span></label></div>
-      <div class="p-row"><label><span data-i="p_sfx">音效</span> <input id="p-sfx" type="range" min="0" max="1" step="0.05" value="0.9"><span id="p-sfx-v">90%</span></label></div>
-      <div class="p-row"><label><span data-i="p_music">音乐</span> <input id="p-music" type="range" min="0" max="1" step="0.05" value="0.6"><span id="p-music-v">60%</span></label></div>
-      <div class="p-row"><label><span data-i="p_xh_color">准星颜色</span> <input id="p-xh-color" type="color" value="#7fe3ff"></label></div>
-      <div class="p-row"><label><span data-i="p_xh_size">准星大小</span> <input id="p-xh-size" type="range" min="2" max="8" step="1" value="4"><span id="p-xh-size-v">4</span></label></div>
-      <div class="p-row"><label><span data-i="p_xh_gap">准星间隙</span> <input id="p-xh-gap" type="range" min="0" max="20" step="1" value="6"><span id="p-xh-gap-v">6</span></label></div>
-      <div class="p-row"><label><span data-i="p_ui_scale">界面缩放</span> <input id="p-ui-scale" type="range" min="90" max="120" step="5" value="100"><span id="p-ui-scale-v">100%</span></label></div>
-      <div class="p-row"><label><input id="p-leaderboard" type="checkbox"> <span data-i="p_leaderboard">匿名全球榜(需联网)</span></label></div>
+      <span class="m-kicker" data-i="pause_kicker">PAUSED</span>
+      <h2 data-i="pause_title">OPERATION HALTED</h2>
+      <div class="p-row"><label><span data-i="p_sens">Mouse sensitivity</span> <input id="p-sens" type="range" min="0.3" max="2.2" step="0.05" value="1"><span id="p-sens-v">1.00</span></label></div>
+      <div class="p-row"><label><span data-i="p_ads">ADS sensitivity</span> <input id="p-ads" type="range" min="0.5" max="1.5" step="0.05" value="1"><span id="p-ads-v">1.00</span></label></div>
+      <div class="p-row"><label><span data-i="p_fov">Field of view</span> <input id="p-fov" type="range" min="70" max="110" step="1" value="106"><span id="p-fov-v">106</span></label></div>
+      <div class="p-row"><label><span data-i="p_vol">Volume</span> <input id="p-vol" type="range" min="0" max="1" step="0.05" value="0.8"><span id="p-vol-v">80%</span></label></div>
+      <div class="p-row"><label><span data-i="p_sfx">Effects</span> <input id="p-sfx" type="range" min="0" max="1" step="0.05" value="0.9"><span id="p-sfx-v">90%</span></label></div>
+      <div class="p-row"><label><span data-i="p_music">Music</span> <input id="p-music" type="range" min="0" max="1" step="0.05" value="0.6"><span id="p-music-v">60%</span></label></div>
+      <div class="p-row"><label><span data-i="p_xh_color">Crosshair colour</span> <input id="p-xh-color" type="color" value="#7fe3ff"></label></div>
+      <div class="p-row"><label><span data-i="p_xh_size">Crosshair size</span> <input id="p-xh-size" type="range" min="2" max="8" step="1" value="4"><span id="p-xh-size-v">4</span></label></div>
+      <div class="p-row"><label><span data-i="p_xh_gap">Crosshair gap</span> <input id="p-xh-gap" type="range" min="0" max="20" step="1" value="6"><span id="p-xh-gap-v">6</span></label></div>
+      <div class="p-row"><label><span data-i="p_ui_scale">UI scale</span> <input id="p-ui-scale" type="range" min="90" max="120" step="5" value="100"><span id="p-ui-scale-v">100%</span></label></div>
+      <div class="p-row"><label><input id="p-leaderboard" type="checkbox"> <span data-i="p_leaderboard">Anonymous global leaderboard (online)</span></label></div>
       <div class="p-row checks">
-        <label><input id="p-yinv" type="checkbox"> <span data-i="p_yinv">Y 轴反转</span></label>
-        <label><input id="p-crouch" type="checkbox"> <span data-i="p_crouch">蹲伏切换</span></label>
-        <label><input id="p-ads-toggle" type="checkbox"> <span data-i="p_ads_toggle">ADS 切换</span></label>
-        <label><input id="p-touchassist" type="checkbox"> <span data-i="p_touchassist">触屏辅助瞄准</span></label>
-        <label><input id="p-colorblind" type="checkbox"> <span data-i="p_colorblind">色盲高对比</span></label>
-        <label><input id="p-reduce-motion" type="checkbox"> <span data-i="p_reduce_motion">减弱动态效果</span></label>
-        <label><input id="p-subtitles" type="checkbox"> <span data-i="p_subtitles">台词字幕</span></label>
+        <label><input id="p-yinv" type="checkbox"> <span data-i="p_yinv">Invert Y axis</span></label>
+        <label><input id="p-crouch" type="checkbox"> <span data-i="p_crouch">Toggle crouch</span></label>
+        <label><input id="p-ads-toggle" type="checkbox"> <span data-i="p_ads_toggle">Toggle ADS</span></label>
+        <label><input id="p-touchassist" type="checkbox"> <span data-i="p_touchassist">Touch aim assist</span></label>
+        <label><input id="p-colorblind" type="checkbox"> <span data-i="p_colorblind">Colour-blind high contrast</span></label>
+        <label><input id="p-reduce-motion" type="checkbox"> <span data-i="p_reduce_motion">Reduce motion</span></label>
+        <label><input id="p-subtitles" type="checkbox"> <span data-i="p_subtitles">Radio subtitles</span></label>
       </div>
-      <div class="p-row"><button id="p-reset" class="btn" data-i="p_reset">恢复默认设置</button></div>
+      <div class="p-row"><button id="p-reset" class="btn" data-i="p_reset">Restore defaults</button></div>
       <div class="p-row btns">
-        <button id="p-resume" class="btn-primary" data-i="resume">继续作战</button>
-        <button id="p-restart" class="btn" data-i="redeploy">重新部署</button>
-        <button id="p-menu" class="btn" data-i="main_menu">返回主菜单</button>
+        <button id="p-resume" class="btn-primary" data-i="resume">RESUME</button>
+        <button id="p-restart" class="btn" data-i="redeploy">REDEPLOY</button>
+        <button id="p-menu" class="btn" data-i="main_menu">MAIN MENU</button>
       </div>
     </div>
   </div>
 
   <div id="over" class="overlay hidden">
     <div class="over-box">
-      <span class="o-kicker" id="o-kicker">信号中断 · SIGNAL LOST</span>
-      <h2 id="o-title">哨站失守</h2>
+      <span class="o-kicker" id="o-kicker">SIGNAL LOST</span>
+      <h2 id="o-title">OUTPOST LOST</h2>
       <div id="o-mvp" class="hidden"></div>
       <div id="m-progress" class="o-best"></div>
       <div class="o-stats" id="o-stats"></div>
       <div class="o-board" id="o-board"></div>
       <div class="o-best" id="o-best"></div>
       <div class="p-row btns">
-        <button id="o-restart" class="btn-primary" data-i="redeploy">重新部署</button>
-        <button id="o-menu" class="btn" data-i="main_menu">返回主菜单</button>
-        <button id="o-share" class="btn" data-i="o_share">保存战绩</button>
+        <button id="o-restart" class="btn-primary" data-i="redeploy">REDEPLOY</button>
+        <button id="o-menu" class="btn" data-i="main_menu">MAIN MENU</button>
+        <button id="o-share" class="btn" data-i="o_share">SAVE RESULT</button>
       </div>
     </div>
   </div>
 
   <div id="tutorial" class="overlay hidden">
     <div class="tut-box">
-      <span class="m-kicker" data-i="tut_kicker">新兵训练</span>
+      <span class="m-kicker" data-i="tut_kicker">BOOT CAMP</span>
       <h2 id="tut-title"></h2>
-      <div class="tut-keys" data-i="tut_keys">WASD 移动 · 鼠标瞄准 · 左键开火 · 右键开镜 · R 换弹 · 1 切枪 · G 投雷</div>
+      <div class="tut-keys" data-i="tut_keys">WASD move · mouse aim · LMB fire · RMB aim · R reload · 1 switch · G grenade</div>
       <div class="tut-actions">
-        <button id="tut-next" class="btn-primary" data-i="tut_next">下一步</button>
-        <button id="tut-skip" class="btn" data-i="tut_skip">跳过训练</button>
+        <button id="tut-next" class="btn-primary" data-i="tut_next">NEXT</button>
+        <button id="tut-skip" class="btn" data-i="tut_skip">SKIP</button>
       </div>
       <div id="tut-count" class="tut-count"></div>
     </div>
@@ -185,20 +185,20 @@
       <button data-act="grenade">G</button>
     </div>
   </div>
-  <div id="rotate-hint" class="hidden">请横屏游玩 · Rotate your device</div>
+  <div id="rotate-hint" class="hidden" data-i="rotate_hint">Rotate your device to landscape</div>
 
   <div id="upgrades" class="overlay hidden">
     <div class="upgrade-box">
-      <span class="m-kicker" data-i="upgrade_kicker">补给投放</span>
-      <h2 data-i="upgrade_title">选择一项强化</h2>
+      <span class="m-kicker" data-i="upgrade_kicker">SUPPLY DROP</span>
+      <h2 data-i="upgrade_title">CHOOSE AN UPGRADE</h2>
       <div id="upgrade-cards" class="upgrade-cards"></div>
-      <div class="u-hint" data-i="upgrade_hint">点击卡片立即生效 · 可按 1/2/3 快速选择</div>
+      <div class="u-hint" data-i="upgrade_hint">Click to apply · or press 1/2/3</div>
     </div>
   </div>
 
   <div id="sw-toast">
-    <span data-i="sw_update">新版本已就绪</span>
-    <button id="sw-reload" class="btn-primary" data-i="sw_reload">立即刷新</button>
+    <span data-i="sw_update">New version ready</span>
+    <button id="sw-reload" class="btn-primary" data-i="sw_reload">RELOAD NOW</button>
   </div>
 
   <div id="debug" class="hidden"></div>

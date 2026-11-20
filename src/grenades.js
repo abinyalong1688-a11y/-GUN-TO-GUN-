@@ -1,7 +1,7 @@
-// grenades.js —— M3-G1 手雷系统(破片 / 闪光 / 烟雾):
-//   · 真实抛物线 + 地面/掩体反弹;
-//   · 破片 6m AoE,闪光 LOS+距离致盲,烟雾遮蔽 AI 命中;
-//   · 零外部资源,几何/材质单例复用,热路径无逐帧分配。
+// grenades.js — M3-G1 grenades (frag / flash / smoke):
+//   · real parabolic arcs + bounces off ground and cover;
+//   · frag 6 m AoE, flash blinds by LOS + distance, smoke spoils AI accuracy;
+//   · no external assets, singleton geometry/materials, no per-frame allocations on the hot path.
 import * as THREE from 'three';
 
 const DEFS={
@@ -24,7 +24,7 @@ export class Grenades{
 
   reset(){this.counts={frag:2,flash:2,smoke:1};this.clear();}
 
-  /* type: frag | flash | smoke;返回是否成功投出 */
+  /* type: frag | flash | smoke; returns whether the throw happened */
   throw(type){
     if(!DEFS[type]||this.counts[type]<=0)return false;
     const g=this.game,cam=g.camera;
@@ -118,7 +118,7 @@ export class Grenades{
     }
   }
 
-  /* 烟雾遮蔽判定(Bot 射击精度读取) */
+  /* Smoke occlusion test (read by bot shot accuracy) */
   inSmoke(pos){
     for(const s of this.smokes)if(pos.distanceToSquared(s.pos)<s.r*s.r)return true;
     return false;

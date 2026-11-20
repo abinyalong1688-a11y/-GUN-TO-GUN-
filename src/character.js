@@ -1,16 +1,17 @@
-// character.js —— 干员角色网格构建(游戏内 / 立绘 / 击杀卡 / MVP 共用):
+// character.js — operator mesh builder (shared by in-game bots, portraits, kill cards and MVP):
 //   buildOperatorMesh(assets, def, {camo}) → {group, parts, materials, dispose}
 //   fadeMaterials / setEmissive
-// 设计:
-//   · 几何体模块级缓存,所有角色共享(dispose 不释放几何);
-//   · 每个角色只克隆一套材质(12 个),受击闪白/尸体淡出互不影响;
-//   · 面部材质共享且不参与闪白/淡出,避免跨角色串色;
-//   · C1 形状编码:CT 头盔/耳麦/方袋,T 头巾/毛线帽/护目镜/斜挂;
-//   · C6 武器外观:m4a4/ak47/aug/sg553/mp5/awp 六种剪影。
+// Design:
+//   · Geometries are cached at module level and shared by every character (dispose never frees them);
+//   · each character clones exactly one material set (12), so hit flashes / corpse fades stay independent;
+//   · face materials are shared and never flash or fade, so colours cannot bleed across characters;
+//   · C1 silhouette coding: Nova helmet / headset / square pouches, Rogue shemagh / beanie / goggles / cross rig;
+//   · C6 weapon silhouettes: m4a4 / ak47 / aug / sg553 / mp5 / awp (Longbow);
+//   · only large body parts cast shadows — face and small trim pieces are detail meshes (shadow-pass budget).
 import * as THREE from 'three';
 import {paletteFor} from './operators.js';
 
-/* ============ 几何缓存 ============ */
+/* ============ Geometry cache ============ */
 const GEO=new Map();
 const geo=(key,make)=>{
   let g=GEO.get(key);
@@ -20,11 +21,10 @@ const geo=(key,make)=>{
 const sphere=(r,ws=18,hs=14)=>geo(`s|${r}|${ws}|${hs}`,()=>new THREE.SphereGeometry(r,ws,hs));
 const cyl=(rt,rb,h,seg=12)=>geo(`c|${rt}|${rb}|${h}|${seg}`,()=>new THREE.CylinderGeometry(rt,rb,h,seg));
 const box=(w,h,d)=>geo(`b|${w}|${h}|${d}`,()=>new THREE.BoxGeometry(w,h,d));
-const cone=(r,h,seg=10)=>geo(`o|${r}|${h}|${seg}`,()=>new THREE.ConeGeometry(r,h,seg));
 const torus=(r,t,rs=8,ts=20,arc=Math.PI*2)=>geo(`t|${r}|${t}|${rs}|${ts}|${arc}`,()=>new THREE.TorusGeometry(r,t,rs,ts,arc));
 const lathe=(key,prof,seg=24)=>geo(`l|${key}`,()=>new THREE.LatheGeometry(prof.map(([r,y])=>new THREE.Vector2(r,y)),seg));
 
-/* ============ 材质 ============ */
+/* ============ Materials ============ */
 function tint(src,color,{emissive=null,ei=0}={}){
   const m=src.clone();
   if(color!=null)m.color.setHex(color);
@@ -32,7 +32,7 @@ function tint(src,color,{emissive=null,ei=0}={}){
   return m;
 }
 
-/* 每角色一套材质:12 个克隆 + 5 个共享面部材质 */
+/* One material set per character: 12 clones + 5 shared face materials */
 function makeMaterials(base,def,camo){
   const P=paletteFor(def,camo);
   const skinBase=def.gender==='f'?base.skinF:base.skinM;
@@ -54,10 +54,10 @@ function makeMaterials(base,def,camo){
     gunWood:base.gunWood.clone(),
     gunPoly:base.gunPoly.clone(),
     clothDark:base.clothDark.clone(),
-    // 面部材质:全角色共享,不参与受击闪白/尸体淡出
+    // Face materials: shared by all characters, excluded from hit flash / corpse fade
     sclera:base.sclera,iris:base.iris,brow:base.brow,lipsF:base.lipsF,lipsM:base.lipsM,
   };
-  // 强调色基础自发光:受击闪白结束后由 HeroBot 恢复
+  // Base accent glow: HeroBot restores it after a hit flash
   M.accent.userData.baseEH=P.accent;
   M.accent.userData.baseEI=.9;
   const materials=[
@@ -67,7 +67,7 @@ function makeMaterials(base,def,camo){
   return {M,materials};
 }
 
-/* ============ 网格工具 ============ */
+/* ============ Mesh helpers ============ */
 function mesh(parent,g,mat,x,y,z,rx=0,ry=0,rz=0,sx=1,sy=1,sz=1){
   const m=new THREE.Mesh(g,mat);
   m.position.set(x,y,z);m.rotation.set(rx,ry,rz);m.scale.set(sx,sy,sz);
@@ -75,108 +75,154 @@ function mesh(parent,g,mat,x,y,z,rx=0,ry=0,rz=0,sx=1,sy=1,sz=1){
   parent.add(m);
   return m;
 }
+/* Small detail piece: same as mesh() but kept out of the shadow pass */
+function detail(...a){
+  const m=mesh(...a);
+  m.castShadow=false;
+  return m;
+}
 
-/* 人脸(头心局部坐标,朝向 +z):眉 / 眼睑+眼白+虹膜 / 鼻 / 唇 / 耳 */
+/* Face (head-local, facing +z): brows / lids + sclera + iris / nose / lips / chin / ears */
 function makeFace(H,M,{fem}){
   const skin=M.skin;
   for(const s of[-1,1]){
-    mesh(H,sphere(.018,10,8),M.sclera,s*.041,.016,.086,0,0,0,.95,.62,.5);
-    mesh(H,sphere(.0125,10,8),M.iris,s*.041,.016,.0995);
-    // 上眼睑:肤色压住眼白上缘,形成自然眼型
-    mesh(H,box(.05,.016,.02),skin,s*.041,.034,.088,0,0,-s*(fem?.1:.06));
+    detail(H,sphere(.018,10,8),M.sclera,s*.041,.016,.086,0,0,0,.95,.62,.5);
+    detail(H,sphere(.0125,10,8),M.iris,s*.041,.016,.0995);
+    // Upper lid: skin tone overlaps the top of the sclera for a natural eye shape
+    detail(H,box(.05,.016,.02),skin,s*.041,.034,.088,0,0,-s*(fem?.1:.06));
+    if(fem)detail(H,box(.05,.0045,.012),M.brow,s*.043,.0255,.0985,0,0,-s*.16); // lash line, flicked outward
     const bw=fem?{w:.04,h:.007,a:.22}:{w:.048,h:.011,a:.1};
-    mesh(H,box(bw.w,bw.h,.012),M.brow,s*.043,.058,.087,0,0,-s*bw.a);
+    detail(H,box(bw.w,bw.h,.012),M.brow,s*.043,.058,.087,0,0,-s*bw.a);
+    // Cheekbones: soft volume under the eyes
+    detail(H,sphere(.026,10,8),skin,s*.052,-.012,.07,0,0,0,1.15,.75,.6);
   }
-  mesh(H,cone(.011,.044,8),skin,0,-.008,.098,Math.PI/2);
-  if(fem)mesh(H,box(.038,.011,.013),M.lipsF,0,-.048,.09,0,0,0,1,1,.9);
-  else mesh(H,box(.034,.008,.012),M.lipsM,0,-.048,.088);
-  for(const s of[-1,1])mesh(H,sphere(.02,8,8),skin,s*.094,0,-.003,0,0,0,.5,1,.7);
+  // Nose: slim bridge + rounded tip (replaces the old cone)
+  detail(H,sphere(.011,8,8),skin,0,.004,.097,-.25,0,0,fem?.8:1,2.1,1);
+  detail(H,sphere(fem?.012:.014,10,8),skin,0,-.02,.104,0,0,0,1.15,.85,1);
+  if(fem)detail(H,box(.038,.011,.013),M.lipsF,0,-.048,.09,0,0,0,1,1,.9);
+  else detail(H,box(.034,.008,.012),M.lipsM,0,-.048,.088);
+  // Chin: defined but soft on the female head, squarer on the male head
+  detail(H,sphere(.03,10,8),skin,0,-.083,.062,0,0,0,fem?1.05:1.35,fem?.85:.9,.85);
+  for(const s of[-1,1])detail(H,sphere(.02,8,8),skin,s*.094,0,-.003,0,0,0,.5,1,.7);
 }
 
-/* ============ 头饰(C1 形状编码) ============ */
+/* ============ Headgear (C1 silhouette coding) ============ */
 function makeHeadgear(H,M,def,fem){
   const gear=def.headgear||'headset';
   if(gear==='helmet'){
-    // CT 头盔:低圆顶 + 折边 + 顶部识别条
+    // Nova helmet: low dome + brim + top identification stripe
     mesh(H,sphere(.114,18,12),M.armor,0,.028,-.006,0,0,0,1.03,.8,1.04);
-    mesh(H,cyl(.109,.114,.022,18),M.clothDark,0,.068,-.004);
-    mesh(H,box(.026,.016,.10),M.accent,0,.106,-.01);
-    mesh(H,box(.03,.05,.06),M.gunDark,-.096,-.005,-.03); // 侧挂电台
+    detail(H,cyl(.109,.114,.022,18),M.clothDark,0,.068,-.004);
+    detail(H,box(.026,.016,.10),M.accent,0,.106,-.01);
+    detail(H,box(.03,.05,.06),M.gunDark,-.096,-.005,-.03); // side-mounted radio
   }else if(gear==='beanie'){
-    // T 毛线帽:软顶 + 折边
+    // Rogue beanie: soft crown + folded cuff
     mesh(H,sphere(.113,16,12),M.clothDark,0,.032,-.004,0,0,0,1.02,.84,1.02);
-    mesh(H,cyl(.108,.113,.03,18),M.armor,0,.076,-.002);
+    detail(H,cyl(.108,.113,.03,18),M.armor,0,.076,-.002);
   }else if(gear==='shemagh'){
-    // T 头巾:包住头顶与下颌 + 前额布条 + 侧垂尾
+    // Rogue shemagh: wraps crown and jaw + forehead band + hanging tails
     mesh(H,sphere(.116,16,12),M.clothDark,0,.022,-.008,0,0,0,1.03,.9,1.03);
-    mesh(H,box(.17,.055,.03),M.armor,0,.038,.088,-.08);
-    mesh(H,box(.05,.2,.018),M.jacket,.085,-.105,-.015,.12,0,.22);
-    mesh(H,box(.038,.13,.016),M.armor,-.088,-.075,-.02,.1,0,-.18);
+    detail(H,box(.17,.055,.03),M.armor,0,.038,.088,-.08);
+    detail(H,box(.05,.2,.018),M.jacket,.085,-.105,-.015,.12,0,.22);
+    detail(H,box(.038,.13,.016),M.armor,-.088,-.075,-.02,.1,0,-.18);
   }else if(gear==='goggles'){
-    // T 护目镜:束带 + 双镜片(强调色发光)
-    mesh(H,box(.19,.032,.02),M.clothDark,0,.032,.09);
-    for(const s of[-1,1])mesh(H,sphere(.038,12,8),M.accent,s*.045,.03,.096,0,0,0,1.12,.72,.42);
-    mesh(H,box(.03,.02,.02),M.gunDark,0,.032,.108);
+    // Rogue goggles: strap + twin lenses (accent glow)
+    detail(H,box(.19,.032,.02),M.clothDark,0,.032,.09);
+    for(const s of[-1,1])detail(H,sphere(.038,12,8),M.accent,s*.045,.03,.096,0,0,0,1.12,.72,.42);
+    detail(H,box(.03,.02,.02),M.gunDark,0,.032,.108);
   }else{
-    // CT 战术耳麦 + 通话麦
-    mesh(H,torus(.104,.007,8,20,Math.PI),M.gunDark,0,.005,0);
-    for(const s of[-1,1])mesh(H,cyl(.026,.026,.016,10),M.gunDark,s*.10,0,0,0,0,Math.PI/2);
-    mesh(H,box(.01,.01,.065),M.gunDark,-.095,-.045,.035,.3,.4,0);
+    // Nova tactical headset + boom mic
+    detail(H,torus(.104,.007,8,20,Math.PI),M.gunDark,0,.005,0);
+    for(const s of[-1,1])detail(H,cyl(.026,.026,.016,10),M.gunDark,s*.10,0,0,0,0,Math.PI/2);
+    detail(H,box(.01,.01,.065),M.gunDark,-.095,-.045,.035,.3,.4,0);
   }
 }
 
-/* ============ 发型 ============ */
+/* ============ Hair ============ */
 function makeHairFemale(H,M,def){
   const hair=M.hair;
   mesh(H,sphere(.107,18,12),hair,0,.03,-.01,0,0,0,1.04,.88,1.0);
-  mesh(H,sphere(.104,16,12),hair,0,-.01,-.045,0,0,0,1.1,.95,.9);
-  mesh(H,box(.15,.05,.038),hair,0,.066,.068,-.5);
+  detail(H,sphere(.104,16,12),hair,0,-.01,-.045,0,0,0,1.1,.95,.9);
+  detail(H,box(.15,.05,.038),hair,0,.066,.068,-.5);
+  // Side-swept fringe: breaks the helmet-like hairline
+  detail(H,sphere(.05,12,8),hair,-.035,.062,.075,-.35,0,.5,1.25,.45,.5);
   if(def.hair==='bob'){
-    // 齐颌短发:两侧发束 + 后颈内扣
-    for(const s of[-1,1])mesh(H,sphere(.045,10,8),hair,s*.088,-.06,.02,0,0,-s*.08,.8,2.0,.9);
-    mesh(H,sphere(.085,12,10),hair,0,-.085,-.055,0,0,0,1.15,.7,.7);
+    // Chin-length bob: side locks + tucked nape
+    for(const s of[-1,1])detail(H,sphere(.045,10,8),hair,s*.088,-.06,.02,0,0,-s*.08,.8,2.0,.9);
+    detail(H,sphere(.085,12,10),hair,0,-.085,-.055,0,0,0,1.15,.7,.7);
   }else{
-    // 低马尾(随步态摆动)
-    mesh(H,sphere(.026,8,8),hair,-.082,-.06,.045,0,0,.12,1,2.6,.8);
-    mesh(H,sphere(.026,8,8),hair,.082,-.06,.045,0,0,-.12,1,2.6,.8);
+    // Face-framing strands for the low ponytail (ponytail itself swings with the gait)
+    detail(H,sphere(.026,8,8),hair,-.082,-.06,.045,0,0,.12,1,2.6,.8);
+    detail(H,sphere(.026,8,8),hair,.082,-.06,.045,0,0,-.12,1,2.6,.8);
   }
 }
 function makePony(H,M,parts){
   const pony=new THREE.Group();pony.position.set(0,-.02,-.11);H.add(pony);parts.pony=pony;
   const hair=M.hair;
   mesh(pony,sphere(.048,10,8),hair,0,-.01,-.02,0,0,0,1,1.3,1);
+  detail(pony,torus(.03,.008,6,14),M.accent,0,-.07,-.035,Math.PI/2); // hair tie
   mesh(pony,sphere(.037,10,8),hair,0,-.12,-.05,0,0,0,1,1.5,1);
-  mesh(pony,sphere(.027,10,8),hair,0,-.25,-.04,0,0,0,1,1.6,1);
+  detail(pony,sphere(.027,10,8),hair,0,-.25,-.04,0,0,0,1,1.6,1);
 }
 
-/* ============ 剪影配件(C1) ============ */
+/* ============ Silhouette extras (C1) ============ */
 function addExtras(group,parts,M,def){
   const ex=def.extras||[];
   if(ex.includes('armband')){
     for(const arm of [parts.armR,parts.armL])
-      if(arm)mesh(arm,cyl(.049,.049,.034,12),M.accent,0,-.045,0);
+      if(arm)detail(arm,cyl(.049,.049,.034,12),M.accent,0,-.045,0);
   }
   if(ex.includes('kneepads')){
     for(const leg of [parts.legL,parts.legR])
-      if(leg)mesh(leg,box(.1,.1,.06),M.armor,0,-.42,.06);
+      if(leg)detail(leg,box(.1,.1,.06),M.armor,0,-.42,.06);
   }
   if(ex.includes('holster')){
     if(parts.legR){
-      mesh(parts.legR,box(.06,.15,.05),M.glove,.066,-.17,.02);
-      mesh(parts.legR,box(.05,.03,.05),M.gunDark,.066,-.10,.02);
+      detail(parts.legR,box(.06,.15,.05),M.glove,.066,-.17,.02);
+      detail(parts.legR,box(.05,.03,.05),M.gunDark,.066,-.10,.02);
     }
   }
   if(ex.includes('backpack')){
     mesh(group,box(.25,.3,.12),M.armor,0,1.22,-.14);
-    mesh(group,box(.2,.08,.13),M.clothDark,0,1.06,-.14);
-    mesh(group,box(.045,.12,.02),M.accent,-.075,1.2,-.205);
+    detail(group,box(.2,.08,.13),M.clothDark,0,1.06,-.14);
+    detail(group,box(.045,.12,.02),M.accent,-.075,1.2,-.205);
   }
 }
 
-/* ============ 步枪外观(C6) ============ */
+/* ============ Shared limb builders ============ */
+/* Arm: deltoid cap + sleeve + rolled cuff + bare forearm + gloved hand with thumb */
+function makeArm(group,M,side,{x,y,r,len,fore,hand}){
+  const p=new THREE.Group();p.position.set(side*x,y,0);group.add(p);
+  detail(p,sphere(r*1.1,12,10),M.jacket,0,-.012,0,0,0,0,1,1.15,1);           // deltoid
+  mesh(p,cyl(r,r*.84,len),M.jacket,0,-len/2+.005,0);                          // sleeve
+  detail(p,cyl(r*.92,r*.92,.032,12),M.jacket,0,-len+.01,.004);               // rolled cuff
+  mesh(p,cyl(r*.76,r*.62,fore),M.skin,0,-len-fore/2+.06,.015);               // forearm
+  const hy=-len-fore+.045;
+  mesh(p,sphere(hand,10,8),M.glove,0,hy,.03,0,0,0,.9,1.2,.78);              // palm
+  detail(p,sphere(hand*.42,8,6),M.glove,-side*hand*.8,hy+.012,.05);         // thumb
+  return p;
+}
+/* Leg: thigh + knee + shin + boot shaft + boot with sole and rounded toe cap */
+function makeLeg(group,M,mat,side,{x,y,thigh,shin,tr,sr,boot}){
+  const p=new THREE.Group();p.position.set(side*x,y,0);group.add(p);
+  mesh(p,cyl(tr,tr*.8,thigh),mat,0,-thigh/2,0);
+  detail(p,sphere(tr*.78,10,8),mat,0,-thigh+.01,.014,0,0,0,1,1,1.05);         // knee
+  const shinY=-thigh-shin/2+.035;
+  mesh(p,cyl(sr,sr*.86,shin),mat,0,shinY,.01);
+  const bootY=-y+boot.h/2+.004;                                                // boot sits on the ground
+  detail(p,cyl(sr*.98,sr*1.02,.1,10),M.boot,0,bootY+boot.h/2+.03,.01);       // shaft
+  mesh(p,box(boot.w,boot.h,boot.d),M.boot,0,bootY,boot.z);
+  detail(p,sphere(boot.w*.52,10,8),M.boot,0,bootY-.008,boot.z+boot.d/2-.01,0,0,0,1,.75,1); // toe cap
+  detail(p,box(boot.w+.008,.016,boot.d+.012),M.clothDark,0,-y+.008,boot.z+.004);  // sole
+  return p;
+}
+
+/* ============ Rifle silhouettes (C6) ============ */
 function makeRifle(kind,M){
   const g=new THREE.Group();
-  const B=(...a)=>mesh(g,...a);
+  let first=true;
+  // Only the receiver (first piece) casts a shadow; the rest are detail meshes
+  const B=(...a)=>{const m=first?mesh(g,...a):detail(g,...a);first=false;return m;};
   const dark=M.gunDark,poly=M.gunPoly,wood=M.gunWood;
   let tipZ=.44;
   if(kind==='ak47'){
@@ -191,7 +237,7 @@ function makeRifle(kind,M){
     B(box(.026,.02,.045),dark,0,.02,-.575);
     tipZ=.60;
   }else if(kind==='aug'){
-    // 无托结构:短机匣 + 一体握把 + 顶部瞄准镜
+    // Bullpup: short receiver + integrated grip + top scope
     B(box(.052,.085,.38),poly,0,.005,-.02);
     B(box(.046,.06,.12),dark,0,.01,.18);
     B(cyl(.012,.012,.16,10),dark,0,.018,.27,Math.PI/2);
@@ -212,7 +258,7 @@ function makeRifle(kind,M){
     B(box(.016,.06,.012),dark,0,.05,-.52);
     tipZ=.54;
   }else if(kind==='mp5'){
-    // 紧凑冲锋枪:短枪身 + 直弹匣 + 前护木
+    // Compact SMG: short body + straight magazine + handguard
     B(box(.05,.075,.24),dark,0,.005,-.02);
     B(cyl(.026,.026,.14,12),poly,0,.006,.15,Math.PI/2);
     B(cyl(.01,.01,.10,10),dark,0,.018,.27,Math.PI/2);
@@ -222,7 +268,7 @@ function makeRifle(kind,M){
     B(box(.014,.045,.012),dark,0,.045,.32);
     tipZ=.35;
   }else if(kind==='awp'){
-    // 重狙:长枪管 + 大镜 + 拉栓 + 拇指孔枪托
+    // Longbow heavy sniper: long barrel + big scope + bolt handle + thumbhole stock
     B(box(.052,.08,.34),poly,0,.005,-.04);
     B(cyl(.014,.014,.38,12),dark,0,.018,.30,Math.PI/2);
     B(cyl(.018,.018,.06,12),dark,0,.018,.50,Math.PI/2);
@@ -232,10 +278,10 @@ function makeRifle(kind,M){
     B(cyl(.028,.028,.16,12),dark,0,.115,-.02,Math.PI/2);
     B(cyl(.036,.036,.025,12),dark,0,.115,.065,Math.PI/2);
     B(cyl(.036,.036,.025,12),dark,0,.115,-.105,Math.PI/2);
-    B(box(.01,.01,.07),dark,.045,.03,-.06,0,0,.3); // 拉栓
+    B(box(.01,.01,.07),dark,.045,.03,-.06,0,0,.3); // bolt handle
     tipZ=.53;
   }else{
-    // M4A4:提把 + 三角形护木 + 弯弹匣
+    // M4A4: carry rail + triangular handguard + curved magazine
     B(box(.05,.075,.34),dark,0,0,-.02);
     B(box(.046,.05,.16),poly,0,.005,.14);
     B(cyl(.011,.011,.18,10),dark,0,.018,.28,Math.PI/2);
@@ -248,12 +294,22 @@ function makeRifle(kind,M){
   return {group:g,tipZ};
 }
 
-/* ============ 女性模特级身形(1.75m,腿长过半) ============ */
+function mountRifle(group,parts,M,def,{y,scale=1}){
+  const rifle=makeRifle(def.rifle,M);
+  rifle.group.position.set(.10,y,.16);
+  rifle.group.scale.setScalar(scale);
+  group.add(rifle.group);parts.rifle=rifle.group;
+  const gunTip=new THREE.Object3D();
+  gunTip.position.set(0,.02,rifle.tipZ);
+  rifle.group.add(gunTip);parts.gunTip=gunTip;
+}
+
+/* ============ Female build (1.75 m, legs over half the height) ============ */
 function buildFemale(ctx){
   const {group,M,def,parts}=ctx;
-  const skin=M.skin,jacket=M.jacket,armor=M.armor,boot=M.boot,glove=M.glove;
+  const skin=M.skin,jacket=M.jacket,armor=M.armor;
 
-  /* --- 头(中心 1.60):椭圆颅骨 + 精致五官 --- */
+  /* --- Head (centre 1.60): oval skull + refined features --- */
   const H=new THREE.Group();H.position.set(0,1.60,0);group.add(H);parts.head=H;parts.headY=1.60;
   mesh(H,sphere(.102,20,16),skin,0,0,.004,0,0,0,.95,1.12,1.0);
   makeFace(H,M,{fem:true});
@@ -261,118 +317,91 @@ function buildFemale(ctx){
   if(def.hair==='ponytail')makePony(H,M,parts);
   makeHeadgear(H,M,def,true);
 
-  /* --- 颈 + 躯干(Lathe 曲面:肩-胸-腰-臀曲线,scale.z=0.72 椭圆截面) --- */
-  mesh(group,cyl(.03,.035,.09),skin,0,1.47,0);
+  /* --- Neck + torso (lathe profile: shoulder-bust-waist-hip curve, elliptical section scale.z=0.72) --- */
+  mesh(group,cyl(.03,.036,.1),skin,0,1.47,0);
+  detail(group,sphere(.07,14,10),jacket,0,1.43,-.012,0,0,0,1.75,.42,.8);     // trapezius / shoulder slope
   const prof=[[.001,.845],[.128,.86],[.134,.93],[.098,1.06],[.124,1.16],[.15,1.32],[.146,1.40],[.092,1.455]];
   const torso=new THREE.Mesh(lathe('f',prof),jacket);
   torso.scale.z=.72;torso.castShadow=true;group.add(torso);parts.torso=torso;
-  mesh(group,sphere(.048,12,10),jacket,-.05,1.30,.078,0,0,0,1,.85,.7);
-  mesh(group,sphere(.048,12,10),jacket,.05,1.30,.078,0,0,0,1,.85,.7);
-  // 腰带 / 背心插板(窄版,露出夹克色)/ 弹匣袋 / 对讲机
-  mesh(group,cyl(.109,.109,.03,20),M.gunDark,0,.945,0,0,0,0,1,1,.72);
+  detail(group,sphere(.048,12,10),jacket,-.05,1.30,.078,0,0,0,1,.85,.7);
+  detail(group,sphere(.048,12,10),jacket,.05,1.30,.078,0,0,0,1,.85,.7);
+  detail(group,box(.07,.03,.02),jacket,0,1.448,.07,-.35);                     // collar
+  // Belt + buckle / slim vest plates (jacket colour shows through) / mag pouches / radio
+  detail(group,cyl(.109,.109,.03,20),M.gunDark,0,.945,0,0,0,0,1,1,.72);
+  detail(group,box(.036,.026,.01),M.accent,0,.945,.081);
   mesh(group,box(.22,.19,.03),armor,0,1.27,.10);
   mesh(group,box(.22,.19,.03),armor,0,1.27,-.082);
-  mesh(group,box(.045,.06,.02),M.gunDark,-.045,1.21,.118);
-  mesh(group,box(.045,.06,.02),M.gunDark,.045,1.21,.118);
-  mesh(group,box(.032,.055,.016),M.gunDark,-.088,1.16,.105,0,0,-.2);
+  detail(group,box(.045,.06,.02),M.gunDark,-.045,1.21,.118);
+  detail(group,box(.045,.06,.02),M.gunDark,.045,1.21,.118);
+  detail(group,box(.032,.055,.016),M.gunDark,-.088,1.16,.105,0,0,-.2);
 
-  /* --- 臂(袖+露肤前臂+战术手套,持枪锁定) --- */
-  const mkArm=side=>{
-    const p=new THREE.Group();p.position.set(side*.148,1.395,0);group.add(p);
-    mesh(p,cyl(.045,.038,.24),jacket,0,-.115,0);
-    mesh(p,cyl(.034,.028,.17),skin,0,-.29,.015);
-    mesh(p,sphere(.033,10,8),glove,0,-.385,.03);
-    return p;
-  };
-  parts.armL=mkArm(-1);parts.armR=mkArm(1);
+  /* --- Arms (sleeve + bare forearm + tactical glove, locked in a rifle hold) --- */
+  const arm={x:.148,y:1.395,r:.045,len:.24,fore:.17,hand:.033};
+  parts.armL=makeArm(group,M,-1,arm);parts.armR=makeArm(group,M,1,arm);
 
-  /* --- 腿(长腿比例:髋 .90 落地,占身高 51%) --- */
-  const mkLeg=side=>{
-    const p=new THREE.Group();p.position.set(side*.082,.90,0);group.add(p);
-    mesh(p,cyl(.068,.054,.44),jacket,0,-.22,0);
-    mesh(p,cyl(.05,.043,.36),jacket,0,-.585,.01);
-    mesh(p,box(.082,.082,.20),boot,0,-.855,.03);
-    return p;
-  };
-  parts.legL=mkLeg(-1);parts.legR=mkLeg(1);
+  /* --- Legs (hip at .90 → 51% of body height) --- */
+  const leg={x:.082,y:.90,thigh:.44,shin:.36,tr:.068,sr:.05,boot:{w:.082,h:.082,d:.20,z:.03}};
+  parts.legL=makeLeg(group,M,jacket,-1,leg);parts.legR=makeLeg(group,M,jacket,1,leg);
   addExtras(group,parts,M,def);
 
-  /* --- 主武器(阵营制式,枪口 +z 前向,gunTip 挂枪身) --- */
-  const rifle=makeRifle(def.rifle,M);
-  rifle.group.position.set(.10,1.20,.16);
-  rifle.group.scale.setScalar(.94);
-  group.add(rifle.group);parts.rifle=rifle.group;
-  const gunTip=new THREE.Object3D();
-  gunTip.position.set(0,.02,rifle.tipZ);
-  rifle.group.add(gunTip);parts.gunTip=gunTip;
+  /* --- Primary weapon (faction issue, muzzle toward +z, gunTip on the rifle) --- */
+  mountRifle(group,parts,M,def,{y:1.20,scale:.94});
   parts.armR.rotation.set(-.72,0,-.04);
   parts.armL.rotation.set(-.85,.35,.5);
 }
 
-/* ============ 男性硬朗帅气(1.80m,V 型身躯) ============ */
+/* ============ Male build (1.80 m, V-shaped torso) ============ */
 function buildMale(ctx){
   const {group,M,def,parts}=ctx;
-  const skin=M.skin,jacket=M.jacket,pants=M.pants,armor=M.armor,hair=M.hair,boot=M.boot,glove=M.glove;
+  const skin=M.skin,jacket=M.jacket,pants=M.pants,armor=M.armor,hair=M.hair;
 
-  /* --- 头(中心 1.64):方正颅骨 + 方下巴 + 粗直眉 --- */
+  /* --- Head (centre 1.64): squared skull + strong jaw + straight heavy brows --- */
   const H=new THREE.Group();H.position.set(0,1.64,0);group.add(H);parts.head=H;parts.headY=1.64;
   mesh(H,sphere(.106,20,16),skin,0,0,.004,0,0,0,1.0,1.1,1.02);
-  mesh(H,box(.06,.04,.06),skin,0,-.065,.028);          // 方下颌
+  detail(H,box(.06,.04,.06),skin,0,-.065,.028);                // square jaw
+  detail(H,box(.13,.016,.03),skin,0,.05,.084);                 // brow ridge
   makeFace(H,M,{fem:false});
-  // 短发:贴合头型的短发顶盖(前缘微翘不压眉)+ 后脑铲青
+  // Short hair: close-fitting crown (front edge lifted off the brows) + faded back and sideburns
   mesh(H,sphere(.114,18,12),hair,0,.022,-.01,-.18,0,0,1.03,.94,1.05);
-  mesh(H,sphere(.095,14,10),hair,0,-.005,-.07,0,0,0,1.12,.72,.6);
+  detail(H,sphere(.095,14,10),hair,0,-.005,-.07,0,0,0,1.12,.72,.6);
+  for(const s of[-1,1])detail(H,box(.012,.045,.03),hair,s*.1,-.01,.03);
   if(def.hair==='ponytail')makePony(H,M,parts);
   makeHeadgear(H,M,def,false);
 
-  /* --- 颈 + 躯干(宽肩窄腰 V 型) --- */
-  mesh(group,cyl(.045,.052,.10),skin,0,1.50,0);
+  /* --- Neck + torso (broad shoulders, narrow waist) --- */
+  mesh(group,cyl(.045,.054,.10),skin,0,1.50,0);
+  detail(group,sphere(.085,14,10),jacket,0,1.455,-.012,0,0,0,1.75,.45,.82);   // trapezius
   const prof=[[.001,.86],[.145,.88],[.128,.98],[.125,1.06],[.148,1.20],[.168,1.34],[.166,1.43],[.095,1.49]];
   const torso=new THREE.Mesh(lathe('m',prof),jacket);
   torso.scale.z=.74;torso.castShadow=true;group.add(torso);parts.torso=torso;
-  // 衣领;T 阵营开襟+黑 T+X 胸挂,CT 合领+前拉链
-  mesh(group,box(.16,.04,.02),jacket,0,1.475,.115);
+  detail(group,cyl(.13,.13,.035,20),M.gunDark,0,.95,0,0,0,0,1,1,.74);         // belt
+  detail(group,box(.04,.028,.01),M.accent,0,.95,.098);                         // buckle
+  // Collar; Rogue: open front + dark tee + X chest rig, Nova: closed collar + front zip
+  detail(group,box(.16,.04,.02),jacket,0,1.475,.115);
   if(def.faction!=='ct'){
-    mesh(group,box(.11,.16,.02),M.clothDark,0,1.36,.127);
+    detail(group,box(.11,.16,.02),M.clothDark,0,1.36,.127);
     mesh(group,box(.045,.36,.018),armor,-.075,1.22,.128,0,0,.45);
     mesh(group,box(.045,.36,.018),armor,.075,1.22,.128,0,0,-.45);
   }else{
-    mesh(group,box(.014,.3,.014),M.clothDark,0,1.30,.122);
+    detail(group,box(.014,.3,.014),M.clothDark,0,1.30,.122);
   }
 
-  /* --- 臂(宽肩厚臂,挽袖露肤,战术手套) --- */
-  const mkArm=side=>{
-    const p=new THREE.Group();p.position.set(side*.165,1.42,0);group.add(p);
-    mesh(p,cyl(.055,.047,.25),jacket,0,-.12,0);
-    mesh(p,cyl(.045,.038,.18),skin,0,-.30,.02);
-    mesh(p,sphere(.043,12,10),glove,0,-.40,.03);
-    return p;
-  };
-  parts.armL=mkArm(-1);parts.armR=mkArm(1);
+  /* --- Arms (broad shoulders, thick arms, rolled sleeves, tactical gloves) --- */
+  const arm={x:.165,y:1.42,r:.055,len:.25,fore:.18,hand:.043};
+  parts.armL=makeArm(group,M,-1,arm);parts.armR=makeArm(group,M,1,arm);
 
-  /* --- 腿 --- */
-  const mkLeg=side=>{
-    const p=new THREE.Group();p.position.set(side*.088,.88,0);group.add(p);
-    mesh(p,cyl(.08,.058,.42),pants,0,-.21,0);
-    mesh(p,cyl(.056,.048,.38),pants,0,-.55,.01);
-    mesh(p,box(.095,.09,.215),boot,0,-.835,.035);
-    return p;
-  };
-  parts.legL=mkLeg(-1);parts.legR=mkLeg(1);
+  /* --- Legs --- */
+  const leg={x:.088,y:.88,thigh:.42,shin:.38,tr:.08,sr:.056,boot:{w:.095,h:.09,d:.215,z:.035}};
+  parts.legL=makeLeg(group,M,pants,-1,leg);parts.legR=makeLeg(group,M,pants,1,leg);
   addExtras(group,parts,M,def);
 
-  /* --- 主武器(阵营制式,枪口 +z) --- */
-  const rifle=makeRifle(def.rifle,M);
-  rifle.group.position.set(.10,1.19,.16);
-  group.add(rifle.group);parts.rifle=rifle.group;
-  const gunTip=new THREE.Object3D();
-  gunTip.position.set(0,.02,rifle.tipZ);
-  rifle.group.add(gunTip);parts.gunTip=gunTip;
+  /* --- Primary weapon (faction issue, muzzle toward +z) --- */
+  mountRifle(group,parts,M,def,{y:1.19});
   parts.armR.rotation.set(-.70,0,-.04);
   parts.armL.rotation.set(-.82,.35,.5);
 }
 
-/* ============ 对外接口 ============ */
+/* ============ Public API ============ */
 export function buildOperatorMesh(assets,def,{camo='default'}={}){
   const group=new THREE.Group();
   const {M,materials}=makeMaterials(assets.mats,def,camo);
@@ -392,17 +421,20 @@ export function buildOperatorMesh(assets,def,{camo='default'}={}){
   return {group,parts,materials,dispose};
 }
 
-/* 尸体淡出:opacity 1→0;完全透明后关闭 depthWrite 避免遮挡 */
+/* Corpse fade: opacity 1→0; depthWrite is turned off while translucent to avoid occlusion */
 export function fadeMaterials(materials,opacity){
   const o=Math.max(0,Math.min(1,opacity));
+  const transparent=o<1;
   for(const m of materials){
-    m.transparent=o<1;
+    // Toggling `transparent` changes the shader variant; without needsUpdate the program
+    // keeps the opaque path and the corpse never visibly fades.
+    if(m.transparent!==transparent){m.transparent=transparent;m.needsUpdate=true;}
     m.opacity=o;
-    m.depthWrite=o>=1;
+    m.depthWrite=!transparent;
   }
 }
 
-/* 受击闪白 / 强调色发光 */
+/* Hit flash / accent glow */
 export function setEmissive(materials,hex,intensity){
   for(const m of materials){
     if(!m.emissive)continue;

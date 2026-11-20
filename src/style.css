@@ -5,7 +5,7 @@
   --mono:Consolas,'SFMono-Regular','Courier New',monospace;
   --sans:'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
 }
-/* M4-P7 可访问性 */
+/* M4-P7 accessibility */
 :root{--ui-zoom:1}
 #menu,#pause,#over,#tutorial,#upgrades,#hud{zoom:var(--ui-zoom)}
 .cb{--amber:#ffd166;--red:#ff7b6b;--mint:#66e0c8;--blue:#8ecbff;--gold:#ffe08a;--accent:#ffd166}
@@ -28,7 +28,7 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
 .tl-val{font-family:var(--mono);font-size:20px;font-weight:700;color:#f6d9b6}
 #ui-score{color:var(--amber)}
 
-/* dm 顶栏 */
+/* deathmatch top bar */
 #dm-top{position:absolute;top:14px;left:50%;transform:translateX(-50%);text-align:center;background:var(--hudbg);border:1px solid rgba(155,167,192,.22);border-radius:10px;padding:8px 22px;backdrop-filter:blur(4px)}
 #dm-timer{font-family:var(--mono);font-size:16px;font-weight:700;color:#f6d9b6;letter-spacing:.1em}
 #dm-score{font-family:var(--mono);font-size:22px;font-weight:800;margin-top:2px}
@@ -36,9 +36,9 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
 #dm-score .teamA{color:#7fd4ff}
 #dm-score .teamB{color:#ff8a6a}
 
-/* 击杀播报 */
+/* killfeed */
 #killfeed{position:absolute;top:150px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:5px;align-items:center}
-/* M2-A3 击杀卡 */
+/* M2-A3 kill card */
 #killcard{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);z-index:8;display:flex;gap:18px;align-items:center;
   padding:10px 20px;background:rgba(8,12,20,.84);border:1px solid rgba(127,212,255,.45);border-radius:12px;
   box-shadow:0 12px 42px rgba(0,0,0,.65);pointer-events:none}
@@ -54,7 +54,7 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
 .kc-w{font-family:var(--mono);font-size:12px;letter-spacing:.08em}
 .kc-arrow{font-size:20px;margin-top:4px;color:#fff}
 
-/* M2-A2 无线电台词 */
+/* M2-A2 radio barks */
 #barks{position:absolute;left:196px;bottom:96px;width:min(290px,42vw);z-index:7;pointer-events:none;display:flex;flex-direction:column;gap:4px}
 .bk{font-size:11px;line-height:1.35;color:#dce6f5;background:rgba(8,12,20,.72);border-left:3px solid #7fd4ff;
   border-radius:4px;padding:4px 9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px #000}
@@ -64,7 +64,7 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
 .kf.me b{color:var(--amber)}
 @keyframes kfin{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
 
-/* 计分板 */
+/* scoreboard */
 #board{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(10,13,24,.92);border:1px solid rgba(240,168,96,.4);border-radius:14px;padding:20px 26px;min-width:420px;backdrop-filter:blur(8px)}
 #board h3{font-size:15px;letter-spacing:.2em;color:var(--amber);margin-bottom:12px;text-align:center}
 #board table{width:100%;border-collapse:collapse;font-size:13px}
@@ -82,7 +82,7 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
 #xh .l{top:calc(var(--xh-w) / -2);left:calc(-1 * var(--gap) - var(--xh-len));height:var(--xh-w);width:var(--xh-len)}
 #xh .r{top:calc(var(--xh-w) / -2);left:var(--gap);height:var(--xh-w);width:var(--xh-len)}
 
-/* U2 受伤方向 / U3 连杀播报 */
+/* U2 damage direction / U3 kill streak callouts */
 #dmg-dir{position:absolute;left:50%;top:50%;width:0;height:0;opacity:0;transition:opacity .12s;z-index:8}
 #dmg-dir.show{opacity:1}
 #dmg-dir i{position:absolute;left:-26px;top:-150px;width:52px;height:14px;
@@ -103,7 +103,7 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
 #hitmark i:nth-child(4){transform:translate(5px,4px) rotate(45deg)}
 @keyframes hm{0%{opacity:1;transform:scale(1.25)}100%{opacity:0;transform:scale(.9)}}
 
-/* AUG 开镜遮罩 */
+/* scope overlay */
 #scope-overlay{position:absolute;inset:0;opacity:0;transition:opacity .12s;
   background:radial-gradient(circle at 50% 50%,transparent 0 23vmin,rgba(3,5,9,.5) 30vmin,rgba(3,5,9,.985) 42vmin)}
 #scope-overlay.show{opacity:1}
@@ -113,14 +113,14 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
 #scope-overlay .dot{left:50%;top:50%;width:6px;height:6px;border-radius:50%;
   background:rgba(255,120,90,.95);transform:translate(-50%,-50%);box-shadow:0 0 6px rgba(255,60,40,.8)}
 
-/* 武器栏 */
+/* weapon bar */
 #weapon-slots{position:absolute;right:26px;bottom:118px;display:flex;flex-direction:column;gap:5px;align-items:flex-end}
 .wslot{background:rgba(8,11,20,.5);border:1px solid rgba(155,167,192,.2);border-radius:7px;padding:4px 12px;font-size:12px;color:var(--muted);display:flex;gap:8px;align-items:center;min-width:130px;justify-content:flex-end}
 .wslot b{font-family:var(--mono);font-size:11px;color:#73809c;border:1px solid rgba(155,167,192,.3);border-radius:4px;padding:0 5px}
 .wslot.active{border-color:rgba(240,168,96,.6);color:#ffe2ae;background:rgba(240,168,96,.12)}
 .wslot.active b{color:var(--amber);border-color:rgba(240,168,96,.5)}
 
-/* 技能 */
+/* abilities */
 #ability{position:absolute;left:26px;bottom:118px;background:var(--hudbg);border:1px solid rgba(240,168,96,.3);border-radius:9px;padding:7px 12px;text-align:center;min-width:64px}
 #ability-key{font-family:var(--mono);font-size:14px;font-weight:800;color:var(--gold)}
 #ability-name{font-size:10px;color:var(--muted);letter-spacing:.15em;margin-top:1px}
@@ -163,18 +163,19 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
 #reload-ring #rr-arc{stroke:var(--amber);stroke-dasharray:100.5;stroke-dashoffset:100}
 #rr-text{position:absolute;inset:0;display:grid;place-items:center;font-size:11px;color:var(--amber);letter-spacing:.2em}
 
-/* M3-G5 雷达 */
+/* M3-G5 radar */
 #radar{position:absolute;left:18px;bottom:96px;width:160px;height:160px;z-index:7;pointer-events:none;
   border-radius:50%;border:1px solid rgba(127,212,255,.18);background:rgba(8,12,20,.5)}
 #radar.hidden{display:none}
 
-/* M4-P4 KOTH 占点条 */
-#koth-bar{position:absolute;top:104px;left:50%;transform:translateX(-50%);width:min(520px,74vw);z-index:8;text-align:center}
+/* M4-P4 KOTH capture bar */
+#koth-bar{position:absolute;top:164px;left:50%;transform:translateX(-50%);width:min(520px,74vw);z-index:8;text-align:center}
+/* top:164px — the banner area (14% + two text lines) ends within ~160px, so the capture bar never crosses the banner text */
 #koth-bar>span{display:block;font-size:12px;letter-spacing:.2em;color:#7fd4ff;text-shadow:0 2px 6px #000;margin-bottom:5px}
 #koth-score{font:12px var(--mono);color:#e8eef8;margin-top:4px}
 #koth-bar.hidden{display:none}
 
-/* M3-G4 Boss 血条 */
+/* M3-G4 boss health bar */
 #bossbar{position:absolute;top:104px;left:50%;transform:translateX(-50%);width:min(520px,74vw);z-index:8;text-align:center}
 #bossbar>span{display:block;font-size:12px;letter-spacing:.2em;color:#ff9a7a;text-shadow:0 2px 6px #000;margin-bottom:5px}
 .bb-track{height:9px;border-radius:6px;background:rgba(8,11,20,.72);border:1px solid rgba(255,138,106,.4);overflow:hidden}
@@ -182,9 +183,10 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
   box-shadow:0 0 12px rgba(255,90,74,.7);transition:width .12s}
 #bossbar.hidden{display:none}
 
-/* M3-G1 手雷计数 */
-#grenades{position:absolute;right:18px;bottom:210px;z-index:7;font-size:11px;font-family:var(--mono);
+/* M3-G1 grenade counter */
+#grenades{position:absolute;right:18px;bottom:310px;z-index:7;font-size:11px;font-family:var(--mono);
   letter-spacing:.06em;color:#9ba7c0;text-shadow:0 1px 3px #000}
+/* bottom:310px — the 6-slot weapon bar tops out around bottom:299px; 8px gap so this never overlaps the slots */
 #grenades b{color:var(--gold);font-size:14px;margin:0 2px}
 
 /* damage overlays */
@@ -212,7 +214,7 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
   color:#ffe2ae;font-size:15px;padding:10px 14px;font-family:var(--sans);outline:none;letter-spacing:.08em}
 .m-input:focus{border-color:rgba(240,168,96,.6)}
 
-/* C4 干员名册 */
+/* C4 operator roster */
 .op-grid{display:flex;flex-direction:column;gap:10px}
 .op-group-t{font-size:11px;letter-spacing:.18em;color:var(--muted);margin:2px 0 6px}
 .op-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;align-items:start}
@@ -270,7 +272,7 @@ select.btn{appearance:none;padding-right:16px}
 .p-row.checks label{display:flex;gap:7px;align-items:center}
 .p-row input[type=color]{width:52px;height:26px;background:none;border:1px solid rgba(155,167,192,.35);border-radius:6px;padding:0}
 
-/* M4-P1 触屏控制 */
+/* M4-P1 touch controls */
 #touch-ui{position:absolute;inset:0;z-index:12;pointer-events:none}
 #touch-ui.hidden{display:none}
 #touch-stick{position:absolute;left:26px;bottom:30px;width:132px;height:132px;border-radius:50%;
@@ -286,7 +288,7 @@ select.btn{appearance:none;padding-right:16px}
   background:rgba(6,9,16,.94);color:var(--gold);font-size:18px;text-align:center;padding:24px}
 #rotate-hint.show{display:flex}
 
-/* M3-G7 新手引导 */
+/* M3-G7 onboarding tips */
 .tut-box{background:linear-gradient(165deg,rgba(19,24,42,.96),rgba(12,15,28,.97));
   border:1px solid rgba(127,212,255,.35);border-radius:18px;padding:30px 40px;width:min(94vw,560px);text-align:center;
   box-shadow:0 30px 90px rgba(0,0,0,.7)}
@@ -296,7 +298,7 @@ select.btn{appearance:none;padding-right:16px}
 .tut-actions button{flex:1}
 .tut-count{font:11px var(--mono);color:var(--amber);margin-top:16px;letter-spacing:.2em}
 
-/* M3-G3 波次升级三选一 */
+/* M3-G3 pick-one-of-three wave upgrade */
 #upgrades{z-index:24}
 .upgrade-box{background:linear-gradient(165deg,rgba(19,24,42,.96),rgba(12,15,28,.97));
   border:1px solid rgba(240,168,96,.35);border-radius:18px;padding:30px 36px;width:min(96vw,880px);
@@ -311,7 +313,7 @@ select.btn{appearance:none;padding-right:16px}
 .up-desc{font-size:12px;color:var(--muted);line-height:1.6;margin-top:10px}
 .u-hint{font-size:11px;color:var(--muted);letter-spacing:.1em;margin-top:18px}
 
-/* U4 PWA 更新提示 */
+/* U4 PWA update prompt */
 #sw-toast{position:absolute;left:50%;bottom:26px;transform:translateX(-50%);z-index:40;display:none;
   gap:12px;align-items:center;background:rgba(12,16,28,.94);border:1px solid var(--accent);
   border-radius:10px;padding:10px 14px;font-size:13px;color:#e8eef8;box-shadow:0 12px 36px rgba(0,0,0,.5)}
@@ -330,7 +332,7 @@ select.btn{appearance:none;padding-right:16px}
 .o-win{color:var(--gold)!important;text-shadow:0 0 24px rgba(232,192,96,.4)}
 .o-lose{color:#ff8a7a!important}
 
-/* M2-A4 MVP 结算卡 */
+/* M2-A4 MVP result card */
 #o-mvp{margin:12px 0}
 .mvp-kicker{font-size:10px;letter-spacing:.22em;color:var(--gold)}
 .mvp-row{display:flex;gap:12px;align-items:center;margin-top:6px}

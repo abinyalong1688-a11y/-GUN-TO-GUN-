@@ -3,7 +3,7 @@
     "esbuild": "^0.28.2",
     "three": "^0.170.0"
   },
-  "name": "outpost07",
+  "name": "gun-to-gun",
   "version": "1.6.0",
   "type": "module",
   "scripts": {

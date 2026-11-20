@@ -1,9 +1,9 @@
-// world.js —— 四张地图:沙漠哨站 / 雪夜要塞 / CS雪地小镇 / 熔岩废都(世界参数化 + 可整体切换)
+// world.js — four maps: Desert Outpost / Snow Keep / Snow Town / Lava Ruins (parameterised worlds, swappable as a whole)
 import * as THREE from 'three';
 
 export const MAPS={
   desert:{
-    name:'沙漠哨站 · 日落',
+    name:'Desert Outpost · Sunset',
     sky:{top:[.10,.14,.30],mid:[.55,.34,.40],hor:[1.06,.68,.38],low:[.28,.20,.17],glow:[1.0,.86,.62],stars:0},
     sunDir:[-.82,.30,-.28],sunColor:0xffb36b,sunI:7.5,
     hemi:[0x51608f,0x8a5c38,1.35],fill:[0x6a7ab8,.5],
@@ -13,9 +13,9 @@ export const MAPS={
     amb:'dust',
   },
   snow:{
-    name:'雪夜要塞 · 极寒',
+    name:'Snow Keep · Night',
     sky:{top:[.05,.07,.16],mid:[.16,.22,.36],hor:[.55,.66,.82],low:[.30,.34,.42],glow:[.9,.95,1.05],stars:1},
-    sunDir:[.55,.42,.35],sunColor:0xbfd4ff,sunI:5.8,  // 月光
+    sunDir:[.55,.42,.35],sunColor:0xbfd4ff,sunI:5.8,  // moonlight
     hemi:[0x7288b0,0x4a5868,1.4],fill:[0x8aa0c8,.45],
     fog:[0xaebfd4,.0082],
     ground:'snow',rock:'rock',
@@ -23,18 +23,18 @@ export const MAPS={
     amb:'snow',
   },
   snowtown:{
-    name:'雪地小镇 · de_snow',
-    // 亮度须与 Bloom 阈值(.82)匹配:hor/glow 曾接近纯白导致全屏过曝(地图看起来像"翻转")
+    name:'Snow Town · Daylight',
+    // Brightness must match the bloom threshold (.82): hor/glow once sat near pure white and blew out the whole screen (the map looked "inverted")
     sky:{top:[.20,.30,.46],mid:[.42,.53,.67],hor:[.60,.66,.74],low:[.40,.45,.52],glow:[.92,.95,1.0],stars:0},
-    sunDir:[.42,.58,.25],sunColor:0xf4f7ff,sunI:3.4,  // 冬日高角度白光
+    sunDir:[.42,.58,.25],sunColor:0xf4f7ff,sunI:3.4,  // high-angle winter daylight
     hemi:[0xbcc9da,0x8b93a0,.95],fill:[0xd8e2ee,.3],
     fog:[0xa2b3c3,.0080],
     ground:'snow',rock:'rock',
     containers:['arctic','rust'],
-    amb:'snow',cs:true,
+    amb:'snow',classic:true,
   },
   ember:{
-    name:'熔岩废都 · 烈焰',
+    name:'Lava Ruins · Ember',
     sky:{top:[.02,.015,.03],mid:[.10,.04,.04],hor:[.75,.22,.08],low:[.16,.07,.05],glow:[1.0,.5,.25],stars:1},
     sunDir:[.2,.5,.6],sunColor:0xff7a40,sunI:2.6,
     hemi:[0x3a2028,0x5a1c0c,1.0],fill:[0xff8a50,.35],
@@ -52,9 +52,10 @@ function addBox(scene,shootStatics,colliders,{w,h,d,mat,x,y,z,ry=0,surface='conc
   m.userData.surface=surface;
   scene.add(m);shootStatics.push(m);
   if(collide){
-    const ext=Math.abs(Math.sin(ry))*Math.max(w,d)*.5+Math.abs(Math.cos(ry))*Math.max(w,d)*.5;
-    const ext2=Math.abs(Math.sin(ry))*Math.min(w,d)*.5+Math.abs(Math.cos(ry))*Math.min(w,d)*.5;
-    colliders.push({minX:x-Math.max(ext,ext2),maxX:x+Math.max(ext,ext2),minZ:z-Math.min(ext,ext2)-.01,maxZ:z+Math.min(ext,ext2)+.01,top:y+h/2});
+    // Axis-aligned bounds of a rotated box: w projects onto X, d onto Z (the old code always put the long side on X, so lengthwise containers had colliders turned 90°)
+    const c=Math.abs(Math.cos(ry)),s=Math.abs(Math.sin(ry));
+    const hx=c*w*.5+s*d*.5,hz=s*w*.5+c*d*.5;
+    colliders.push({minX:x-hx,maxX:x+hx,minZ:z-hz-.01,maxZ:z+hz+.01,top:y+h/2});
   }
   return m;
 }
@@ -64,10 +65,10 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
   const world=new THREE.Group();
   scene.add(world);
   const colliders=[],shootStatics=[],worldAnim=[];
-  const ownMats=[]; // 本次构建新建的材质(切图时随几何体一起释放;共享资产材质除外)
+  const ownMats=[]; // materials created by this build (freed with the geometry on map switch; shared asset materials excluded)
   const M=assets.mats;
 
-  /* ------- 天空(参数化) ------- */
+  /* ------- Sky (parameterised) ------- */
   const sunDir=new THREE.Vector3(...map.sunDir).normalize();
   const skyMat=new THREE.ShaderMaterial({
     side:THREE.BackSide,depthWrite:false,fog:false,
@@ -94,7 +95,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
         }else{
           c=mix(cHor,cLow,smoothstep(0.0,-0.25,d.y));
         }
-        // 星空
+        // Stars
         if(uStars>0.5&&d.y>0.08){
           vec3 sp=floor(d*220.0);
           float s=hash(sp);
@@ -114,7 +115,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
 
   scene.fog=new THREE.FogExp2(...map.fog);
 
-  /* ------- 光照 ------- */
+  /* ------- Lighting ------- */
   const sun=new THREE.DirectionalLight(map.sunColor,map.sunI);
   sun.position.copy(sunDir).multiplyScalar(120);
   sun.castShadow=true;
@@ -128,7 +129,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
   fill.position.set(60,40,80);
   world.add(fill);
 
-  /* ------- 地面 ------- */
+  /* ------- Ground ------- */
   const groundGeo=new THREE.PlaneGeometry(360,360,110,110);
   groundGeo.rotateX(-Math.PI/2);
   {
@@ -147,7 +148,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
   ground.receiveShadow=true;ground.userData.surface=map.ground==='basalt'?'concrete':'sand';
   world.add(ground);shootStatics.push(ground);
 
-  // 远处地貌包
+  // Distant terrain mounds
   for(let i=0;i<7;i++){
     const a=i/7*Math.PI*2+.4,r=86+((i*53)%30);
     const mound=new THREE.Mesh(new THREE.SphereGeometry(20+(i%3)*9,16,12),assets.ground[map.ground]);
@@ -156,7 +157,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
     world.add(mound);
   }
 
-  /* ------- 岩石 ------- */
+  /* ------- Rocks ------- */
   const rockGeo=new THREE.DodecahedronGeometry(1,0);
   for(let i=0;i<14;i++){
     const a=(i*137.5)*Math.PI/180,r=22+((i*67)%24);
@@ -169,7 +170,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
     if(i%3===0)colliders.push({minX:rock.position.x-1,maxX:rock.position.x+1,minZ:rock.position.z-1,maxZ:rock.position.z+1,top:1});
   }
 
-  /* ------- 哨站掩体 ------- */
+  /* ------- Outpost cover ------- */
   const contMats=map.containers.map(k=>assets.containers[k]);
   addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:contMats[0],x:-8.5,y:1.3,z:-4,ry:.22,surface:'metal'});
   addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:contMats[0],x:-8.3,y:3.9,z:-3.7,ry:.26,surface:'metal'});
@@ -203,7 +204,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
   }
   colliders.push({minX:10.2,maxX:12,minZ:-1,maxZ:3.4,top:1.1});
 
-  /* ------- 瞭望塔 ------- */
+  /* ------- Watchtower ------- */
   {
     const tx=17,tz=-13;
     const legGeo=new THREE.CylinderGeometry(.09,.12,5.2,8);
@@ -231,7 +232,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
     worldAnim.push(t=>{beacon.material.color.setHex(Math.sin(t*3)>0?0xff3a2a:0x571512);});
   }
 
-  /* ------- 雷达 ------- */
+  /* ------- Radar dish ------- */
   {
     const px=-15,pz=-9;
     const pole=new THREE.Mesh(new THREE.CylinderGeometry(.12,.16,3.4,8),M.metal);
@@ -244,7 +245,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
     colliders.push({minX:px-.8,maxX:px+.8,minZ:pz-.8,maxZ:pz+.8,top:3.4});
   }
 
-  /* ------- 灯杆 ------- */
+  /* ------- Lamp posts ------- */
   function lamp(x,z,ry){
     const pole=new THREE.Mesh(new THREE.CylinderGeometry(.06,.08,4.6,8),M.metal);
     pole.position.set(x,2.3,z);pole.castShadow=true;
@@ -263,7 +264,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
   }
   lamp(-6,7,.7);lamp(8,-2,2.4);
 
-  /* ------- 指挥棚 ------- */
+  /* ------- Command tent ------- */
   {
     const tx=-2,tz=-10.5;
     const g1=new THREE.Mesh(new THREE.BoxGeometry(5,.1,3.4),M.concrete);
@@ -277,22 +278,23 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
     colliders.push({minX:tx-2.4,maxX:tx+2.4,minZ:tz-1.6,maxZ:tz+1.6,top:1.9});
   }
 
-  /* ------- AbinStudio 赞助广告牌(四图通用:自发光贴图,可射击留弹孔) ------- */
+  /* ------- AbinStudio sponsor billboards (all four maps: emissive art, shootable with bullet holes) ------- */
   {
     const adGeo=new THREE.PlaneGeometry(6,3);
     const adMat=new THREE.MeshBasicMaterial({map:assets.tex.ad});
     const adBackMat=new THREE.MeshBasicMaterial({map:assets.tex.adBack});
+    ownMats.push(adMat,adBackMat); // freed together with the world on map switch
     const postGeo=new THREE.CylinderGeometry(.09,.12,3.2,8);
     const frame=new THREE.BoxGeometry(6.2,3.2,.08);
     const spots=[[17,14],[-17,-14],[-16,12]];
     for(const [x,z] of spots){
-      const ry=Math.atan2(-x,-z); // 面向场地中心
+      const ry=Math.atan2(-x,-z); // face the arena centre
       const grp=new THREE.Group();
       const board=new THREE.Mesh(adGeo,adMat);
       board.position.y=2.6;
       board.userData.surface='metal';
       grp.add(board);
-      const back=new THREE.Mesh(adGeo,adBackMat); // 背面独立内容面
+      const back=new THREE.Mesh(adGeo,adBackMat); // separate content on the back face
       back.position.set(0,2.6,-.12);
       back.rotation.y=Math.PI;
       back.userData.surface='metal';
@@ -312,16 +314,16 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
       grp.rotation.y=ry;
       world.add(grp);
       shootStatics.push(board);
-      // 面板薄碰撞
+      // Thin panel collider
       const hw=Math.abs(Math.cos(ry))*3+Math.abs(Math.sin(ry))*.1;
       const hd=Math.abs(Math.sin(ry))*3+Math.abs(Math.cos(ry))*.1;
       colliders.push({minX:x-hw,maxX:x+hw,minZ:z-hd,maxZ:z+hd,top:4.2});
     }
   }
 
-  /* ------- CS 经典雪地元素(仅雪地小镇) ------- */
-  if(map.cs){
-    // 双层木箱阵(dust 式堆叠,CS 招牌掩体)
+  /* ------- Classic snow-town set pieces (Snow Town only) ------- */
+  if(map.classic){
+    // Two-tier crate formations (stacked cover)
     const stack=(x,z,ry,n=2)=>{
       for(let i=0;i<n;i++)
         addBox(world,shootStatics,colliders,{w:1.15,h:1.15,d:1.15,mat:M.wood,x,y:.575+i*1.15,z,ry:ry+i*.13,surface:'wood',collide:i===0});
@@ -330,10 +332,10 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
     stack(4.8,3.4,.5,2);stack(6.0,4.1,.1,1);
     stack(-12,2.5,.4,2);stack(-10.9,3.2,.05,1);
     stack(13.5,-4,.25,1);
-    // 雪镇街道长墙
+    // Long street walls
     addBox(world,shootStatics,colliders,{w:9,h:2.6,d:.5,mat:M.concrete,x:-14,y:1.3,z:-2,ry:.28,surface:'concrete'});
     addBox(world,shootStatics,colliders,{w:7,h:2.6,d:.5,mat:M.concrete,x:14,y:1.3,z:-6,ry:-.4,surface:'concrete'});
-    // 雪堆
+    // Snow piles
     for(let i=0;i<10;i++){
       const a=(i*53.7)*Math.PI/180,r=12+((i*31)%26);
       const pile=new THREE.Mesh(new THREE.SphereGeometry(1+(i%3)*.5,10,8),assets.ground.snow);
@@ -341,7 +343,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
       pile.scale.y=.42;pile.receiveShadow=true;
       world.add(pile);
     }
-    // 远景冷却塔剪影(nuke 致敬)
+    // Distant cooling-tower silhouettes
     const tower=new THREE.Mesh(new THREE.CylinderGeometry(6.5,9.5,34,20,1,true),
       new THREE.MeshStandardMaterial({color:0xaab2b8,roughness:.95,side:THREE.DoubleSide}));
     tower.position.set(-55,16,-55);
@@ -349,7 +351,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
     ownMats.push(tower.material);
   }
 
-  /* ------- 熔岩裂缝(仅烈焰图) ------- */
+  /* ------- Lava fissures (Ember map only) ------- */
   if(map.lava){
     const crackMat=new THREE.MeshBasicMaterial({color:0xff5a18});
     ownMats.push(crackMat);
@@ -371,7 +373,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
     }
   }
 
-  /* ------- 氛围粒子 ------- */
+  /* ------- Ambient particles ------- */
   const ambN=quality==='high'?160:80;
   const ambGeo=new THREE.BufferGeometry();
   const apos=new Float32Array(ambN*3),avel=new Float32Array(ambN);
@@ -407,7 +409,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
     p.needsUpdate=true;
   });
 
-  /* ------- 出生点 ------- */
+  /* ------- Spawn points ------- */
   const spawnPoints=[
     new THREE.Vector3(0,0,-46),
     new THREE.Vector3(46,0,0),
@@ -415,15 +417,18 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
     new THREE.Vector3(-46,0,4),
   ];
 
-  return {group:world,colliders,shootStatics,spawnPoints,sunDir,mapKey,map,worldAnim,ownMats};
+  // Ray list for line-of-sight / projectiles: drops the 24k-triangle ground mesh (the ray origin is always inside its bounds, so nothing early-outs and every triangle is tested each frame)
+  const losStatics=shootStatics.filter(o=>o!==ground);
+  return {group:world,colliders,shootStatics,losStatics,spawnPoints,sunDir,mapKey,map,worldAnim,ownMats};
 }
 
-/* 切换地图:销毁旧世界(几何体 + 本图新建材质;Points 氛围粒子几何体同样释放) */
+/* Map switch: destroy the old world (geometry + materials created for this map; ambient Points geometry is freed too) */
 export function disposeWorld(scene,world){
   if(!world)return;
   scene.remove(world.group);
   world.group.traverse(o=>{
     if(o.geometry)o.geometry.dispose();
+    if(o.isLight&&o.dispose)o.dispose(); // free the sun's shadow map (2048² on high quality)
   });
   for(const m of world.ownMats||[])m.dispose();
   scene.fog=null;

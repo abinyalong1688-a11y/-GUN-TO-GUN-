@@ -1,4 +1,4 @@
-// waves.js —— 无尽波次调度 + 补给
+// waves.js — endless wave scheduler + resupply
 import * as THREE from 'three';
 import {t} from './i18n.js';
 import {store} from './util.js';
@@ -38,9 +38,9 @@ export class Waves{
     for(let i=0;i<wasp;i++)q.push('WASP');
     for(let i=0;i<reaper;i++)q.push('REAPER');
     for(let i=0;i<warden;i++)q.push('WARDEN');
-    // M3-G4:每 5 波 Boss
+    // M3-G4: boss every 5 waves
     if(n%5===0)q.push('BOSS');
-    // 洗牌,保证前几秒是快的 WASP
+    // Shuffle so the first few seconds bring the fast WASPs
     for(let i=q.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[q[i],q[j]]=[q[j],q[i]];}
     return q;
   }
@@ -71,7 +71,7 @@ export class Waves{
         }
       }
     }else if(this.state==='active'){
-      // 出怪节流
+      // Spawn throttling
       if(this.queue.length){
         this.spawnT-=dt;
         if(this.spawnT<=0&&g.enemies.list.length<12){
@@ -88,18 +88,18 @@ export class Waves{
           this.spawnT=(.75+Math.random()*.7)*(this.modifier==='rush'?.7:1);
         }
       }else if(g.enemies.list.length===0){
-        // 波次清空
+        // Wave cleared
         this.state='intermission';
         this.timer=6;
         const bonus=100+this.n*50;
-        g.addScore(bonus,null,'清扫奖励');
+        g.addScore(bonus,null); // wave-clear bonus (3rd arg is the crit flag; a label string here made it render as a crit)
         g.ui.banner(t('wave_clear'),t('supply_sub',{n:bonus}));
         g.audio.supply();
         g.weapon.addReserve(90);
         g.player.heal(25);
         this._restoreFog();
         g.empT=0;if(g.ui&&g.ui.hideBoss)g.ui.hideBoss();
-        // M3-G3:每 3 波清空后提供三选一强化
+        // M3-G3: offer a pick-one-of-three upgrade after every 3rd cleared wave
         if(this.n%3===0)g.openUpgrade();
       }
     }

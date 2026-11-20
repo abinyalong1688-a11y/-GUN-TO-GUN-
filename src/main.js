@@ -1,4 +1,4 @@
-// main.js —— 引导 / 状态机 / 射击判定(角色+爆炸) / 乱斗对战 / 主循环 / 验证钩子
+// main.js — boot / state machine / hit detection (characters + explosions) / deathmatch / main loop / verification hooks
 import {t,applyStatic,detectIPCountry,setLang,lang,isEN} from './i18n.js';
 import * as THREE from 'three';
 import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
@@ -34,7 +34,7 @@ import {store,num,escHTML} from './util.js';
 
 const $=id=>document.getElementById(id);
 const UP=new THREE.Vector3(0,1,0);
-const FOV_H=106; // 腰射水平视野(度):横向视野锁定,不随窗口宽高比缩水(16:9 下垂直约72.7°)
+const FOV_H=106; // hip-fire horizontal FOV (degrees): horizontal FOV is locked so it does not shrink with aspect ratio (≈72.7° vertical at 16:9)
 const TUTORIAL=[
   {zh:'WASD 移动,鼠标瞄准',en:'Move with WASD, aim with the mouse'},
   {zh:'按住右键开镜(ADS),精度更高',en:'Hold right mouse to aim down sights'},
@@ -43,7 +43,7 @@ const TUTORIAL=[
   {zh:'按 G / F / V 投掷破片 / 闪光 / 烟雾',en:'Press G / F / V for frag / flash / smoke'},
 ];
 const VERSION='1.6.0';
-const _rsO=new THREE.Vector3(); // 射线-球判定复用向量(热路径零分配)
+const _rsO=new THREE.Vector3(); // reused ray-sphere test vector (zero allocation on the hot path)
 
 class Game{
   constructor(){
@@ -57,14 +57,14 @@ class Game{
     this.padMode=new URLSearchParams(location.search).has('pad');
     this.touchMode=new URLSearchParams(location.search).has('touch')||
       (typeof matchMedia==='function'&&matchMedia('(pointer:coarse)').matches);
-    if(this.shotMode||this.selftestMode||this.e2eMode||this.rosterMode||this.portraitsMode||this.padMode)window.__game=this; // 调试探针:仅测试钩子下暴露
-    this.perf={frames:0,slow:0,maxDt:0}; // 卡顿监控:慢帧(>25ms)计数
+    if(this.shotMode||this.selftestMode||this.e2eMode||this.rosterMode||this.portraitsMode||this.padMode)window.__game=this; // debug probe: exposed only under test hooks
+    this.perf={frames:0,slow:0,maxDt:0}; // hitch monitor: slow frame (>25ms) count
     this.dynScale=1;this._perfAt=0;
     this.state='menu'; // menu | playing | paused | dying | over
     this.keys=new Set();
     this.input={firing:false,ads:false};
     this.fallbackAim=false;
-    // S1.4 设置中心:统一读取 + 旧 key 迁移
+    // S1.4 settings hub: unified reads + legacy key migration
     this.settings=settings;
     this.save=new SaveSystem();
     this.leaderboard=new Leaderboard(settings);
@@ -76,7 +76,7 @@ class Game{
     this.score=0;this.shake=0;this.dyingT=0;this.time=0;
     this.stats={shots:0,hits:0,kills:0,critKills:0,time:0,bestCombo:0};
     this.comboKills=0;this.comboT=0;
-    this.playerName='守卫-07';
+    this.playerName='Guard-07';
     this.playerTeam='A';
     this.invulnT=0;this.dmRespawnT=-1;
     this.spectate={target:null,t:0};this.lastKiller=null;
@@ -84,9 +84,9 @@ class Game{
     this._boot();
   }
 
-  /* ================= 引导 ================= */
+  /* ================= Boot ================= */
   _boot(){
-    applyStatic(); // 语言首帧判定后立即替换静态文案(脚本阻塞解析,无闪屏)
+    applyStatic(); // swap in static copy right after first-frame language detection (script blocks parsing, so no flash)
     this.ui=new UI();
     this.ui._save=this.save;
     window.addEventListener('error',e=>{
@@ -97,21 +97,21 @@ class Game{
 
     const test=document.createElement('canvas');
     if(!test.getContext('webgl2')){
-      $('app').insertAdjacentHTML('beforeend','<div id="nogl">当前浏览器不支持 WebGL2<br>请使用 Edge / Chrome 等现代浏览器打开</div>');return;
+      $('app').insertAdjacentHTML('beforeend',`<div id="nogl">${t('no_webgl')}</div>`);return;
     }
 
     this.renderer=new THREE.WebGLRenderer({antialias:false,powerPreference:'high-performance'});
     this.renderer.shadowMap.enabled=true;
     this.renderer.shadowMap.type=THREE.PCFSoftShadowMap;
-    // 阴影隔帧更新:全场投影每两帧重算一次,可省掉近一半的阴影 pass(动态单位阴影延迟 1 帧,肉眼不可辨)
+    // Shadows update every other frame: recomputing all casters every second frame saves almost half the shadow passes (dynamic units lag 1 frame, imperceptible)
     this.renderer.shadowMap.autoUpdate=false;
     this.renderer.toneMapping=THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure=1.18;
-    // WebGL 上下文丢失:驱动崩溃/切显卡/系统休眠后给出可见提示,恢复后自动重载
+    // WebGL context loss: show a visible notice after a driver crash / GPU switch / sleep, reload automatically once restored
     this.renderer.domElement.addEventListener('webglcontextlost',e=>{
       e.preventDefault();
       this.renderer.setAnimationLoop(null);
-      this.ui.debug('ERR WebGL 上下文丢失 · 页面将自动恢复…',true);
+      this.ui.debug('ERR WebGL context lost · the page will recover automatically…',true);
       setTimeout(()=>location.reload(),1200);
     },false);
     $('gl').appendChild(this.renderer.domElement);
@@ -128,17 +128,17 @@ class Game{
     const vmFill=new THREE.DirectionalLight(0xfff0d8,.9);
     vmFill.position.set(.2,.15,1);
     this.viewScene.add(vmFill);
-    // 视模型环境反射(RoomEnvironment IBL):金属件获得真实高光,摆脱平涂粗糙感
+    // Viewmodel environment reflections (RoomEnvironment IBL): metal parts get real highlights instead of a flat rough look
     try{
       const pmrem=new THREE.PMREMGenerator(this.renderer);
       this.viewScene.environment=pmrem.fromScene(new RoomEnvironment(),.04).texture;
-      this.viewScene.environmentIntensity=.55; // 压住反射强度,避免皮肤/手套过曝
+      this.viewScene.environmentIntensity=.55; // keep reflections in check so skin / gloves do not blow out
       pmrem.dispose();
     }catch(e){}
 
     this.assets=initAssets();
     this.portraits=new PortraitRenderer(this.assets);
-    this.ui.portraits=this.portraits; // C4:菜单干员卡立绘
+    this.ui.portraits=this.portraits; // C4: menu operator card portraits
     this.audio=new AudioFX();
     this.buildWorldFor(this.ui.sel.map);
 
@@ -160,7 +160,7 @@ class Game{
     this.koth=new KothMode(this);
     this.ray=new THREE.Raycaster();
     this.losRay=new THREE.Raycaster();
-    // 射击复用向量池:避免每发子弹都 new Vector3 造成 GC 抖动
+    // Reusable vector pool for shooting: avoids a new Vector3 per bullet and the resulting GC jitter
     this._sd=new THREE.Vector3();this._sr=new THREE.Vector3();this._su=new THREE.Vector3();
     this._send=new THREE.Vector3();this._muzzle=new THREE.Vector3();this._losV=new THREE.Vector3();this._pierceO=new THREE.Vector3();
     this._shotGroups=[];
@@ -168,8 +168,8 @@ class Game{
     this._setupComposer();
     this._setupInput();
 
-    // 菜单绑定
-    this.ui.bindMenu(()=>{ // 地图/模式变更 → 世界预览重建
+    // Menu bindings
+    this.ui.bindMenu(()=>{ // map / mode change → rebuild the world preview
       if(this.ui.sel.map!==this.world.mapKey)this.buildWorldFor(this.ui.sel.map);
     });
     $('m-quality').value=this.quality;
@@ -196,7 +196,7 @@ class Game{
         if(lb.checked)this.leaderboard.submit(this.playerName,this.bestScore||0);
       });
     }
-    // U1:设置面板统一绑定(灵敏度/FOV/音量/音效/音乐/准星/反转/蹲伏切换/ADS 切换)
+    // U1: settings panel bindings (sensitivity / FOV / volume / sfx / music / crosshair / invert / crouch toggle / ADS toggle)
     this.ui.bindSettings(this.settings,(path)=>{
       if(path==='fov'||path==='reset')this.baseHFov=this.settings.get('fov');
       if(path==='sens'||path==='reset')this.sensMul=this.settings.get('sens');
@@ -210,7 +210,7 @@ class Game{
     this.ui.showOnly('menu');
     this._menuDrones();
 
-    // 预编译着色器
+    // Precompile shaders
     try{
       this.weapon.group.visible=true;
       this.renderer.compile(this.scene,this.camera);
@@ -218,7 +218,7 @@ class Game{
       this.weapon.group.visible=false;
     }catch(e){}
 
-    // C1/C5 调试钩子:?op=raven&camo=snow 指定干员与迷彩
+    // C1/C5 debug hook: ?op=raven&camo=snow picks operator and camo
     const qs=new URLSearchParams(location.search);
     const forcedOp=qs.get('op');
     if(forcedOp&&byId(forcedOp))this.ui.selectOperator(forcedOp);
@@ -247,9 +247,9 @@ class Game{
     if(this.padMode){
       console.table(PAD_MAP.axes);
       console.table(PAD_MAP.buttons);
-      console.log('[PAD] 左摇杆移动 · 右摇杆视角 · RT 开火 · LT 开镜 · A/B/X/Y 动作');
+      console.log('[PAD] left stick move · right stick look · RT fire · LT aim · A/B/X/Y actions');
     }
-    // 异步 IP 探测:非中国 IP → 英文界面(结果缓存供下次首帧使用);?ipcc= 可强制(测试钩子)
+    // Async IP probe: non-China IP → English UI (result cached for the next first frame); ?ipcc= forces it (test hook)
     const forcedIPCC=new URLSearchParams(location.search).get('ipcc');
     (forcedIPCC?Promise.resolve(forcedIPCC):detectIPCountry()).then(cc=>{
       if(!cc)return;
@@ -260,10 +260,10 @@ class Game{
 
     const ver=$('m-ver');
     if(ver)ver.textContent=`v${VERSION}`;
-    console.log(`%cGUN TO GUN v${VERSION}`,'color:#f0a860;font-weight:bold','· 单文件离线可玩');
+    console.log(`%cGUN TO GUN v${VERSION}`,'color:#f0a860;font-weight:bold','· single file, playable offline');
 
     this.clock=new THREE.Clock();
-    // 主循环异常熔断:单帧异常不再静默终止 rAF 链,可见报错并停机
+    // Main loop circuit breaker: an exception in one frame no longer silently kills the rAF chain; show the error and halt
     this.renderer.setAnimationLoop(()=>{
       try{this.tick();}
       catch(err){
@@ -274,7 +274,7 @@ class Game{
     });
     addEventListener('resize',()=>this._resize());
     this._resize();
-    // PWA 离线支持:云端部署后首次访问即缓存,断网可从缓存重开(file:// 本地打开无需 SW)
+    // PWA offline support: cached on first visit after deployment, can be reopened offline from cache (file:// needs no SW)
     if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol)){
       const hadController=!!navigator.serviceWorker.controller;
       navigator.serviceWorker.addEventListener('controllerchange',()=>{
@@ -294,7 +294,7 @@ class Game{
     if(this.player)this.player.colliders=this.world.colliders;
   }
 
-  /* 语言切换后的动态文案刷新(静态部分由 applyStatic 覆盖) */
+  /* Refresh dynamic copy after a language switch (static parts are covered by applyStatic) */
   _refreshLang(){
     applyStatic();
     this.assets.refreshAd&&this.assets.refreshAd();
@@ -330,7 +330,7 @@ class Game{
 
   _resize(){
     this.camera.aspect=innerWidth/innerHeight;
-    // 视野以水平角为准:先定横向角度,再换算当前宽高比下的垂直 FOV
+    // FOV is defined horizontally: fix the horizontal angle first, then derive the vertical FOV for the current aspect
     this.camera.fov=THREE.MathUtils.radToDeg(2*Math.atan(Math.tan(THREE.MathUtils.degToRad(this._hfovCur||this.baseHFov||FOV_H)*.5)/this.camera.aspect));
     this.camera.updateProjectionMatrix();
     this.viewCam.aspect=innerWidth/innerHeight;this.viewCam.updateProjectionMatrix();
@@ -338,17 +338,17 @@ class Game{
     this.composer.setSize(innerWidth,innerHeight);
   }
 
-  /* ================= 输入 ================= */
-  /* S1.5:输入抽象;键鼠监听在 KeyboardMouseAdapter 内,M4 可叠加触屏/手柄 */
+  /* ================= Input ================= */
+  /* S1.5: input abstraction; mouse/keyboard listeners live in KeyboardMouseAdapter, M4 layers touch / gamepad on top */
   _setupInput(){
     this.inputMgr=new InputManager(this);
     this.inputMgr.attach(new KeyboardMouseAdapter(this));
     this.inputMgr.attach(new GamepadAdapter(this));
-    // M4-P1:触屏设备(或 ?touch=1)挂载虚拟摇杆/视角/动作按钮
+    // M4-P1: touch devices (or ?touch=1) mount the virtual stick / look area / action buttons
     if(this.touchMode)this.inputMgr.attach(new TouchAdapter(this));
   }
 
-  /* 视角输入统一入口(鼠标/触屏/手柄共用) */
+  /* Single entry point for look input (shared by mouse / touch / gamepad) */
   applyLook(dx,dy){
     if(!this.player)return;
     const base=this.baseHFov||FOV_H;
@@ -358,15 +358,15 @@ class Game{
     const inv=this.settings&&this.settings.get('yInvert')?-1:1;
     const s=.0021*sens*adsSens*zoom;
     this.player.yaw-=dx*s;
-    // 水平角度规约,防长时间累积浮点漂移
+    // Normalise the yaw angle so float error does not accumulate over long sessions
     if(this.player.yaw>Math.PI)this.player.yaw-=Math.PI*2;
     else if(this.player.yaw<-Math.PI)this.player.yaw+=Math.PI*2;
     this.player.pitch-=dy*s*inv;
-    // 行业标准(CS/瓦/网页FPS通用):俯仰钳制在 ±89°,越过天顶会天地颠倒、左右旋转反向
+    // Industry standard for FPS games: clamp pitch to ±89°; past the zenith the view flips and turning reverses
     this.player.pitch=Math.max(-1.553,Math.min(1.553,this.player.pitch));
   }
 
-  /* S1.6:音频分轨音量应用(init 之后调用) */
+  /* S1.6: per-bus audio volume (call after init) */
   _applyAudioSettings(){
     if(!this.audio)return;
     this.audio.setVolume(this.settings.get('volume'));
@@ -379,12 +379,12 @@ class Game{
   _requestLock(){
     const tryLock=()=>{
       try{
-        // 行业标准:优先原始输入(unadjustedMovement),去除系统鼠标加速,转动幅度与硬件一致
+        // Industry standard: prefer raw input (unadjustedMovement) to drop OS mouse acceleration so rotation matches the hardware
         let p=null;
         try{p=this.renderer.domElement.requestPointerLock({unadjustedMovement:true});}
         catch(err){p=this.renderer.domElement.requestPointerLock();}
         if(p&&p.catch)p.catch(()=>{
-          // 不支持原始输入时退回普通锁定;静默处理无手势/被拒场景,不污染调试条
+          // Fall back to a normal lock without raw input support; silently handle missing-gesture / rejected cases without polluting the debug bar
           try{const q=this.renderer.domElement.requestPointerLock();if(q&&q.catch)q.catch(()=>{});}catch(err){}
         });
       }catch(e){}
@@ -398,11 +398,11 @@ class Game{
     },2300);
   }
 
-  /* 无指针锁定的 fallback 视角:光标贴左/右边缘时按比例持续旋转(行业标准 fallback),
-     解决相对位移模式下"光标到边就转不动、瞄不到视野外目标"的问题 */
+  /* Look fallback without pointer lock: keep rotating proportionally while the cursor hugs the left/right edge (industry-standard fallback),
+     fixing "the cursor hits the edge and I cannot turn to aim at targets outside the view" in relative-movement mode */
   _fallbackEdgeRotate(dt){
     if(!this.fallbackAim||this.state!=='playing'||!this.player.alive)return;
-    const m=70,speed=2.8; // 边缘带宽 px / 最大角速度 rad/s
+    const m=70,speed=2.8; // edge band in px / max angular speed in rad/s
     const cx=this._mx==null?innerWidth/2:this._mx;
     let rate=0;
     if(cx<m)rate=-speed*(1-cx/m);
@@ -410,19 +410,19 @@ class Game{
     if(rate)this.player.yaw-=rate*dt;
   }
 
-  /* C5:迷彩来源(玩家用当前选择,机器人用各自存档/解锁) */
+  /* C5: camo source (player uses the current selection, bots use their own saved/unlocked camo) */
   camoFor(op){
     if(this.ui&&this.ui.sel&&op.id===this.ui.sel.operator&&this.ui.sel.camo)return this.ui.sel.camo;
     return this.ui&&this.ui.camoOf?this.ui.camoOf(op):'default';
   }
 
-  /* ================= 状态切换 ================= */
+  /* ================= State switching ================= */
   startGame(){
     const sel=this.ui.sel;
     this.mode=sel.mode;
     this.playerName=this.ui.playerName;
     if(sel.map!==this.world.mapKey)this.buildWorldFor(sel.map);
-    // C5:玩家干员 = 名册选择;属性/武器/第一人称手臂全部按干员定义
+    // C5: player operator = roster selection; stats / weapons / first-person arms all follow the operator definition
     const op=byId(sel.operator)||byId(DEFAULT_OP);
     const hero=op.faction;
     this.playerOperator=op;
@@ -443,7 +443,7 @@ class Game{
     this.player.sprintSpeed=7.8*op.speedMul;
     this.weapon.reloadSpeedMul=op.reloadMul;
     this.weapon.recoilMul=op.recoilMul;
-    // 基础移速 × 干员 × 武器负重(CS 机制)
+    // Base move speed × operator × weapon weight
     this.baseSpeed=5.2*op.speedMul;
     this.baseSprint=7.8*op.speedMul;
     this.weapon.speedCb=mul=>{
@@ -451,7 +451,7 @@ class Game{
       this.player.sprintSpeed=this.baseSprint*mul;
     };
     this.weapon.setFaction(op);
-    // 主武器:阵营全部 4 把随身,菜单所选为出厂手持(CS 槽位:1 循环/2 沙鹰/3 军刀)
+    // Primaries: all 4 faction primaries carried, the menu choice is drawn first (slots: 1 cycle / 2 Desert Eagle / 3 knife)
     const CT_P=['m4a4','aug','awp','mp5'],T_P=['ak47','sg553','awp','mp5'];
     const pool=hero==='ct'?CT_P:T_P;
     const first=pool.includes(sel.primary)?sel.primary:pool[0];
@@ -506,7 +506,7 @@ class Game{
     this.ui.setHealth(this.player.health,this.player.maxHealth);
     this.fallbackAim=false;
     this._requestLock();
-    // M3-G7:首次进入显示新手引导
+    // M3-G7: show onboarding on first entry
     if(!this.shotMode&&!this.e2eMode&&!store.get('o07_tutorial_done')){
       this.state='tutorial';
       if(document.pointerLockElement)document.exitPointerLock();
@@ -525,6 +525,7 @@ class Game{
     if(this.state!=='playing')return;
     this.state='paused';
     this.input.firing=false;this.input.ads=false;
+    this._mouseFire=false;this._mouseAds=false; // a mouse-up lost during pause must not leave fire stuck on after resuming
     this.audio.musicSet(.2);
     this.ui.showOnly('pause');
     if(document.pointerLockElement)document.exitPointerLock();
@@ -555,7 +556,7 @@ class Game{
     this.enemies.spawn('WASP',new THREE.Vector3(-10,2.6,-28),{entering:false,decor:true});
   }
 
-  /* ================= 射击 ================= */
+  /* ================= Shooting ================= */
   _raySphere(origin,dir,c,r){
     const oc=_rsO.copy(origin).sub(c);
     const b=oc.dot(dir);
@@ -570,12 +571,12 @@ class Game{
     this.stats.shots++;
     const cam=this.camera;
     const def=this.weapon.def;
-    // 行业标准:弹道取开火瞬间的权威 yaw/pitch,而非上一帧渲染相机(快速甩枪不滞后、不偏移)
+    // Industry standard: the shot uses the authoritative yaw/pitch at the moment of firing, not last frame's render camera (fast flicks neither lag nor drift)
     const pl=this.player;
     const sy=Math.sin(pl.yaw),cy=Math.cos(pl.yaw),sp=Math.sin(pl.pitch),cp=Math.cos(pl.pitch);
     const dir=this._sd.set(-sy*cp,sp,-cy*cp);
 
-    // 军刀:近战范围判定(挥砍 40 / 重刺 65)
+    // Knife: melee range check (slash 40 / stab 65)
     if(def.melee){
       const range=opts.heavy?2.4:2.2;
       const dmg=opts.heavy?65:40;
@@ -606,7 +607,7 @@ class Game{
       if(bestHero){
         bestHero.takeDamage(dmg,this.playerName);
         this.audio.knifeHit();this.ui.hitmark(false);
-        this.effects.impact(this._send.copy(cam.position).addScaledVector(dir,bestT),UP,'metal');
+        this.effects.impact(this._send.copy(cam.position).addScaledVector(dir,bestT),UP,'metal',{decal:false});
       }else if(bestEnemy){
         this.enemies.damage(bestEnemy,'body',dmg,bestEnemyHit.point);
         this.audio.knifeHit();this.ui.hitmark(false);
@@ -622,12 +623,12 @@ class Game{
     const a=Math.random()*Math.PI*2,r=Math.sqrt(Math.random())*spread;
     dir.addScaledVector(right,Math.cos(a)*r).addScaledVector(up,Math.sin(a)*r).normalize();
 
-    // 1. 静态
+    // 1. Statics
     this.ray.set(cam.position,dir);this.ray.far=400;
     const sHits=this.ray.intersectObjects(this.world.shootStatics,false);
     let bestT=sHits.length?sHits[0].distance:400;
     let bestStatic=sHits.length?sHits[0]:null;
-    // 2. 无人机(waves)
+    // 2. Drones (waves)
     let bestEnemy=null,bestEnemyHit=null;
     if(this.enemies.list.length){
       const groups=this.enemies.list.filter(e=>!e.decor).map(e=>e.group);
@@ -641,7 +642,7 @@ class Game{
         }
       }
     }
-    // 3. 角色(dm,球体近似)
+    // 3. Characters (deathmatch, sphere approximation)
     let bestHero=null,bestHeroPart=null;
     for(const h of this.heroes.list){
       if(!h.alive||h.team===this.playerTeam)continue;
@@ -664,7 +665,7 @@ class Game{
       bestHero.takeDamage(dmg,this.playerName);
       this.audio.hit(head);
       this.ui.hitmark(head);
-      this.effects.impact(end,UP,'metal');
+      this.effects.impact(end,UP,'metal',{decal:false});
     }else if(bestEnemy){
       this.stats.hits++;
       const part=bestEnemyHit.object.userData.part||'body';
@@ -675,7 +676,7 @@ class Game{
       const n=bestStatic.face?this._sr.copy(bestStatic.face.normal).transformDirection(bestStatic.object.matrixWorld):UP;
       this.effects.impact(bestStatic.point,n,bestStatic.object.userData.surface||'concrete');
     }
-    // M3-G3:穿甲弹 —— 对射线后方第二个目标造成 60% 伤害
+    // M3-G3: armor-piercing rounds — 60% damage to the second target along the ray
     if(this.upgrades&&this.upgrades.pierce>0&&(bestEnemy||bestHero)&&bestT<399){
       const org=this._pierceO.copy(cam.position).addScaledVector(dir,bestT+.15);
       this.ray.set(org,dir);this.ray.far=60;
@@ -703,7 +704,7 @@ class Game{
       if(secondHero)secondHero.takeDamage(pd,this.playerName);
     }
 
-    // 爆炸弹 AoE
+    // Explosive-round AoE
     if(def.explosive){
       this.effects.explosion(end,1.15);
       this.audio.explosion(cam.position.distanceTo(end));
@@ -741,16 +742,16 @@ class Game{
     const pts=Math.round(e.T.score*(crit?1.5:1)*comboMul);
     this.addScore(pts,e.pos.clone().add(new THREE.Vector3(0,.4,0)),crit);
     this.audio.kill();
-    // M3-G2:15% 概率掉落补给
+    // M3-G2: 15% chance to drop a supply pickup
     if(!e.decor&&Math.random()<.15){
       const type=['ammo','med','boost'][Math.floor(Math.random()*3)];
       this.pickups.spawn(e.pos,type);
     }
-    // M3-G3:战场恢复
+    // M3-G3: field medic
     if(this.upgrades&&this.upgrades.regen)this.player.heal(5*this.upgrades.regen);
   }
 
-  /* M3-G3:每 3 波三选一强化 */
+  /* M3-G3: pick-one-of-three upgrade every 3 waves */
   openUpgrade(){
     if(this.state!=='playing')return;
     this.state='upgrade';
@@ -773,17 +774,17 @@ class Game{
     return c?this._applyUpgrade(c.id):false;
   }
 
-  /* M3-G3:暴击倍率(基础 2x + 升级) */
+  /* M3-G3: crit multiplier (base 2x + upgrades) */
   playerCritMul(){return 2+.25*(this.upgrades&&this.upgrades.crit||0);}
 
-  /* M3-G2/G3:玩家伤害倍率(强化道具 + 波次升级) */
+  /* M3-G2/G3: player damage multiplier (boost pickup + wave upgrades) */
   playerDamageMul(){
     const boost=this.damageBoostT>0?(this.damageBoostMul||1):1;
     const up=this.upgrades?(1+.15*(this.upgrades.dmg||0)):1;
     return boost*up;
   }
 
-  /* ================= 乱斗判定 ================= */
+  /* ================= Deathmatch hits ================= */
   onHeroKill(killerName,victimHero){
     if(!this.dm||(this.mode!=='dm'&&this.mode!=='koth'))return;
     const k=this.dm.scores.get(killerName);
@@ -806,7 +807,7 @@ class Game{
     this._checkDmWin();
   }
   botDamageFx(hero,pos){
-    this.effects.impact(pos,UP,'metal');
+    this.effects.impact(pos,UP,'metal',{decal:false});
   }
   damagePlayerFromBot(dmg,fromName,fromPos){
     if(this.player.god||this.invulnT>0||!this.player.alive)return;
@@ -832,7 +833,7 @@ class Game{
       });
     }
   }
-  /* U2:世界坐标 → 屏幕方向(0 正前,正值顺时针),0.8s 淡出 */
+  /* U2: world position → screen direction (0 straight ahead, positive clockwise), fades out over 0.8 s */
   _showDamageDirection(fromPos){
     if(!fromPos||!this.player)return;
     const dx=fromPos.x-this.player.pos.x;
@@ -853,8 +854,8 @@ class Game{
     this.ui.scoreboard(rows,this._factionLabels());
   }
   _factionLabels(){
-    const a=this.playerFaction==='ct'?'CT':'T';
-    return {A:a,B:a==='CT'?'T':'CT'};
+    const ct=t('faction_ct'),tt=t('faction_t');
+    return this.playerFaction==='ct'?{A:ct,B:tt}:{A:tt,B:ct};
   }
   _checkDmWin(){
     let a=0,b=0;
@@ -886,7 +887,7 @@ class Game{
     this._awardProgress();
   }
 
-  /* M4-P5:结算发放经验/成长 */
+  /* M4-P5: award XP / progression at the end of a match */
   _awardProgress(){
     const op=this.playerOperator||byId(DEFAULT_OP);
     const r=this.save.award({
@@ -899,7 +900,7 @@ class Game{
     return r;
   }
 
-  /* M4-P4:通用模式结算(KOTH 超时/占满) */
+  /* M4-P4: generic mode result (KOTH timeout / capture complete) */
   _endMode(win){
     if(this.state==='over')return;
     this.state='over';
@@ -924,17 +925,17 @@ class Game{
       this.leaderboard.submit(this.playerName,this.score);
   }
 
-  /* ================= 主循环 ================= */
+  /* ================= Main loop ================= */
   tick(){
     const dtRaw=Math.min(.05,this.clock.getDelta());
     let dt=dtRaw;
-    // 卡顿监控:慢帧(>25ms)计数与最大帧耗时
+    // Hitch monitor: slow frame (>25ms) count and longest frame time
     this.perf.frames++;
     if(dtRaw>.025)this.perf.slow++;
     if(dtRaw>this.perf.maxDt)this.perf.maxDt=dtRaw;
     if(this.perfMode&&this.perf.frames%180===0)
       console.log(`[PERF] frames=${this.perf.frames} slow=${this.perf.slow} max=${(this.perf.maxDt*1000).toFixed(1)}ms calls=${this.renderer.info.render.calls} tris=${this.renderer.info.render.triangles}`);
-    // M4-P6:动态分辨率(每 60 帧)
+    // M4-P6: dynamic resolution (every 60 frames)
     if(this.perf.frames-this._perfAt>=60){
       const ratio=this.perf.slow/Math.max(1,this.perf.frames-this._perfAt);
       let next=this.dynScale;
@@ -960,11 +961,11 @@ class Game{
     const active=this.state==='playing'||this.state==='dying';
     this.time+=dt;
     this.weapon.group.visible=active||this.state==='paused';
-    if(this.state!=='playing')this.ui.setScope(false); // 非战斗状态强制收镜
+    if(this.state!=='playing')this.ui.setScope(false); // force the scope off outside combat
 
     if(active){
       this.stats.time+=dt;
-      // dm 重生
+      // Deathmatch respawn
       if((this.mode==='dm'||this.mode==='koth')&&this.dmRespawnT>0){
         this.dmRespawnT-=dtRaw;
         if(this.dmRespawnT<=0){
@@ -1016,10 +1017,10 @@ class Game{
 
       if(this.comboT>0){this.comboT-=dt;if(this.comboT<=0)this.comboKills=0;}
 
-      // 后坐 + 震屏
+      // Recoil + screen shake
       let kick=this.weapon.camKick;
-      // 抬头接近天顶时后坐不再继续上抬(否则越过 90° 进入翻转区,压枪手感失效);
-      // 贴顶期间后坐存量快速泄放,把"下压死区"减半
+      // Near the zenith recoil stops lifting the view (otherwise it crosses 90° into the flip zone and spray control breaks);
+      // while pinned at the top, stored recoil drains quickly, halving the "pull-down dead zone"
       const headroom=1.553-this.player.pitch;
       if(kick>headroom){
         kick=Math.max(0,headroom);
@@ -1029,11 +1030,11 @@ class Game{
         this.weapon.camKick*=Math.max(0,1-16*dt);
       }
       this.camera.rotation.x+=kick;
-      this.camera.rotation.y+=this.weapon.camKickYaw; // 弹道模式水平漂移
+      this.camera.rotation.y+=this.weapon.camKickYaw; // recoil pattern horizontal drift
       const shake=this.settings.get('reduceMotion')?0:this.shake;
       this.camera.rotation.y+=(Math.random()-.5)*shake*.06;
       this.camera.rotation.z=(Math.random()-.5)*shake*.05;
-      // 相机最终俯仰钳制:后坐/甩枪任何情况都不得越过天顶
+      // Final camera pitch clamp: recoil / flicks must never cross the zenith
       this.camera.rotation.x=Math.max(-1.553,Math.min(1.553,this.camera.rotation.x));
       this.shake=Math.max(0,this.shake-dt*.5);
 
@@ -1059,9 +1060,9 @@ class Game{
           if(document.pointerLockElement)document.exitPointerLock();
         }
       }
-      // 相机/开镜状态(可被 e2e 确定性调用)
+      // Camera / scope state (can be called deterministically by e2e)
       this._applyCameraState();
-      // M4-P3:阵亡后观战击杀者 2.5s(射线避免穿墙)
+      // M4-P3: after death, spectate the killer for 2.5 s (raycast keeps the camera out of walls)
       if(this.spectate.target){
         const s=this.spectate,t=s.target;
         if(t&&t.alive&&this.mode==='dm'){
@@ -1096,7 +1097,7 @@ class Game{
     this.pickups.update(dt,this.player);
     if(this.damageBoostT>0)this.damageBoostT=Math.max(0,this.damageBoostT-dt);
     if(this.empT>0)this.empT=Math.max(0,this.empT-dt);
-    // M3-G5:雷达(设置开关 + EMP 干扰)
+    // M3-G5: radar (setting toggle + EMP jamming)
     const rc=document.getElementById('radar');
     if(rc){
       const on=this.settings.get('radar')&&this.state==='playing';
@@ -1104,28 +1105,28 @@ class Game{
       if(on)this.radar.update(this.player,this.enemies.list,this.heroes.list,this.pickups,this.empT>0);
     }
     this.ui.update(dt,this.player.health,this.player.maxHealth);
-    // M2-A6:低血量 BGM 紧张度(状态翻转时才写,避免每帧调度)
+    // M2-A6: low-health BGM tension (written only when the state flips, not scheduled every frame)
     if(this.state==='playing'){
       const low=this.player.health/this.player.maxHealth<.35;
       if(low!==this._musicLow){this._musicLow=low;this.audio.musicSet(low?.9:.7);}
     }
     this.audio.setWind(this.state==='menu'?.08:.05);
 
-    // 阴影隔帧渲染(autoUpdate 已关):奇数帧重算投影,偶数帧沿用上帧深度
+    // Shadows every other frame (autoUpdate is off): odd frames recompute casters, even frames reuse last frame's depth
     this._frame=(this._frame||0)+1;
     this.renderer.shadowMap.needsUpdate=(this._frame&1)===1;
 
     this.composer.render();
   }
 
-  /* 相机/开镜状态同步(AUG/AWP/SG 553 开镜:高倍变焦 + 镜筒遮罩 + 隐藏枪体) */
+  /* Camera / scope state sync (AUG / Longbow / SG 553 scopes: high zoom + scope overlay + hidden gun body) */
   _applyCameraState(){
     const scoping=this.weapon.def.scope&&this.weapon.adsAmt>.8&&this.player.alive;
     this.ui.setScope(scoping);
     this.weapon.group.visible=!scoping;
     this.viewCam.fov=75+(58-75)*this.weapon.adsAmt;
     this.viewCam.updateProjectionMatrix();
-    // 开镜/ADS 缩放沿用原垂直 FOV 比例(scopeFov 或 62 对 75),作用到水平视野上
+    // Scope/ADS zoom keeps the original vertical FOV ratio (scopeFov or 62 vs 75), applied to the horizontal FOV
     const zoomH=this.weapon.def.scope?(this.weapon.def.scopeFov||30)/75:62/75;
     const hFov=(this.baseHFov||FOV_H)*(1-(1-zoomH)*this.weapon.adsAmt);
     this._hfovCur=hFov;
@@ -1140,23 +1141,23 @@ class Game{
     const len=dir.length();
     if(len<.5)return true;
     this.losRay.set(a,dir.normalize());this.losRay.far=len-.3;
-    const hits=this.losRay.intersectObjects(this.world.shootStatics,false);
+    const hits=this.losRay.intersectObjects(this.world.losStatics||this.world.shootStatics,false);
     return hits.length===0;
   }
 
-  /* ================= 验证钩子 ================= */
-  /* S1.1:?roster=1 打印干员名册(名册 UI 在 M1-C4 落地) */
+  /* ================= Verification hooks ================= */
+  /* S1.1: ?roster=1 prints the operator roster (the roster UI landed in M1-C4) */
   _debugRoster(){
     const rows=OPERATORS.map(o=>({
       id:o.id,faction:o.faction,gender:o.gender,role:o.role.zh,
       hp:o.hp,speedMul:o.speedMul,reloadMul:o.reloadMul,rifle:o.rifle,
     }));
     console.table(rows);
-    console.log(`[ROSTER] ${OPERATORS.length} operators · CT ${byFaction('ct').length} / T ${byFaction('t').length}`);
+    console.log(`[ROSTER] ${OPERATORS.length} operators · NOVA ${byFaction('ct').length} / ROGUE ${byFaction('t').length}`);
     return rows;
   }
 
-  /* S1.3:?portraits=1 生成 8 张立绘并打印耗时/体积 */
+  /* S1.3: ?portraits=1 renders all 8 portraits and prints time / size */
   _debugPortraits(){
     const t0=performance.now();
     const rows=OPERATORS.map(o=>{
@@ -1169,7 +1170,7 @@ class Game{
     return {ms,rows};
   }
 
-  /* C1:控制台切换 1 号机器人外观(看剪影/配色) */
+  /* C1: switch bot #1's looks from the console (check silhouettes / palettes) */
   debugSetOperator(id){
     const op=byId(id);
     if(!op)return false;
@@ -1178,20 +1179,20 @@ class Game{
     return !!h;
   }
 
-  /* M3-G2:调试生成掉落物 */
+  /* M3-G2: debug-spawn a pickup */
   debugSpawnPickup(type){return this.pickups.spawn(this.player.pos,type);}
 
-  /* M3-G1:调试投掷手雷 */
+  /* M3-G1: debug-throw a grenade */
   debugThrow(type){return this.grenades.throw(type);}
 
-  /* M2-A1:调试击杀指定 bot(看死亡动画/击杀卡) */
+  /* M2-A1: debug-kill a given bot (check death animation / kill card) */
   debugKillBot(id){
     const h=this.heroes.list.find(x=>x.opId===id);
     if(h)h.takeDamage(9999,'DEBUG');
     return !!h;
   }
 
-  /* C6:内存快照(10 次 DM 进出不增长验收) */
+  /* C6: memory snapshot (acceptance: no growth across 10 deathmatch enter/exit cycles) */
   debugMemory(){
     const m=this.renderer.info.memory;
     const geos=new Set(),mats=new Set();
@@ -1218,11 +1219,11 @@ class Game{
     this.startGame();
     this.fallbackAim=true;
     this.player.god=true;
-    this.ui.killFeed('雪狼','火狐','AK-47',false);
-    this.ui.killFeed(this.playerName,'秃鹫','M4A4',true);
+    this.ui.killFeed('Snowwolf','Fox','AK-47',false);
+    this.ui.killFeed(this.playerName,'Vulture','M4A4',true);
     this.ui.setDmScore(7,5,213);
   }
-  /* M4-P3:观战截图 */
+  /* M4-P3: spectator screenshot */
   _shotSpectate(){
     this.ui.sel.mode='dm';this.startGame();this.fallbackAim=true;this.player.god=false;
     const killer=this.heroes.list.find(h=>h.team==='B');
@@ -1231,10 +1232,10 @@ class Game{
     this.damagePlayerFromBot(999,killer.name,killer.pos);
   }
 
-  /* M3-G7:新手引导截图 */
+  /* M3-G7: onboarding screenshot */
   _shotTutorial(){this.ui.showTutorial(TUTORIAL,()=>{});}
 
-  /* M2-A3:击杀卡截图 */
+  /* M2-A3: kill card screenshot */
   _shotKillcard(){
     const k=byId('frost'),v=byId('raven');
     this.ui.killCard({
@@ -1243,7 +1244,7 @@ class Game{
     });
   }
 
-  /* M2-A4:MVP 结算截图 */
+  /* M2-A4: MVP results screenshot */
   _shotMvp(){
     const op=byId('frost');
     this.ui.showOver({
@@ -1252,22 +1253,22 @@ class Game{
         kills:42,critKills:11,hits:280,shots:430,score:18960,best:21450,bestCombo:4,
         mvp:{name:isEN()?op.name.en:op.name.zh,op,kills:19,deaths:2}},
       board:`<table><tr><th>${t('sb_role')}</th><th>${t('sb_faction')}</th><th>${t('sb_kills')}</th><th>${t('sb_deaths')}</th></tr>
-        <tr class="me"><td>${isEN()?op.name.en:op.name.zh}</td><td>CT</td><td>19</td><td>2</td></tr></table>`,
+        <tr class="me"><td>${isEN()?op.name.en:op.name.zh}</td><td>${t('faction_ct')}</td><td>19</td><td>2</td></tr></table>`,
     });
   }
 
   _shotOver(){
     this.ui.showOver({
-      title:'哨站失守',win:false,kicker:'信号中断 · SIGNAL LOST',
+      title:'OUTPOST LOST',win:false,kicker:'SIGNAL LOST',
       stats:{time:354,wave:9,kills:63,critKills:21,hits:412,shots:648,score:21450,best:22800,bestCombo:2},
     });
   }
 
-  /* ================= 集成测试(?e2e=1):浏览器端到端断言 =================
-     确定性驱动(手动步进 update),不依赖 rAF —— 后台标签页/无头环境可复现。
-     结果:window.__e2e = {pass, fail, results[]} */
+  /* ================= Integration tests (?e2e=1): in-browser end-to-end assertions =================
+     Driven deterministically (update stepped manually), independent of rAF — reproducible in background tabs / headless.
+     Result: window.__e2e = {pass, fail, results[]} */
   async e2e(){
-    store.set('o07_tutorial_done','1'); // e2e 环境跳过首次引导
+    store.set('o07_tutorial_done','1'); // skip first-run onboarding under e2e
     const results=[];let pass=0;
     const run=async(name,fn)=>{
       try{await fn();results.push({name,ok:true});pass++;}
@@ -1278,105 +1279,105 @@ class Game{
     const stepP=n=>{for(let i=0;i<n;i++)this.player.update(.016,this.input,this.keys,this.time,this.audio);};
 
     await run('boot-no-errors',()=>{
-      assert(!this.ui.errors.some(e=>e.startsWith('ERR')),'启动期存在错误: '+this.ui.errors.join(';'));
+      assert(!this.ui.errors.some(e=>e.startsWith('ERR')),'errors during startup: '+this.ui.errors.join(';'));
     });
     await run('loadout-ct-aug',()=>{
       this.ui.sel.operator='frost';this.ui.sel.hero='ct';this.ui.sel.primary='aug';this.ui.sel.mode='waves';
       this.startGame();this.fallbackAim=true;this.player.god=true;
-      assert(this.weapon.def.id==='aug','应为 AUG,实际 '+this.weapon.def.id);
+      assert(this.weapon.def.id==='aug','should be AUG, got '+this.weapon.def.id);
     });
     await run('scope-zoom-2-5x',()=>{
       this.input.ads=true;stepW(60);this._applyCameraState();
-      assert(this.camera.fov<32,'FOV 应≈30,实际 '+this.camera.fov.toFixed(1));
-      assert(!this.weapon.group.visible,'开镜应隐藏枪体');
-      assert(document.getElementById('scope-overlay').classList.contains('show'),'镜筒遮罩应显示');
+      assert(this.camera.fov<32,'FOV should be ≈30, got '+this.camera.fov.toFixed(1));
+      assert(!this.weapon.group.visible,'scoping in should hide the gun body');
+      assert(document.getElementById('scope-overlay').classList.contains('show'),'scope overlay should be visible');
       this.input.ads=false;stepW(60);this._applyCameraState();
-      assert((this._hfovCur||0)>90,'收镜应恢复腰射横向视野106,实际 '+((this._hfovCur||0).toFixed(1)));
+      assert((this._hfovCur||0)>90,'scoping out should restore the 106 hip-fire horizontal FOV, got '+((this._hfovCur||0).toFixed(1)));
     });
     await run('recoil-pattern',()=>{
       this.weapon.setLoadout('ak47');
       this.weapon.recoilIdx=0;this.weapon.camKick=0;this.weapon.camKickYaw=0;
       this.input.firing=true;
       for(let i=0;i<30;i++)this.weapon.update(.016,this.input,this.player,this.camera,this.time,()=>{});
-      assert(this.weapon.recoilIdx>=4,'连续射击应累计弹道序号,实际 '+this.weapon.recoilIdx);
-      assert(this.weapon.camKick>0,'后坐应抬升视角');
+      assert(this.weapon.recoilIdx>=4,'sustained fire should advance the recoil index, got '+this.weapon.recoilIdx);
+      assert(this.weapon.camKick>0,'recoil should lift the view');
       this.input.firing=false;
       for(let i=0;i<40;i++)this.weapon.update(.016,this.input,this.player,this.camera,this.time,()=>{});
-      assert(this.weapon.recoilIdx===0,'停火后弹道模式应复位');
+      assert(this.weapon.recoilIdx===0,'recoil pattern should reset once firing stops');
     });
     await run('flick-same-frame-hit',()=>{
-      // 快速甩枪回归:甩到位后同帧开火,弹道取当前 yaw/pitch(不依赖上一帧相机矩阵)
+      // Fast-flick regression: fire on the same frame the flick lands; the shot uses the current yaw/pitch (not last frame's camera matrix)
       this.input.firing=false;
       this.enemies.clearAll();
       const p=this.player;
       p.pos.set(0,0,7);p.velY=0;p.grounded=true;p.vel.set(0,0,0);
       const tgt=new THREE.Vector3(6,1.6,-8);
       const e=this.enemies.spawn('WASP',tgt,{entering:false});
-      e.group.updateMatrixWorld(true); // 同同步块内 raycast 需先刷新矩阵(否则射线漏判)
-      p.update(.016,this.input,this.keys,this.time,this.audio); // 先同步相机/眼睛位置
+      e.group.updateMatrixWorld(true); // refresh matrices before raycasting in the same synchronous block (otherwise the ray misses)
+      p.update(.016,this.input,this.keys,this.time,this.audio); // sync camera / eye position first
       const eye=p.pos.y+1.62;
       const dx=tgt.x-p.pos.x,dz=tgt.z-p.pos.z,dy=tgt.y-eye;
       const wantYaw=Math.atan2(-dx,-dz),wantPitch=Math.atan2(dy,Math.hypot(dx,dz));
       p.yaw=wantYaw+1.4;p.pitch=0;
-      p.update(.016,this.input,this.keys,this.time,this.audio); // 上一帧:还看着别处
-      p.yaw=wantYaw;p.pitch=wantPitch;                          // 同帧甩到位,不刷帧直接开火
+      p.update(.016,this.input,this.keys,this.time,this.audio); // previous frame: still looking elsewhere
+      p.yaw=wantYaw;p.pitch=wantPitch;                          // flick lands this frame, fire without a new frame
       this.weapon.st.ammo=30;
       const hits0=this.stats.hits,hp0=e.hp;
       this.fire(0);
-      assert(this.stats.hits>hits0&&e.hp<hp0,'同帧 flick 开火应命中当前朝向目标(hp '+hp0+'→'+e.hp+')');
+      assert(this.stats.hits>hits0&&e.hp<hp0,'a same-frame flick shot should hit the target now in view (hp '+hp0+'→'+e.hp+')');
       this.enemies.kill(e,false,true);
     });
     await run('jump-gravity',()=>{
       this.player.pos.set(0,0,7);this.player.velY=0;this.player.grounded=true;this.player.pitch=0;
       this.keys.add('Space');
       this.player.update(.016,this.input,this.keys,this.time,this.audio);
-      assert(!this.player.grounded&&this.player.velY>0,'起跳应有向上初速度');
+      assert(!this.player.grounded&&this.player.velY>0,'a jump should give upward velocity');
       this.keys.delete('Space');
       for(let i=0;i<90;i++)this.player.update(.016,this.input,this.keys,this.time,this.audio);
-      assert(this.player.grounded&&Math.abs(this.player.pos.y)<.01,'应受重力落回地面 y=0,实际 y='+this.player.pos.y.toFixed(2));
+      assert(this.player.grounded&&Math.abs(this.player.pos.y)<.01,'gravity should bring the player back to y=0, got y='+this.player.pos.y.toFixed(2));
     });
     await run('crate-landing',()=>{
       const c=this.world.colliders.find(c=>c.top>1.05&&c.top<1.25);
-      assert(c,'场景应有 ~1.1m 可攀爬箱体');
+      assert(c,'the scene should have a ~1.1 m climbable crate');
       this.player.pos.set(c.minX+(c.maxX-c.minX)/2,c.top+1.2,c.minZ+(c.maxZ-c.minZ)/2);
       this.player.velY=-2;this.player.grounded=false;
       for(let i=0;i<60;i++)this.player.update(.016,this.input,this.keys,this.time,this.audio);
-      assert(Math.abs(this.player.pos.y-c.top)<.02,'应落在箱顶 '+c.top+' 实际 '+this.player.pos.y.toFixed(2));
+      assert(Math.abs(this.player.pos.y-c.top)<.02,'should land on the crate top '+c.top+', got '+this.player.pos.y.toFixed(2));
     });
     await run('crouch-steady',()=>{
       this.keys.add('ControlLeft');
       for(let i=0;i<30;i++)this.player.update(.016,this.input,this.keys,this.time,this.audio);
-      assert(this.player.crouching,'应进入蹲伏');
-      assert(this.player.eyeHCur<1.35,'蹲伏眼高应降低,实际 '+this.player.eyeHCur.toFixed(2));
+      assert(this.player.crouching,'should enter crouch');
+      assert(this.player.eyeHCur<1.35,'crouching should lower eye height, got '+this.player.eyeHCur.toFixed(2));
       const sC=this.weapon.spreadRad(this.player);
       this.keys.delete('ControlLeft');
       for(let i=0;i<30;i++)this.player.update(.016,this.input,this.keys,this.time,this.audio);
-      assert(this.weapon.spreadRad(this.player)>sC,'站姿散布应大于蹲姿');
+      assert(this.weapon.spreadRad(this.player)>sC,'standing spread should exceed crouching spread');
     });
     await run('primary-cycle-4',()=>{
       this.weapon.setLoadout(['m4a4','aug','awp','mp5'],0);
       const seq=[];
       for(let i=0;i<4;i++){
-        this.weapon.switchTo(0); // 反复按 1:同槽循环
+        this.weapon.switchTo(0); // press 1 repeatedly: cycle within the slot
         stepW(25);
         seq.push(this.weapon.def.id);
       }
-      assert(JSON.stringify(seq)===JSON.stringify(['aug','awp','mp5','m4a4']),'同槽循环顺序: '+seq.join(','));
+      assert(JSON.stringify(seq)===JSON.stringify(['aug','awp','mp5','m4a4']),'in-slot cycle order: '+seq.join(','));
       this.weapon.switchTo(this.weapon.primaryCount+1);stepW(25);
-      assert(this.weapon.def.id==='knife','应切到军刀');
+      assert(this.weapon.def.id==='knife','should switch to the knife');
       this.weapon.switchTo(0);stepW(25);
-      assert(this.weapon.def.id==='m4a4','按 1 应回到最近主武器 m4a4');
+      assert(this.weapon.def.id==='m4a4','pressing 1 should return to the last primary, m4a4');
     });
     await run('weapon-speed-weight',()=>{
       this.weapon.setLoadout(['m4a4','aug','awp','mp5'],0);
-      this.weapon.switchTo(2);stepW(40); // AWP
+      this.weapon.switchTo(2);stepW(40); // Longbow
       const awpSpd=this.player.speed;
       this.weapon.switchTo(0);stepW(40); // M4A4
       const m4Spd=this.player.speed;
-      this.weapon.switchTo(this.weapon.primaryCount+1);stepW(40); // 军刀
+      this.weapon.switchTo(this.weapon.primaryCount+1);stepW(40); // knife
       const knifeSpd=this.player.speed;
-      assert(awpSpd<m4Spd,'AWP 负重应比 M4A4 慢: '+awpSpd.toFixed(2)+' vs '+m4Spd.toFixed(2));
-      assert(knifeSpd>m4Spd,'持军刀应最快: '+knifeSpd.toFixed(2)+' vs '+m4Spd.toFixed(2));
+      assert(awpSpd<m4Spd,'Longbow should be slower than M4A4: '+awpSpd.toFixed(2)+' vs '+m4Spd.toFixed(2));
+      assert(knifeSpd>m4Spd,'holding the knife should be fastest: '+knifeSpd.toFixed(2)+' vs '+m4Spd.toFixed(2));
     });
     await run('crit-damage-x2-5',()=>{
       this.enemies.clearAll();this.scene.updateMatrixWorld(true);
@@ -1384,19 +1385,19 @@ class Game{
       e.pos.y=1.62;e.group.position.copy(e.pos);this.scene.updateMatrixWorld(true);
       const hp0=e.hp;
       const res=this.enemies.damage(e,'core',10,e.pos.clone());
-      assert(res.crit&&Math.abs(e.hp-(hp0-25))<.01,'红核应 ×2.5: hp '+hp0+' → '+e.hp.toFixed(1));
+      assert(res.crit&&Math.abs(e.hp-(hp0-25))<.01,'red core should be ×2.5: hp '+hp0+' → '+e.hp.toFixed(1));
       this.enemies.clearAll();
     });
     await run('xss-escape',()=>{
       this.ui.killFeed('<img src=x onerror=window.__xssE2E=1>','<b>victim</b>','AK-47',false);
-      assert(!window.__xssE2E,'XSS 不应执行');
-      assert(!document.querySelector('#killfeed img'),'昵称应被转义');
+      assert(!window.__xssE2E,'XSS must not execute');
+      assert(!document.querySelector('#killfeed img'),'callsign should be escaped');
     });
     await run('pitch-clamp-89',()=>{
       this.player.pitch=Math.PI;this.player.update(.016,this.input,this.keys,this.time,this.audio);
-      assert(this.camera.rotation.x<Math.PI/2+.01,'俯仰应钳制在 ±89°,不得越过天顶翻转,实际 '+this.camera.rotation.x.toFixed(2));
+      assert(this.camera.rotation.x<Math.PI/2+.01,'pitch should clamp at ±89° and never flip past the zenith, got '+this.camera.rotation.x.toFixed(2));
       this.player.pitch=-Math.PI;this.player.update(.016,this.input,this.keys,this.time,this.audio);
-      assert(this.camera.rotation.x>-.01-Math.PI/2,'俯仰下限同样钳制,实际 '+this.camera.rotation.x.toFixed(2));
+      assert(this.camera.rotation.x>-.01-Math.PI/2,'the lower pitch limit is clamped too, got '+this.camera.rotation.x.toFixed(2));
       this.player.pitch=0;this.player.update(.016,this.input,this.keys,this.time,this.audio);
     });
 
@@ -1404,14 +1405,14 @@ class Game{
       this.ui.sel.operator='frost';this.ui.sel.hero='ct';this.ui.sel.primary='m4a4';this.ui.sel.mode='dm';
       this.startGame();
       const ids=this.heroes.list.map(h=>h.opId);
-      assert(ids.length===5,'DM 应有 5 名 bot,实际 '+ids.length);
-      assert(new Set(ids).size===5,'同局不应出现重复干员: '+ids.join(','));
-      assert(!ids.includes('frost'),'机器人不应与玩家干员重复');
-      assert(this.heroes.list.filter(h=>h.team==='A').length===2,'队友应为 2 人');
-      assert(this.heroes.list.filter(h=>h.team==='B').length===3,'敌人应为 3 人');
+      assert(ids.length===5,'deathmatch should have 5 bots, got '+ids.length);
+      assert(new Set(ids).size===5,'no operator should repeat within a match: '+ids.join(','));
+      assert(!ids.includes('frost'),'bots must not duplicate the player operator');
+      assert(this.heroes.list.filter(h=>h.team==='A').length===2,'there should be 2 teammates');
+      assert(this.heroes.list.filter(h=>h.team==='B').length===3,'there should be 3 enemies');
       for(const h of this.heroes.list){
-        assert(h.materials.length===12,'每角色材质应≤12,实际 '+h.materials.length);
-        assert(h.parts.head&&h.parts.gunTip,'角色部件应完整');
+        assert(h.materials.length===12,'each character should have ≤12 materials, got '+h.materials.length);
+        assert(h.parts.head&&h.parts.gunTip,'character parts should be complete');
       }
     });
     await run('fp-arms-faction',()=>{
@@ -1419,58 +1420,58 @@ class Game{
       const ct=this.weapon._armSleeves[0].color.getHex();
       this.weapon.setFaction(byId('raven'));
       const t=this.weapon._armSleeves[0].color.getHex();
-      assert(ct!==t,'CT/T 第一人称袖套颜色应不同: '+ct.toString(16)+' vs '+t.toString(16));
+      assert(ct!==t,'Nova/Rogue first-person sleeve colours should differ: '+ct.toString(16)+' vs '+t.toString(16));
     });
     await run('pickup-magnet',()=>{
       this.ui.sel.mode='dm';this.startGame();
       this.player.god=true;this.player.health=50;
       const p=this.pickups.spawn(this.player.pos.clone(),'med');
       this.pickups.update(.016,this.player);
-      assert(this.player.health>50,'医疗掉落应回血');
-      assert(!this.pickups.list.includes(p),'拾取后应移除掉落物');
+      assert(this.player.health>50,'medkit drop should heal');
+      assert(!this.pickups.list.includes(p),'a picked-up drop should be removed');
     });
     await run('pickup-ammo',()=>{
       this.ui.sel.mode='dm';this.startGame();
       const before=this.weapon.state[this.weapon.cur].reserve;
       this.pickups.spawn(this.player.pos.clone(),'ammo');
       this.pickups.update(.016,this.player);
-      assert(this.weapon.state[this.weapon.cur].reserve>before,'弹药掉落应增加备弹');
+      assert(this.weapon.state[this.weapon.cur].reserve>before,'an ammo drop should add reserve ammo');
       this.pickups.spawn(this.player.pos.clone(),'boost');
       this.pickups.update(.016,this.player);
-      assert(this.damageBoostT>9&&this.playerDamageMul()>=1.4,'强化掉落应提升伤害倍率');
+      assert(this.damageBoostT>9&&this.playerDamageMul()>=1.4,'a boost drop should raise the damage multiplier');
     });
     await run('save-migrate',()=>{
       localStorage.removeItem('o07_save_v2');
       localStorage.setItem('o07_best','12345');
       localStorage.setItem('o07_best_wave','7');
       const s=new SaveSystem();
-      assert(s.data.stats.bestScore===12345,'旧 best 应迁移');
-      assert(s.data.stats.bestWave===7,'旧 best_wave 应迁移');
+      assert(s.data.stats.bestScore===12345,'legacy best should migrate');
+      assert(s.data.stats.bestWave===7,'legacy best_wave should migrate');
       localStorage.removeItem('o07_save_v2');
       const s2=new SaveSystem();
-      assert(s2.data.stats.bestScore===12345,'迁移结果应重新读回');
+      assert(s2.data.stats.bestScore===12345,'migrated data should read back');
     });
     await run('xp-award',()=>{
       const s=new SaveSystem();
       const before=s.levelOf('frost');
       const r=s.award({kills:20,wave:10,score:5000,time:200,opId:'frost'});
-      assert(r.xp>0&&r.level>=before.level,'应发放经验');
-      assert(s.data.daily.date&&new SaveSystem().dailyGoals().length===3,'每日挑战应生成 3 项');
+      assert(r.xp>0&&r.level>=before.level,'XP should be awarded');
+      assert(s.data.daily.date&&new SaveSystem().dailyGoals().length===3,'3 daily challenges should be generated');
       const s3=new SaveSystem();
-      assert(s3.data.operators.frost.xp===s.data.operators.frost.xp,'经验应持久化');
+      assert(s3.data.operators.frost.xp===s.data.operators.frost.xp,'XP should persist');
     });
     await run('koth-score',()=>{
       this.ui.sel.mode='koth';this.startGame();
-      assert(this.koth.active&&this.koth.score.A===0,'KOTH 应初始化');
+      assert(this.koth.active&&this.koth.score.A===0,'KOTH should initialise');
       this.player.pos.set(0,0,0);
       this.player.alive=true;this.player.god=true;
       for(const h of this.heroes.list)h.alive=false;
       for(let i=0;i<120;i++)this.koth.update(.016);
-      assert(this.koth.capture>0,'玩家站在点内应积累占点进度');
+      assert(this.koth.capture>0,'standing on the point should build capture progress');
       this.koth.score.A=199;this.koth.score.B=0;
       this.koth.capture=1;this.koth.owner='A';
       this.koth.update(1);
-      assert(this.state==='over','达到 200 分应结束对局');
+      assert(this.state==='over','reaching 200 points should end the match');
       this.startGame();
     });
     await run('accessibility',()=>{
@@ -1478,9 +1479,9 @@ class Game{
       this.settings.set('colorblind',true);
       this.settings.set('uiScale',110);
       this.ui.applyAccessibility();
-      assert(document.documentElement.classList.contains('cb'),'色盲模式应生效');
-      assert(document.documentElement.classList.contains('reduce-motion'),'减动模式应生效');
-      assert(document.documentElement.style.getPropertyValue('--ui-zoom')==='1.10','UI 缩放应生效');
+      assert(document.documentElement.classList.contains('cb'),'colour-blind mode should apply');
+      assert(document.documentElement.classList.contains('reduce-motion'),'reduce-motion mode should apply');
+      assert(document.documentElement.style.getPropertyValue('--ui-zoom')==='1.10','UI scale should apply');
       this.settings.reset();this.ui.applyAccessibility();
     });
     await run('spectate',()=>{
@@ -1489,43 +1490,43 @@ class Game{
       this.lastKiller=killer;
       this.player.god=false;this.player.health=1;this.player.alive=true;
       this.damagePlayerFromBot(999,killer.name,killer.pos);
-      assert(!this.player.alive,'玩家应阵亡');
-      assert(this.spectate.target===killer,'阵亡后应观战击杀者');
+      assert(!this.player.alive,'player should be dead');
+      assert(this.spectate.target===killer,'after death the killer should be spectated');
       this.player.alive=true;this.player.health=this.player.maxHealth;this.player.god=true;
       this.spectate.target=null;
     });
     await run('gamepad-map',()=>{
       const pad=this.inputMgr.adapters.find(a=>a instanceof GamepadAdapter);
-      assert(pad&&typeof pad.poll==='function','应挂载手柄适配器');
-      assert(PAD_MAP.buttons.RT==='fire'&&PAD_MAP.buttons.LT==='ads','手柄映射应正确');
-      assert(PAD_MAP.axes.deadzone===.18,'死区应为 0.18');
+      assert(pad&&typeof pad.poll==='function','gamepad adapter should be mounted');
+      assert(PAD_MAP.buttons.RT==='fire'&&PAD_MAP.buttons.LT==='ads','gamepad mapping should be correct');
+      assert(PAD_MAP.axes.deadzone===.18,'dead zone should be 0.18');
       pad.gamePadButtons=[{pressed:false,value:0},{pressed:false,value:0}];
       pad.prev={};
       pad._edge(0,()=>{},()=>{});
-      assert(pad.prev[0]===false,'未按下的按键沿应为 false');
+      assert(pad.prev[0]===false,'edge state of an unpressed button should be false');
     });
     await run('tutorial',()=>{
       this.ui.showTutorial(TUTORIAL,()=>{});
       const root=document.getElementById('tutorial');
-      assert(!root.classList.contains('hidden'),'引导应显示');
+      assert(!root.classList.contains('hidden'),'onboarding should show');
       const first=document.getElementById('tut-title').textContent;
       this.ui.nextTutorial();
-      assert(document.getElementById('tut-title').textContent!==first,'下一步应切换步骤');
+      assert(document.getElementById('tut-title').textContent!==first,'next should advance the step');
       this.ui.closeTutorial(false);
-      assert(root.classList.contains('hidden'),'跳过后应隐藏');
+      assert(root.classList.contains('hidden'),'skip should hide it');
     });
     await run('bot-cover',()=>{
       this.settings.set('botDifficulty','hard');
       this.ui.sel.mode='dm';this.startGame();
       const h=this.heroes.list[0];
-      assert(h.difficulty==='hard','Bot 难度应读取设置');
-      assert(h.coverTarget===null,'初始不应有掩体目标');
+      assert(h.difficulty==='hard','bot difficulty should come from settings');
+      assert(h.coverTarget===null,'there should be no cover target initially');
       const saved=this.world.colliders.slice();
       this.world.colliders.push({minX:-2,maxX:2,minZ:-2,maxZ:2,top:2});
       h.pos.set(0,0,8);
       const c=h._findCover(new THREE.Vector3(0,1.4,0),()=>false);
-      assert(c&&Number.isFinite(c.x)&&Number.isFinite(c.z),'应找到合法掩体点');
-      assert(Math.hypot(c.x,c.z)>2,'掩体点应在掩体外侧');
+      assert(c&&Number.isFinite(c.x)&&Number.isFinite(c.z),'a valid cover spot should be found');
+      assert(Math.hypot(c.x,c.z)>2,'the cover spot should be outside the cover');
       this.world.colliders.length=0;
       for(const v of saved)this.world.colliders.push(v);
       this.settings.set('botDifficulty','normal');
@@ -1538,192 +1539,192 @@ class Game{
       this.radar.update(this.player,this.enemies.list,this.heroes.list,this.pickups,false);
       const d=cv.getContext('2d').getImageData(0,0,cv.width,cv.height).data;
       let n=0;for(let i=3;i<d.length;i+=4)if(d[i]>16)n++;
-      assert(n>100,'雷达应绘制非空内容');
+      assert(n>100,'radar should draw something');
       this.player.yaw+=Math.PI/2;
       this.radar.frame=0;
       this.radar.update(this.player,this.enemies.list,this.heroes.list,this.pickups,false);
       const d2=cv.getContext('2d').getImageData(0,0,cv.width,cv.height).data;
       let n2=0;for(let i=3;i<d2.length;i+=4)if(d2[i]>16)n2++;
-      assert(n2>100,'旋转后雷达仍应正常绘制');
+      assert(n2>100,'radar should still draw after rotating');
       this.radar.frame=0;
       this.radar.update(this.player,this.enemies.list,this.heroes.list,this.pickups,true);
-      assert(!document.getElementById('radar').classList.contains('hidden'),'雷达节点应存在');
+      assert(!document.getElementById('radar').classList.contains('hidden'),'radar element should exist');
     });
     await run('wave-20',()=>{
       this.ui.sel.mode='waves';this.startGame();
       for(let i=0;i<20;i++){
         this.waves.timer=0;
-        this.waves.update(.016);          // 开波
+        this.waves.update(.016);          // start the wave
         this.waves.queue.length=0;
         this.enemies.clearAll();
-        this.waves.update(.016);          // 清波
+        this.waves.update(.016);          // clear the wave
         if(this.state==='upgrade')this._pickUpgrade(0);
       }
-      assert(this.waves.n>=20,`应推进 20 波,实际 ${this.waves.n}`);
-      assert(this.state==='playing','20 波后应仍处于游玩状态(无软锁)');
+      assert(this.waves.n>=20,`should advance 20 waves, got ${this.waves.n}`);
+      assert(this.state==='playing','still playing after 20 waves (no soft lock)');
     });
     await run('boss-spawn',()=>{
       this.ui.sel.mode='waves';this.startGame();
-      assert(this.waves.composition(5).includes('BOSS'),'第 5 波应含 BOSS');
-      assert(!this.waves.composition(4).includes('BOSS'),'第 4 波不应含 BOSS');
+      assert(this.waves.composition(5).includes('BOSS'),'wave 5 should include a BOSS');
+      assert(!this.waves.composition(4).includes('BOSS'),'wave 4 should not include a BOSS');
       this.waves.n=4;this.waves.queue.length=0;this.waves.state='intermission';this.waves.timer=0;
       this.waves.update(.016);
-      assert(this.waves.n===5,'应进入第 5 波');
-      assert(!!this.waves.modifier,'Boss 波应带词缀');
-      assert(['fog','emp','rush'].includes(this.waves.modifier),'词缀应合法');
+      assert(this.waves.n===5,'should enter wave 5');
+      assert(!!this.waves.modifier,'boss waves should carry a modifier');
+      assert(['fog','emp','rush'].includes(this.waves.modifier),'modifier should be valid');
       const boss=this.enemies.spawn('WARDEN',new THREE.Vector3(0,2,-8),{hpScale:4});
       boss.boss=true;boss.phase=1;
       this.ui.setBoss(.5,t('boss_name'));
       const bar=document.getElementById('bossbar');
-      assert(!bar.classList.contains('hidden'),'Boss 血条应显示');
-      assert(document.getElementById('boss-fill').style.width==='50%','Boss 血条比例应正确');
+      assert(!bar.classList.contains('hidden'),'boss health bar should show');
+      assert(document.getElementById('boss-fill').style.width==='50%','boss health bar ratio should be correct');
       this.ui.hideBoss();
-      assert(bar.classList.contains('hidden'),'Boss 血条应可隐藏');
+      assert(bar.classList.contains('hidden'),'boss health bar should be hideable');
     });
     await run('upgrade-apply',()=>{
       this.ui.sel.mode='waves';this.startGame();
       const cards=rollUpgrades(this,3);
-      assert(cards.length===3,'应提供 3 张升级卡');
-      assert(new Set(cards.map(c=>c.id)).size===3,'升级卡不应重复');
+      assert(cards.length===3,'3 upgrade cards should be offered');
+      assert(new Set(cards.map(c=>c.id)).size===3,'upgrade cards should not repeat');
       this.openUpgrade();
-      assert(this.state==='upgrade','应进入升级态');
-      assert(!document.getElementById('upgrades').classList.contains('hidden'),'升级面板应显示');
+      assert(this.state==='upgrade','should enter the upgrade state');
+      assert(!document.getElementById('upgrades').classList.contains('hidden'),'upgrade panel should show');
       applyUpgrade(this,'dmg');
-      assert(this.upgrades.dmg===1&&this.playerDamageMul()>=1.15,'伤害升级应立即生效');
+      assert(this.upgrades.dmg===1&&this.playerDamageMul()>=1.15,'damage upgrade should apply immediately');
       this._applyUpgrade('rpm');
-      assert(this.weapon.rpmMul>1,'射速升级应立即生效');
-      assert(this.state==='playing'&&document.getElementById('upgrades').classList.contains('hidden'),'选择后应恢复游戏');
+      assert(this.weapon.rpmMul>1,'fire-rate upgrade should apply immediately');
+      assert(this.state==='playing'&&document.getElementById('upgrades').classList.contains('hidden'),'play should resume after choosing');
     });
     await run('upgrade-max',()=>{
       this.upgrades={dmg:3,rpm:3,reload:2,speed:2,hp:3,crit:2,pierce:1,regen:2};
-      assert(rollUpgrades(this,3).length===0,'全满级时候选池应为空');
-      assert(!applyUpgrade(this,'dmg'),'满级不应继续叠加');
+      assert(rollUpgrades(this,3).length===0,'the candidate pool should be empty when everything is maxed');
+      assert(!applyUpgrade(this,'dmg'),'a maxed upgrade should not stack further');
       this.startGame();
     });
     await run('grenade-count',()=>{
       this.ui.sel.mode='dm';this.startGame();
       const g=this.grenades;
-      assert(g.counts.frag===2&&g.counts.flash===2&&g.counts.smoke===1,'初始手雷应为 2/2/1');
-      assert(g.throw('frag')&&g.counts.frag===1,'破片数量应减少');
-      assert(document.getElementById('g-frag').textContent==='1','HUD 数量应同步');
-      assert(g.throw('frag')&&!g.throw('frag'),'用尽后不能继续投掷');
-      assert(!g.throw('unknown'),'未知类型应被拒绝');
+      assert(g.counts.frag===2&&g.counts.flash===2&&g.counts.smoke===1,'starting grenades should be 2/2/1');
+      assert(g.throw('frag')&&g.counts.frag===1,'frag count should drop');
+      assert(document.getElementById('g-frag').textContent==='1','HUD count should stay in sync');
+      assert(g.throw('frag')&&!g.throw('frag'),'no throws once depleted');
+      assert(!g.throw('unknown'),'unknown types should be rejected');
       g.reset();
-      assert(g.counts.frag===2,'重开后手雷应补满');
+      assert(g.counts.frag===2,'grenades should refill on restart');
     });
     await run('grenade-aoe',()=>{
       this.ui.sel.mode='waves';this.startGame();this.player.god=true;
       const e=this.enemies.spawn('WASP',new THREE.Vector3(2,1.4,2),{entering:false});
       const hp=e.hp;
       this.grenades._explode({type:'frag',pos:new THREE.Vector3(2,1.4,2)});
-      assert(e.hp<hp,'破片 AoE 应伤害范围内敌人');
+      assert(e.hp<hp,'frag AoE should damage enemies in range');
       const far=this.enemies.spawn('WASP',new THREE.Vector3(40,1.4,40),{entering:false});
       const farHp=far.hp;
       this.grenades._explode({type:'frag',pos:new THREE.Vector3(2,1.4,2)});
-      assert(far.hp===farHp,'范围外敌人不应受伤');
+      assert(far.hp===farHp,'enemies out of range should be unharmed');
     });
     await run('flash-blind',()=>{
       this.ui.sel.mode='dm';this.startGame();
       const h=this.heroes.list.find(x=>x.team==='B');
       this.grenades._explode({type:'flash',pos:h.pos.clone()});
-      assert(h.blindT>2,'闪光应致盲范围内敌方 bot');
+      assert(h.blindT>2,'a flash should blind enemy bots in range');
       this.grenades._explode({type:'smoke',pos:h.pos.clone()});
-      assert(this.grenades.inSmoke(h.pos),'烟雾内判定应为真');
-      assert(!this.grenades.inSmoke(new THREE.Vector3(99,0,99)),'烟雾外应为假');
+      assert(this.grenades.inSmoke(h.pos),'inside the smoke should test true');
+      assert(!this.grenades.inSmoke(new THREE.Vector3(99,0,99)),'outside the smoke should test false');
     });
     await run('anim-state',()=>{
       this.ui.sel.mode='dm';this.startGame();
       const h=this.heroes.list[0];
       h.vel.set(0,0,0);h.reloadT=0;h.hitT=0;h.recoilKick=0;h.moving=false;
-      assert(h._decideAnim(null)==='idle','静止无目标 → idle');
+      assert(h._decideAnim(null)==='idle','still with no target → idle');
       h.moving=true;
-      assert(h._decideAnim(null)==='walk','移动 → walk');
+      assert(h._decideAnim(null)==='walk','moving → walk');
       h.moving=false;
-      assert(h._decideAnim({})==='aim','有目标 → aim');
+      assert(h._decideAnim({})==='aim','has a target → aim');
       h.hitT=.2;
-      assert(h._decideAnim(null)==='hit','受击 → hit');
+      assert(h._decideAnim(null)==='hit','hit → hit');
       h.hitT=0;h.recoilKick=.5;
-      assert(h._decideAnim(null)==='fire','开火 → fire');
+      assert(h._decideAnim(null)==='fire','firing → fire');
       h.recoilKick=0;h.reloadT=.5;
-      assert(h._decideAnim(null)==='reload','换弹 → reload');
+      assert(h._decideAnim(null)==='reload','reloading → reload');
       h.ammo=1;h.reloadT=0;h._consumeAmmo();
-      assert(h.reloadT>1.1&&h.ammo===h.magSize,'打空弹匣应进入 1.2s 换弹');
+      assert(h.reloadT>1.1&&h.ammo===h.magSize,'an empty magazine should trigger a 1.2 s reload');
       h.reloadT=0;h.recoilKick=0;
       h._animate(.016,1,0);
-      assert(Number.isFinite(h.armR.rotation.x)&&Number.isFinite(h.torso.position.y),'动画姿态应有限');
-      assert(Math.abs(h.armR.rotation.x-h.baseArmR[0])<.01,'静止持枪姿态应回到基准(无 T-pose)');
+      assert(Number.isFinite(h.armR.rotation.x)&&Number.isFinite(h.torso.position.y),'animation pose should be finite');
+      assert(Math.abs(h.armR.rotation.x-h.baseArmR[0])<.01,'the idle rifle pose should return to the baseline (no T-pose)');
     });
     await run('radio-barks',()=>{
       this.ui.sel.mode='dm';this.startGame();
       const h=this.heroes.list[0];
       h._barkT=0;
-      assert(h.bark('bark_spot'),'首个台词应触发');
-      assert(!h.bark('bark_spot'),'6s 冷却内不应重复');
-      assert(this.ui.barkPool.some(p=>p.t>0),'台词槽应显示');
+      assert(h.bark('bark_spot'),'the first bark should fire');
+      assert(!h.bark('bark_spot'),'no repeat within the 6 s cooldown');
+      assert(this.ui.barkPool.some(p=>p.t>0),'a bark slot should be showing');
       h._barkT=0;h.hp=h.maxHp*.2;h._lowBarked=false;
       h.takeDamage(1,'E2E');
-      assert(h._lowBarked,'低血量应触发台词');
-      assert(!h.bark('bark_spot'),'台词后应进入冷却');
+      assert(h._lowBarked,'low health should trigger a bark');
+      assert(!h.bark('bark_spot'),'a bark should start the cooldown');
     });
     await run('nametag-hp',()=>{
       this.ui.sel.mode='dm';this.startGame();
       const h=this.heroes.list[0];
-      assert(h.nameTag&&h.nameTag.bar&&h.nameTag.group,'名牌应含血条组件');
-      assert(Math.abs(h.nameTag.bar.scale.x-1)<.01,'满血血条应为 1');
+      assert(h.nameTag&&h.nameTag.bar&&h.nameTag.group,'name tag should include the health bar parts');
+      assert(Math.abs(h.nameTag.bar.scale.x-1)<.01,'full health bar should be 1');
       h.takeDamage(h.maxHp*.5,'E2E');
-      assert(Math.abs(h.nameTag.bar.scale.x-.5)<.02,'半血血条应为 .5');
+      assert(Math.abs(h.nameTag.bar.scale.x-.5)<.02,'half health bar should be .5');
       this.camera.position.copy(h.pos);
       h.update(.016,this.time,()=>false);
-      assert(h.nameTag.group.visible,'近距离名牌应可见');
-      assert(h.nameTag.sprite.material.opacity>.9,'30m 内名牌应全亮');
+      assert(h.nameTag.group.visible,'name tag should be visible up close');
+      assert(h.nameTag.sprite.material.opacity>.9,'name tag should be fully opaque within 30 m');
       this.camera.position.set(999,0,999);
       h.update(.016,this.time,()=>false);
-      assert(!h.nameTag.group.visible,'远距离名牌应淡出隐藏');
+      assert(!h.nameTag.group.visible,'name tag should fade out and hide at long range');
       h.respawn();
-      assert(Math.abs(h.nameTag.bar.scale.x-1)<.01,'重生后血条应恢复');
+      assert(Math.abs(h.nameTag.bar.scale.x-1)<.01,'health bar should reset after respawn');
       this.camera.position.set(0,1.6,8);
     });
     await run('mvp-card',()=>{
       const op=byId('vulture');
       this.ui.showOver({title:'X',win:true,kicker:'X',mvp:null,
         stats:{time:60,waveLabel:'W',wave:'1',kills:10,critKills:2,hits:20,shots:30,score:100,best:0,bestCombo:2,
-          mvp:{name:'秃鹫',op,kills:10,deaths:1}}});
+          mvp:{name:'Vulture',op,kills:10,deaths:1}}});
       const el=document.getElementById('o-mvp');
-      assert(!el.classList.contains('hidden'),'MVP 卡片应显示');
-      assert(el.textContent.includes('秃鹫'),'MVP 名字应显示');
-      assert(el.querySelector('.mvp-face'),'MVP 应有立绘或首字母兜底');
+      assert(!el.classList.contains('hidden'),'MVP card should show');
+      assert(el.textContent.includes('Vulture'),'MVP name should show');
+      assert(el.querySelector('.mvp-face'),'MVP should have a portrait or the initial fallback');
       this.ui.showOnly(null);
     });
     await run('share-card',()=>{
       const cv=this.ui.buildShareCard({score:12345,wave:9,kills:63,hits:412,shots:648,bestCombo:4,waveLabel:'WAVE'},byId('frost'));
-      assert(cv&&cv.width===1200&&cv.height===630,'分享卡应为 1200×630');
+      assert(cv&&cv.width===1200&&cv.height===630,'share card should be 1200×630');
       const d=cv.getContext('2d').getImageData(600,315,1,1).data;
-      assert(d[3]>0,'分享卡应绘制不透明背景');
-      assert(typeof this.ui.downloadShareCard==='function','应提供下载入口');
+      assert(d[3]>0,'share card should draw an opaque background');
+      assert(typeof this.ui.downloadShareCard==='function','a download entry point should exist');
     });
     await run('killcard',()=>{
       const evil='<img src=x onerror=alert(1)>';
-      this.ui.killCard({killer:evil,victim:'霜华',weapon:'AK47',mine:false,
+      this.ui.killCard({killer:evil,victim:'Frost',weapon:'AK47',mine:false,
         killerOp:byId('raven'),victimOp:byId('frost')});
       const el=document.getElementById('killcard');
-      assert(!el.classList.contains('hidden'),'击杀卡应显示');
-      assert(this.ui.killcardT>1.5,'击杀卡应持续 1.6s');
-      assert(!el.innerHTML.includes('<img'),'玩家名应转义,无 XSS');
-      assert(el.classList.contains('death'),'被击杀应使用死亡配色');
+      assert(!el.classList.contains('hidden'),'kill card should show');
+      assert(this.ui.killcardT>1.5,'kill card should last 1.6 s');
+      assert(!el.innerHTML.includes('<img'),'player names should be escaped (no XSS)');
+      assert(el.classList.contains('death'),'being killed should use the death colour scheme');
       this.ui.update(1.7,100,100);
-      assert(el.classList.contains('hidden'),'1.6s 后应自动隐藏');
+      assert(el.classList.contains('hidden'),'should hide automatically after 1.6 s');
     });
     await run('music-bgm',()=>{
       const a=this.audio;
       a.musicStart('menu');a.musicSet(.9);a.musicMode('combat');a.musicStop();
       a.musicStart('combat');a.musicSet(.2);
       this.pause();
-      assert(this.state==='paused','暂停应进入 paused 状态');
+      assert(this.state==='paused','pause should enter the paused state');
       this.resume();
-      assert(this.state==='playing','恢复应回到 playing');
+      assert(this.state==='playing','resume should return to playing');
       this.toMenu();
-      assert(this.state==='menu','返回菜单应进入 menu');
-      assert(!this.ui.errors.some(e=>e.startsWith('ERR')),'BGM 切换不应产生运行错误');
+      assert(this.state==='menu','returning to the menu should enter menu');
+      assert(!this.ui.errors.some(e=>e.startsWith('ERR')),'BGM switching should not raise runtime errors');
     });
     await run('death-no-explosion',()=>{
       this.ui.sel.mode='dm';this.startGame();
@@ -1732,16 +1733,16 @@ class Game{
       this.effects.explosion=(...a)=>{boom++;return orig.apply(this.effects,a);};
       const h=this.heroes.list[0];
       h.takeDamage(9999,'E2E');
-      assert(!h.alive&&h.state==='dying','角色应进入死亡倒地状态');
-      assert(boom===0,'人类单位死亡不应触发爆炸');
-      assert(h.parts.rifle.parent===this.scene,'死亡时步枪应脱手掉落');
+      assert(!h.alive&&h.state==='dying','the character should enter the dying state');
+      assert(boom===0,'human deaths should not trigger an explosion');
+      assert(h.parts.rifle.parent===this.scene,'the rifle should drop on death');
       h.update(1,this.time,()=>true);
-      assert(h.state==='dead','0.7s 后应进入尸体状态');
+      assert(h.state==='dead','should become a corpse after 0.7 s');
       h.deathT=5.6;
       h.update(.016,this.time,()=>true);
-      assert(h.alive&&h.state==='active','5.5s 后应重生');
-      assert(h.parts.rifle.parent===h.group,'重生后步枪应回到手部');
-      assert(Math.abs(h.materials[0].opacity-1)<.01,'重生后材质应恢复不透明');
+      assert(h.alive&&h.state==='active','should respawn after 5.5 s');
+      assert(h.parts.rifle.parent===h.group,'the rifle should be back in hand after respawn');
+      assert(Math.abs(h.materials[0].opacity-1)<.01,'materials should be opaque again after respawn');
       this.effects.explosion=orig;
     });
     await run('damage-direction',()=>{
@@ -1753,50 +1754,50 @@ class Game{
         this.damagePlayerFromBot(1,'E2E',new THREE.Vector3(x,0,z));
         let d=this.ui.lastDmgAngle-want;
         while(d>Math.PI)d-=Math.PI*2;while(d<-Math.PI)d+=Math.PI*2;
-        assert(Math.abs(d)<.2,`方向误差 ${d.toFixed(2)}rad(期望 ${want.toFixed(2)},实际 ${this.ui.lastDmgAngle.toFixed(2)})`);
+        assert(Math.abs(d)<.2,`direction error ${d.toFixed(2)}rad (expected ${want.toFixed(2)}, got ${this.ui.lastDmgAngle.toFixed(2)})`);
       };
-      check(0,-10,0);            // 正前
-      check(0,10,Math.PI);       // 正后
-      check(10,0,Math.PI/2);     // 正右
-      check(-10,0,-Math.PI/2);   // 正左
+      check(0,-10,0);            // straight ahead
+      check(0,10,Math.PI);       // straight behind
+      check(10,0,Math.PI/2);     // right
+      check(-10,0,-Math.PI/2);   // left
       this.player.god=true;this.player.health=this.player.maxHealth;
     });
     await run('combo-callout',()=>{
       this.comboKills=1;this.comboT=4;
       this._onKill({T:{score:100},pos:new THREE.Vector3()},false);
-      assert(this.comboKills===2,'4 秒内第二次击杀应累计连杀');
+      assert(this.comboKills===2,'a second kill within 4 s should count toward the streak');
       const el=document.getElementById('combo-callout');
-      assert(el.classList.contains('show'),'连杀播报应显示');
-      assert(el.textContent.length>0,'连杀播报应有文案');
+      assert(el.classList.contains('show'),'the streak callout should show');
+      assert(el.textContent.length>0,'the streak callout should have text');
     });
     await run('settings-persist',()=>{
       this.settings.set('fov',90);
       this.settings.set('crosshair.color','#ff8800');
       const raw=JSON.parse(localStorage.getItem('o07_settings_v2'));
-      assert(raw.fov===90,'FOV 应写入存档');
-      assert(raw.crosshair.color==='#ff8800','准星颜色应写入存档');
+      assert(raw.fov===90,'FOV should be saved');
+      assert(raw.crosshair.color==='#ff8800','crosshair colour should be saved');
       this.settings.load();
-      assert(this.settings.get('fov')===90,'重新载入后 FOV 应保留');
+      assert(this.settings.get('fov')===90,'FOV should survive a reload');
       this.settings.set('fov',106);
       this.settings.set('crosshair.color','#7fe3ff');
     });
     await run('fov-apply',()=>{
       this.baseHFov=90;this._hfovCur=90;this._applyCameraState();
       const want=THREE.MathUtils.radToDeg(2*Math.atan(Math.tan(THREE.MathUtils.degToRad(90)*.5)/this.camera.aspect));
-      assert(Math.abs(this.camera.fov-want)<.5,`FOV 应生效: ${this.camera.fov.toFixed(2)} vs ${want.toFixed(2)}`);
+      assert(Math.abs(this.camera.fov-want)<.5,`FOV should apply: ${this.camera.fov.toFixed(2)} vs ${want.toFixed(2)}`);
       this.baseHFov=106;this._hfovCur=106;this._applyCameraState();
     });
     await run('operator-camo-persist',()=>{
       this.ui.selectOperator('viper');
       this.ui.setCamo('desert');
-      assert(store.get('o07_operator')==='viper','干员选择应持久化');
-      assert(store.get('o07_camo_viper')==='desert','迷彩选择应持久化');
-      assert(this.ui.camoOf(byId('viper'))==='desert','camoOf 应返回存档迷彩');
-      assert(this.ui.sel.hero==='t','选择 T 干员后阵营应切换');
-      assert(this.ui.sel.primary==='ak47','切换阵营后主武器应回落到阵营合法武器');
+      assert(store.get('o07_operator')==='viper','operator choice should persist');
+      assert(store.get('o07_camo_viper')==='desert','camo choice should persist');
+      assert(this.ui.camoOf(byId('viper'))==='desert','camoOf should return the saved camo');
+      assert(this.ui.sel.hero==='t','choosing a Rogue operator should switch faction');
+      assert(this.ui.sel.primary==='ak47','after a faction switch the primary should fall back to a valid faction weapon');
       this.ui.selectOperator('frost');
-      assert(this.ui.sel.hero==='ct','切回 CT 干员阵营应恢复');
-      assert(this.ui.sel.camo===this.ui.camoOf(byId('frost')),'迷彩应随干员恢复');
+      assert(this.ui.sel.hero==='ct','switching back to a Nova operator should restore the faction');
+      assert(this.ui.sel.camo===this.ui.camoOf(byId('frost')),'camo should follow the operator back');
     });
     await run('memory-stable',()=>{
       this.ui.sel.mode='dm';this.startGame();
@@ -1804,9 +1805,9 @@ class Game{
       for(let i=0;i<10;i++){this.startGame();this.toMenu();}
       this.startGame();
       const after=this.debugMemory();
-      assert(after.geometries<=before.geometries+2,`几何体不应增长: ${before.geometries} → ${after.geometries}`);
-      assert(after.heroMats===before.heroMats,`角色材质数量应稳定: ${before.heroMats} → ${after.heroMats}`);
-      assert(after.textures<=before.textures+5,`贴图不应持续增长: ${before.textures} → ${after.textures}`);
+      assert(after.geometries<=before.geometries+2,`geometry count should not grow: ${before.geometries} → ${after.geometries}`);
+      assert(after.heroMats===before.heroMats,`character material count should stay stable: ${before.heroMats} → ${after.heroMats}`);
+      assert(after.textures<=before.textures+5,`textures should not keep growing: ${before.textures} → ${after.textures}`);
     });
 
     const fail=results.length-pass;
@@ -1822,9 +1823,9 @@ class Game{
       this.ui.sel.mode='waves';
       this.startGame();
       this.fallbackAim=true;
-      this.scene.updateMatrixWorld(true); // 无渲染帧时(后台标签页/无头)同步整棵场景树,保证射线判定
+      this.scene.updateMatrixWorld(true); // without a render frame (background tab / headless) sync the whole scene tree so raycasts work
       const dir=new THREE.Vector3(0,0,-1);
-      // 1. 主武器命中击杀
+      // 1. Primary weapon hit and kill
       const ePos=this.player.eye.clone().addScaledVector(dir,8);
       ePos.y=1.62;
       const e=this.enemies.spawn('WASP',ePos,{entering:false});
@@ -1846,14 +1847,14 @@ class Game{
       const ok=e.dead||e.hp<hp0;
       log(`rifle hp ${hp0} -> ${e.dead?'DEAD':e.hp.toFixed(1)} : ${ok?'PASS':'FAIL'}`);
       this.ui.debug(`SELFTEST rifle ${ok?'PASS':'FAIL'}`);
-      // 2. 沙漠之鹰(半自动)
+      // 2. Desert Eagle (semi-auto)
       this.weapon.switchTo(this.weapon.primaryCount);
-      for(let i=0;i<40;i++)this.weapon.update(.016,this.input,this.player,this.camera,this.time,()=>{}); // 确定性切枪(不依赖 rAF,后台标签页可复现)
-      this.enemies.clearAll(); // 清掉可能挡在射线上的旧无人机
+      for(let i=0;i<40;i++)this.weapon.update(.016,this.input,this.player,this.camera,this.time,()=>{}); // deterministic switch (independent of rAF, reproducible in background tabs)
+      this.enemies.clearAll(); // clear old drones that might block the ray
       const e2=this.enemies.spawn('WASP',this.player.eye.clone().addScaledVector(dir,7),{entering:false});
       e2.pos.y=1.62;
       e2.group.position.copy(e2.pos);
-      this.scene.updateMatrixWorld(true); // 同步块内立即开火,需手动刷新世界矩阵
+      this.scene.updateMatrixWorld(true); // firing inside the same synchronous block needs a manual world-matrix refresh
       const hp2=e2.hp;
       const to2=e2.pos.clone().sub(this.player.eye);
       this.player.yaw=Math.atan2(-to2.x,-to2.z);this.player.pitch=0;
@@ -1862,7 +1863,7 @@ class Game{
       await new Promise(r=>setTimeout(r,200));
       const deagleOk=e2.dead||e2.hp<hp2;
       log(`deagle hp ${hp2} -> ${e2.dead?'DEAD':e2.hp.toFixed(1)} : ${deagleOk?'PASS':'FAIL'}`);
-      // 3. 军刀近战
+      // 3. Knife melee
       this.weapon.switchTo(this.weapon.primaryCount+1);
       for(let i=0;i<40;i++)this.weapon.update(.016,this.input,this.player,this.camera,this.time,()=>{});
       this.enemies.clearAll();

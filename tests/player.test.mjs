@@ -1,4 +1,4 @@
-// player.test.mjs —— 移动物理单元测试:重力/跳跃/落地/支撑面/碰撞/蹲伏
+// player.test.mjs — movement physics unit tests: gravity / jump / landing / support surfaces / collision / crouch
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
@@ -15,74 +15,74 @@ const KEYS=new Set();
 const AUDIO={step(){}};
 const step=(p,n,dt=.016)=>{for(let i=0;i<n;i++)p.update(dt,INPUT,KEYS,0,AUDIO);};
 
-test('重力:起跳后上升、随后落地回 y=0',()=>{
+test('gravity: rises after a jump, then lands back at y=0',()=>{
   const p=makePlayer();
   p.pos.set(0,0,0);
   KEYS.add('Space');
   p.update(.016,INPUT,KEYS,0,AUDIO);
   KEYS.delete('Space');
-  assert.ok(!p.grounded&&p.velY>0,'起跳应有向上初速度');
+  assert.ok(!p.grounded&&p.velY>0,'a jump should give upward velocity');
   let maxY=p.pos.y;
   for(let i=0;i<120;i++){p.update(.016,INPUT,KEYS,0,AUDIO);maxY=Math.max(maxY,p.pos.y);}
-  assert.ok(maxY>.9&&maxY<1.4,'跳高应≈1.16m,实际 '+maxY.toFixed(2));
-  assert.ok(p.grounded&&Math.abs(p.pos.y)<.001,'应落回地面');
+  assert.ok(maxY>.9&&maxY<1.4,'jump height should be ≈1.16 m, got '+maxY.toFixed(2));
+  assert.ok(p.grounded&&Math.abs(p.pos.y)<.001,'should land back on the ground');
 });
 
-test('支撑面:落在 1.1m 箱顶并站立',()=>{
+test('support surface: lands and stands on a 1.1 m crate top',()=>{
   const cam=new THREE.PerspectiveCamera();
   const p=new Player(cam,[
     {minX:-.6,maxX:.6,minZ:-.6,maxZ:.6,top:1.1},
   ]);
   p.pos.set(0,2.0,0);p.velY=-2;p.grounded=false;
   for(let i=0;i<60;i++)p.update(.016,INPUT,KEYS,0,AUDIO);
-  assert.ok(Math.abs(p.pos.y-1.1)<.02,'应落在箱顶 1.1,实际 '+p.pos.y.toFixed(2));
-  assert.ok(p.grounded,'落地应接地');
+  assert.ok(Math.abs(p.pos.y-1.1)<.02,'should land on the crate top at 1.1, got '+p.pos.y.toFixed(2));
+  assert.ok(p.grounded,'landing should set grounded');
 });
 
-test('走出边缘:自然下落回地面',()=>{
+test('walking off an edge: falls back to the ground naturally',()=>{
   const cam=new THREE.PerspectiveCamera();
   const p=new Player(cam,[
     {minX:-.6,maxX:.6,minZ:-.6,maxZ:.6,top:1.1},
   ]);
   p.pos.set(0,1.1,0);p.grounded=true;p.velY=0;
-  p.pos.x=1.2; // 移到箱支撑范围之外
+  p.pos.x=1.2; // move outside the crate support area
   step(p,40);
-  assert.ok(p.pos.y<.05,'走出边缘应落回地面,实际 '+p.pos.y.toFixed(2));
+  assert.ok(p.pos.y<.05,'walking off the edge should drop to the ground, got '+p.pos.y.toFixed(2));
 });
 
-test('水平碰撞:站在箱顶时不被水平推挤',()=>{
+test('horizontal collision: not pushed sideways while standing on a crate',()=>{
   const cam=new THREE.PerspectiveCamera();
   const p=new Player(cam,[
     {minX:-.6,maxX:.6,minZ:-.6,maxZ:.6,top:1.1},
   ]);
   p.pos.set(0,1.1,0);p.grounded=true;
   step(p,30);
-  assert.ok(Math.abs(p.pos.x)<.01&&Math.abs(p.pos.z)<.01,'箱顶站立不应被推出');
+  assert.ok(Math.abs(p.pos.x)<.01&&Math.abs(p.pos.z)<.01,'standing on a crate must not push the player off');
 });
 
-test('水平碰撞:地面撞箱被推出半径之外',()=>{
+test('horizontal collision: on the ground, pushed outside the crate radius',()=>{
   const cam=new THREE.PerspectiveCamera();
   const p=new Player(cam,[
     {minX:1,maxX:2.2,minZ:-.6,maxZ:.6,top:1.1},
   ]);
   p.pos.set(1.2,0,0);p.grounded=true;
   step(p,30);
-  const dx=p.pos.x-1.2+ .4; // 推出后应满足 pos.x+r<=minX → pos.x<=.8
-  assert.ok(p.pos.x<=.81,'应被推出箱体,实际 x='+p.pos.x.toFixed(2));
+  const dx=p.pos.x-1.2+ .4; // after push-out pos.x+r<=minX → pos.x<=.8
+  assert.ok(p.pos.x<=.81,'should be pushed out of the crate, got x='+p.pos.x.toFixed(2));
 });
 
-test('蹲伏:眼高降低且散布收紧',()=>{
+test('crouch: lower eye height and tighter spread',()=>{
   const p=makePlayer();
   KEYS.add('ControlLeft');
   step(p,30);
-  assert.ok(p.crouching,'应进入蹲伏');
-  assert.ok(p.eyeHCur<1.35,'蹲伏眼高 '+p.eyeHCur.toFixed(2));
+  assert.ok(p.crouching,'should enter crouch');
+  assert.ok(p.eyeHCur<1.35,'crouch eye height '+p.eyeHCur.toFixed(2));
   KEYS.delete('ControlLeft');
   step(p,30);
-  assert.ok(!p.crouching&&Math.abs(p.eyeHCur-1.62)<.02,'应恢复站姿眼高');
+  assert.ok(!p.crouching&&Math.abs(p.eyeHCur-1.62)<.02,'should return to standing eye height');
 });
 
-test('空中操控衰减:空中加速明显弱于地面',()=>{
+test('air control damping: air acceleration is clearly weaker than on the ground',()=>{
   const p1=makePlayer();p1.pos.set(0,5,0);p1.grounded=false;p1.velY=0;
   KEYS.add('KeyW');
   p1.update(.016,INPUT,KEYS,0,AUDIO);
@@ -90,16 +90,16 @@ test('空中操控衰减:空中加速明显弱于地面',()=>{
   const p2=makePlayer();p2.grounded=true;
   p2.update(.016,INPUT,KEYS,0,AUDIO);
   const groundV=p2.vel.z;
-  assert.ok(Math.abs(airV)<Math.abs(groundV),'空中操控应弱于地面');
+  assert.ok(Math.abs(airV)<Math.abs(groundV),'air control should be weaker than ground control');
   KEYS.delete('KeyW');
 });
 
-test('forward 向量:yaw→前进方向映射正确',()=>{
+test('forward vector: yaw maps to the right travel direction',()=>{
   const p=makePlayer();
-  p.yaw=0; // 面向 -z
+  p.yaw=0; // facing -z
   const f=p.forward();
   assert.ok(Math.abs(f.z+1)<.001&&Math.abs(f.x)<.001);
-  p.yaw=Math.PI/2; // 面向 -x
+  p.yaw=Math.PI/2; // facing -x
   const f2=p.forward();
   assert.ok(Math.abs(f2.x+1)<.001&&Math.abs(f2.z)<.001);
 });

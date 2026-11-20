@@ -1,8 +1,8 @@
-// assets.js —— 程序化贴图与共享材质(全部 Canvas 生成,零外部资源)
+// assets.js — procedural textures and shared materials (all generated on canvas, no external assets)
 import * as THREE from 'three';
 import {isEN} from './i18n.js';
 
-/* ---------- 工具 ---------- */
+/* ---------- Helpers ---------- */
 function makeRng(seed){let s=seed>>>0;return()=>{s=(s*1664525+1013904223)>>>0;return s/4294967296;};}
 
 function valueNoise(seed){
@@ -27,7 +27,7 @@ function canvasTex(size,draw,{repeat=1,srgb=true}={}){
   return t;
 }
 
-// 由高度图生成法线贴图(Sobel)
+// Normal map from a height map (Sobel)
 function heightToNormal(heightCanvas,strength=1){
   const w=heightCanvas.width,h=heightCanvas.height;
   const src=heightCanvas.getContext('2d').getImageData(0,0,w,h).data;
@@ -46,23 +46,23 @@ function heightToNormal(heightCanvas,strength=1){
   return t;
 }
 
-/* ---------- 地表高度/贴图生成器(每张地图一套) ---------- */
+/* ---------- Ground height/texture generators (one set per map) ---------- */
 const noiseSand=valueNoise(101),noiseConcrete=valueNoise(202),noiseMetal=valueNoise(303),noiseSnow=valueNoise(404),noiseBasalt=valueNoise(505);
 
 function drawSand(g,S){
   g.fillStyle='#c69a62';g.fillRect(0,0,S,S);
-  for(let i=0;i<520;i++){ // 大块色斑
+  for(let i=0;i<520;i++){ // large colour blotches
     const v=noiseSand(i*3.7,i*1.3),r=8+Math.random()*60;
     g.fillStyle=`rgba(${v>.5?214:158},${v>.5?152:110},${v>.5?98:64},${.05+Math.random()*.08})`;
     g.beginPath();g.arc(Math.random()*S,Math.random()*S,r,0,7);g.fill();
   }
-  g.strokeStyle='rgba(140,100,60,.11)';g.lineWidth=1.3; // 风纹
+  g.strokeStyle='rgba(140,100,60,.11)';g.lineWidth=1.3; // wind ripples
   for(let i=0;i<70;i++){
     const y=Math.random()*S;g.beginPath();
     for(let x=0;x<=S;x+=6)g.lineTo(x,y+Math.sin(x*.05+i)*4+Math.random()*2);
     g.stroke();
   }
-  for(let i=0;i<1600;i++){ // 细砂粒
+  for(let i=0;i<1600;i++){ // fine sand grains
     const l=Math.random();
     g.fillStyle=l>.6?'rgba(60,42,28,.3)':'rgba(238,208,164,.28)';
     g.fillRect(Math.random()*S,Math.random()*S,1.3,1.3);
@@ -76,7 +76,7 @@ function drawSnow(g,S){
     g.fillStyle=v>.55?'rgba(255,255,255,.5)':'rgba(160,180,205,.13)';
     g.beginPath();g.arc(Math.random()*S,Math.random()*S,r,0,7);g.fill();
   }
-  g.strokeStyle='rgba(140,165,195,.18)';g.lineWidth=1.6; // 吹雪垄
+  g.strokeStyle='rgba(140,165,195,.18)';g.lineWidth=1.6; // wind-blown snow ridges
   for(let i=0;i<40;i++){
     const y=Math.random()*S;g.beginPath();
     for(let x=0;x<=S;x+=7)g.lineTo(x,y+Math.sin(x*.045+i*2)*6);
@@ -86,7 +86,7 @@ function drawSnow(g,S){
     g.fillStyle=Math.random()>.5?'rgba(255,255,255,.6)':'rgba(150,172,200,.2)';
     g.fillRect(Math.random()*S,Math.random()*S,1.6,1.6);
   }
-  // 融雪露底
+  // Melt patches showing the ground underneath
   for(let i=0;i<50;i++){
     g.fillStyle='rgba(110,120,110,.14)';
     g.beginPath();g.arc(Math.random()*S,Math.random()*S,3+Math.random()*14,0,7);g.fill();
@@ -100,7 +100,7 @@ function drawBasalt(g,S){
     g.fillStyle=v>.5?'rgba(90,84,86,.25)':'rgba(16,14,15,.3)';
     g.beginPath();g.arc(Math.random()*S,Math.random()*S,6+Math.random()*36,0,7);g.fill();
   }
-  // 熔岩裂纹
+  // Lava cracks
   for(let i=0;i<16;i++){
     let x=Math.random()*S,y=Math.random()*S;
     g.strokeStyle=`rgba(${220+Math.random()*35},${90+Math.random()*60},30,.75)`;g.lineWidth=1.6+Math.random()*2;
@@ -109,7 +109,7 @@ function drawBasalt(g,S){
     for(let k=0;k<8;k++){x+=(Math.random()-.5)*60;y+=(Math.random()-.5)*60;g.lineTo(x,y);}
     g.stroke();g.shadowBlur=0;
   }
-  // 火渣点
+  // Cinder specks
   for(let i=0;i<500;i++){
     g.fillStyle=Math.random()>.7?'rgba(255,140,40,.5)':'rgba(10,8,9,.4)';
     g.fillRect(Math.random()*S,Math.random()*S,1.4,1.4);
@@ -123,13 +123,13 @@ function drawConcrete(g,S){
     g.fillStyle=`rgba(${v>.5?255:60},${v>.5?255:58},${v>.5?250:54},${.035+Math.random()*.05})`;
     g.beginPath();g.arc(Math.random()*S,Math.random()*S,2+Math.random()*26,0,7);g.fill();
   }
-  g.strokeStyle='rgba(40,38,34,.32)';g.lineWidth=1; // 细裂缝
+  g.strokeStyle='rgba(40,38,34,.32)';g.lineWidth=1; // hairline cracks
   for(let i=0;i<9;i++){
     let x=Math.random()*S,y=Math.random()*S;g.beginPath();g.moveTo(x,y);
     for(let k=0;k<10;k++){x+=(Math.random()-.5)*30;y+=Math.random()*14;g.lineTo(x,y);}
     g.stroke();
   }
-  // 板缝
+  // Plank seams
   g.strokeStyle='rgba(30,28,26,.4)';g.lineWidth=2.5;
   for(let i=1;i<4;i++){g.beginPath();g.moveTo(0,i*S/4);g.lineTo(S,i*S/4);g.stroke();}
   const gr=g.createLinearGradient(0,S,0,S*.6);
@@ -144,7 +144,7 @@ function drawMetal(g,S){
     g.fillStyle=`rgba(${v>.5?230:30},${v>.5?230:32},${v>.5?235:36},.045)`;
     g.fillRect(0,y,S,1);
   }
-  // 面板拼缝 + 铆钉
+  // Panel seams + rivets
   g.strokeStyle='rgba(20,22,26,.55)';g.lineWidth=2;
   for(let i=1;i<3;i++){g.beginPath();g.moveTo(0,i*S/3);g.lineTo(S,i*S/3);g.stroke();}
   g.fillStyle='rgba(30,32,36,.6)';
@@ -169,7 +169,7 @@ function drawContainer(color,dark,opts={}){
       lg.addColorStop(.6,color);lg.addColorStop(1,dark);
       g.fillStyle=lg;g.fillRect(x,0,rib,S);
     }
-    // 顶部积雪盖
+    // Snow cap on top
     if(opts.snowCap){
       const gr=g.createLinearGradient(0,S*.5,0,S);
       gr.addColorStop(0,'rgba(235,242,250,0)');gr.addColorStop(.5,'rgba(235,242,250,.75)');gr.addColorStop(1,'rgba(225,235,246,.95)');
@@ -213,73 +213,177 @@ function drawWood(g,S){
   }
 }
 
-function drawGunMetal(g,S){
+/* ---------- Weapon material factory: colour / height / roughness drawn with the same strokes ----------
+   One brush paints three maps at once → map + normalMap (relief) + roughnessMap (worn spots are smoother);
+   roughness canvas brightness ≈ roughness×255, multiplied by the material roughness to get the target feel */
+const gv=v=>`rgb(${v},${v},${v})`;
+function weaponMat(size,draw,{metal,rough,envInt=1,nStr=1.2}){
+  const mk=()=>{const c=document.createElement('canvas');c.width=c.height=size;return c;};
+  const c=mk(),h=mk(),r=mk();
+  draw(c.getContext('2d'),h.getContext('2d'),r.getContext('2d'),size);
+  const tex=c2=>{const t=new THREE.CanvasTexture(c2);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.anisotropy=8;return t;};
+  const map=tex(c);map.colorSpace=THREE.SRGBColorSpace;
+  return new THREE.MeshStandardMaterial({map,normalMap:heightToNormal(h,nStr),
+    normalScale:new THREE.Vector2(1,1),roughnessMap:tex(r),roughness:rough,
+    metalness:metal,envMapIntensity:envInt});
+}
+
+function drawGunMetal(g,h,r,S){
   g.fillStyle='#1e2126';g.fillRect(0,0,S,S);
-  // 横向拉丝
-  for(let i=0;i<160;i++){
-    const y=Math.random()*S,x=Math.random()*S,len=S*(.2+Math.random()*.8);
-    g.strokeStyle=Math.random()>.5?'rgba(255,255,255,.045)':'rgba(0,0,0,.06)';
-    g.lineWidth=.8+Math.random();
-    g.beginPath();g.moveTo(x,y);g.lineTo(x+len,y+(Math.random()-.5)*2);g.stroke();
+  h.fillStyle=gv(128);h.fillRect(0,0,S,S);
+  r.fillStyle=gv(107);r.fillRect(0,0,S,S);
+  // Horizontal brushing (slight colour + height variation)
+  for(let i=0;i<220;i++){
+    const y=Math.random()*S,x=Math.random()*S,len=S*(.2+Math.random()*.8),hi=Math.random()>.5;
+    const a=.03+Math.random()*.04,w=.8+Math.random();
+    g.strokeStyle=hi?`rgba(255,255,255,${a})`:`rgba(0,0,0,${a})`;
+    g.lineWidth=w;g.beginPath();g.moveTo(x,y);g.lineTo(x+len,y+(Math.random()-.5)*2);g.stroke();
+    h.strokeStyle=gv(hi?136:120);h.lineWidth=w;
+    h.beginPath();h.moveTo(x,y);h.lineTo(x+len,y+(Math.random()-.5)*2);h.stroke();
   }
-  // 面板缝(暗缝+高光棱边)
-  g.strokeStyle='rgba(8,9,11,.75)';g.lineWidth=2;
-  g.beginPath();g.moveTo(0,S*.33);g.lineTo(S,S*.33);g.moveTo(0,S*.72);g.lineTo(S,S*.72);g.stroke();
-  g.strokeStyle='rgba(255,255,255,.06)';g.lineWidth=1;
-  g.beginPath();g.moveTo(0,S*.33+2);g.lineTo(S,S*.33+2);g.moveTo(0,S*.72+2);g.lineTo(S,S*.72+2);g.stroke();
-  // 螺丝
-  for(let i=0;i<10;i++){
+  // Panel seams: dark gap + highlighted edge / height: recessed / roughness: burred edges
+  for(const fy of[.33,.72]){
+    g.strokeStyle='rgba(8,9,11,.75)';g.lineWidth=2;
+    g.beginPath();g.moveTo(0,S*fy);g.lineTo(S,S*fy);g.moveTo(0,S*.72);g.lineTo(S,S*.72);g.stroke();
+    g.strokeStyle='rgba(255,255,255,.06)';g.lineWidth=1;
+    g.beginPath();g.moveTo(0,S*fy+2);g.lineTo(S,S*fy+2);g.stroke();
+    h.strokeStyle=gv(58);h.lineWidth=2.5;
+    h.beginPath();h.moveTo(0,S*fy);h.lineTo(S,S*fy);h.stroke();
+    r.strokeStyle=gv(150);r.lineWidth=2.5;
+    r.beginPath();r.moveTo(0,S*fy);r.lineTo(S,S*fy);r.stroke();
+  }
+  // Screws: raised + polished (smoother)
+  for(let i=0;i<12;i++){
     const x=8+Math.random()*(S-16),y=8+Math.random()*(S-16);
-    g.fillStyle='rgba(0,0,0,.55)';g.beginPath();g.arc(x,y,2.4,0,7);g.fill();
-    g.fillStyle='rgba(200,210,220,.35)';g.beginPath();g.arc(x-.6,y-.6,1.1,0,7);g.fill();
+    g.fillStyle='rgba(0,0,0,.55)';g.beginPath();g.arc(x,y,3,0,7);g.fill();
+    g.fillStyle='rgba(205,212,222,.5)';g.beginPath();g.arc(x-.7,y-.7,1.5,0,7);g.fill();
+    h.fillStyle=gv(205);h.beginPath();h.arc(x,y,3,0,7);h.fill();
+    r.fillStyle=gv(55);r.beginPath();r.arc(x,y,3,0,7);r.fill();
   }
-  // 磨损亮斑
-  for(let i=0;i<40;i++){
-    g.fillStyle=`rgba(160,168,178,${.04+Math.random()*.07})`;
-    g.fillRect(Math.random()*S,Math.random()*S,2+Math.random()*8,1+Math.random()*2);
+  // Wear spots: bare metal showing through (smoother, brighter)
+  for(let i=0;i<46;i++){
+    const x=Math.random()*S,y=Math.random()*S,w=2+Math.random()*9,ht=1+Math.random()*2;
+    g.fillStyle=`rgba(168,175,186,${.05+Math.random()*.08})`;g.fillRect(x,y,w,ht);
+    r.fillStyle=gv(45);r.fillRect(x,y,w,ht);
   }
-  // 油渍
+  // Oil stains
   for(let i=0;i<26;i++){
     g.fillStyle='rgba(10,10,12,.12)';
     g.beginPath();g.arc(Math.random()*S,Math.random()*S,2+Math.random()*7,0,7);g.fill();
   }
 }
 
-function drawPolymer(g,S,base){
+function drawPolymer(g,h,r,S,base){
   g.fillStyle=base;g.fillRect(0,0,S,S);
-  // 颗粒防滑纹
-  for(let i=0;i<2400;i++){
-    g.fillStyle=Math.random()>.5?`rgba(255,255,255,${.02+Math.random()*.04})`:`rgba(0,0,0,${.03+Math.random()*.05})`;
-    g.fillRect(Math.random()*S,Math.random()*S,1.2,1.2);
+  h.fillStyle=gv(128);h.fillRect(0,0,S,S);
+  r.fillStyle=gv(183);r.fillRect(0,0,S,S);
+  // Grip stippling: noise + raised dots
+  for(let i=0;i<2600;i++){
+    const x=Math.random()*S,y=Math.random()*S,hi=Math.random()>.5;
+    g.fillStyle=hi?`rgba(255,255,255,${.02+Math.random()*.04})`:`rgba(0,0,0,${.03+Math.random()*.05})`;
+    g.fillRect(x,y,1.4,1.4);
+    h.fillStyle=gv(hi?152:104);h.fillRect(x,y,1.4,1.4);
+    r.fillStyle=gv(hi?205:163);r.fillRect(x,y,1.4,1.4);
   }
-  // 注塑合模线
+  // Injection-mould parting lines (recessed)
   g.strokeStyle='rgba(0,0,0,.28)';g.lineWidth=2;
   g.beginPath();g.moveTo(0,S*.5);g.lineTo(S,S*.5);g.stroke();
-  // 导轨横条
+  h.strokeStyle=gv(70);h.lineWidth=2.5;
+  h.beginPath();h.moveTo(0,S*.5);h.lineTo(S,S*.5);h.stroke();
+  // Rail cross-slots (raised)
   g.fillStyle='rgba(0,0,0,.2)';
-  for(let y=S*.08;y<S*.92;y+=S*.09)g.fillRect(0,y,S,2);
-  // 使用磨损
+  h.fillStyle=gv(170);
+  for(let y=S*.08;y<S*.92;y+=S*.09){g.fillRect(0,y,S,2);h.fillRect(0,y,S,2.5);}
+  // Handling wear (polished, smoother)
   for(let i=0;i<30;i++){
-    g.fillStyle=`rgba(230,225,210,${.03+Math.random()*.05})`;
-    g.fillRect(Math.random()*S,Math.random()*S,3+Math.random()*10,1+Math.random()*1.5);
+    const x=Math.random()*S,y=Math.random()*S,w=3+Math.random()*10;
+    g.fillStyle=`rgba(232,226,214,${.04+Math.random()*.06})`;g.fillRect(x,y,w,1+Math.random()*1.5);
+    r.fillStyle=gv(120);r.fillRect(x,y,w,1+Math.random()*1.5);
   }
 }
 
-function drawGoldTrim(g,S){
+function drawGoldTrim(g,h,r,S){
   g.fillStyle='#d8a850';g.fillRect(0,0,S,S);
-  // 金面流动条纹
-  for(let i=0;i<60;i++){
-    const y=Math.random()*S;
-    g.strokeStyle=`rgba(${Math.random()>.5?255:150},${Math.random()>.5?220:110},70,${.08+Math.random()*.1})`;
+  h.fillStyle=gv(128);h.fillRect(0,0,S,S);
+  r.fillStyle=gv(77);r.fillRect(0,0,S,S);
+  // Flowing gold streaks
+  for(let i=0;i<70;i++){
+    const y=Math.random()*S,hi=Math.random()>.5;
+    g.strokeStyle=`rgba(${hi?255:150},${hi?220:110},70,${.08+Math.random()*.1})`;
     g.lineWidth=1+Math.random()*2;
     g.beginPath();g.moveTo(0,y);
     for(let x=0;x<=S;x+=8)g.lineTo(x,y+Math.sin(x*.06+i)*2);
     g.stroke();
+    h.strokeStyle=gv(hi?138:118);
+    h.beginPath();h.moveTo(0,y);
+    for(let x=0;x<=S;x+=8)h.lineTo(x,y+Math.sin(x*.06+i)*2);
+    h.stroke();
   }
-  // 划痕
+  // Scratches (brighter, smoother)
   for(let i=0;i<18;i++){
+    const x=Math.random()*S,y=Math.random()*S;
     g.strokeStyle='rgba(120,80,20,.35)';g.lineWidth=1;
-    g.beginPath();g.moveTo(Math.random()*S,Math.random()*S);g.lineTo(Math.random()*S,Math.random()*S);g.stroke();
+    g.beginPath();g.moveTo(x,y);g.lineTo(Math.random()*S,Math.random()*S);g.stroke();
+    r.fillStyle=gv(45);r.fillRect(x,y,2,2);
+  }
+}
+
+/* Wood furniture (AK-47): vertical grain grooves + varnish highlights (not to be confused with the scene's drawWood) */
+function drawGunWood(g,h,r,S){
+  g.fillStyle='#6b4a2a';g.fillRect(0,0,S,S);
+  h.fillStyle=gv(128);h.fillRect(0,0,S,S);
+  r.fillStyle=gv(173);r.fillRect(0,0,S,S);
+  for(let i=0;i<60;i++){
+    const x=Math.random()*S,w=1+Math.random()*3,dark=Math.random()>.45;
+    const path=gg=>{gg.beginPath();gg.moveTo(x,0);
+      for(let y=0;y<=S;y+=S/8)gg.lineTo(x+Math.sin(y*.05+i)*3+(Math.random()-.5)*2,y);gg.stroke();};
+    g.strokeStyle=dark?`rgba(58,38,20,${.25+Math.random()*.3})`:`rgba(150,108,64,${.2+Math.random()*.25})`;
+    g.lineWidth=w;path(g);
+    h.strokeStyle=gv(dark?96:152);h.lineWidth=w;path(h);
+    r.strokeStyle=gv(dark?200:150);r.lineWidth=w;path(r);
+  }
+  for(let i=0;i<6;i++){
+    const x=Math.random()*S;
+    g.fillStyle='rgba(255,230,190,.05)';g.fillRect(x,0,S*.06,S);
+    r.fillStyle=gv(140);r.fillRect(x,0,S*.06,S);
+  }
+}
+
+/* Stainless parts (Desert Eagle): fine brushing + machined cross-cuts */
+function drawSteel(g,h,r,S){
+  g.fillStyle='#9aa2ac';g.fillRect(0,0,S,S);
+  h.fillStyle=gv(128);h.fillRect(0,0,S,S);
+  r.fillStyle=gv(90);r.fillRect(0,0,S,S);
+  for(let i=0;i<300;i++){
+    const y=Math.random()*S,hi=Math.random()>.5,a=.04+Math.random()*.05;
+    g.strokeStyle=(hi?'rgba(255,255,255,':'rgba(40,44,50,')+a+')';
+    g.lineWidth=.7+Math.random();
+    g.beginPath();g.moveTo(0,y);g.lineTo(S,y+(Math.random()-.5)*1.5);g.stroke();
+    h.strokeStyle=gv(hi?134:122);
+    h.beginPath();h.moveTo(0,y);h.lineTo(S,y+(Math.random()-.5)*1.5);h.stroke();
+    r.strokeStyle=gv(60+Math.random()*70);
+    r.beginPath();r.moveTo(0,y);r.lineTo(S,y+(Math.random()-.5)*1.5);r.stroke();
+  }
+  h.fillStyle=gv(118);
+  for(let y=0;y<S;y+=3)h.fillRect(0,y,S,1);
+}
+
+/* Olive drab paint (Longbow): matte noise + scratches down to bare metal */
+function drawGreen(g,h,r,S){
+  g.fillStyle='#39463b';g.fillRect(0,0,S,S);
+  h.fillStyle=gv(128);h.fillRect(0,0,S,S);
+  r.fillStyle=gv(158);r.fillRect(0,0,S,S);
+  for(let i=0;i<1800;i++){
+    const x=Math.random()*S,y=Math.random()*S,hi=Math.random()>.5;
+    g.fillStyle=hi?`rgba(255,255,255,${.02+Math.random()*.03})`:`rgba(0,0,0,${.03+Math.random()*.05})`;
+    g.fillRect(x,y,1.6,1.6);
+    h.fillStyle=gv(hi?140:116);h.fillRect(x,y,1.6,1.6);
+  }
+  for(let i=0;i<26;i++){
+    const x=Math.random()*S,y=Math.random()*S,len=6+Math.random()*30,a=Math.random()*Math.PI;
+    g.strokeStyle='rgba(122,130,120,.5)';g.lineWidth=1+Math.random()*1.2;
+    g.beginPath();g.moveTo(x,y);g.lineTo(x+Math.cos(a)*len,y+Math.sin(a)*len);g.stroke();
+    r.fillStyle=gv(70);r.fillRect(x,y,3,2);
   }
 }
 
@@ -343,10 +447,10 @@ function drawNameTag(g,S){
   g.clearRect(0,0,S,S);
 }
 
-/* ---------- 输出 ---------- */
+/* ---------- Output ---------- */
 export const A={};
 export function initAssets(){
-  // --- 三种地表(1024 高清 + 法线) ---
+  // --- Three ground types (1024 high-res + normals) ---
   function groundMat(draw,normStrength,repeat){
     const c=document.createElement('canvas');c.width=c.height=1024;
     draw(c.getContext('2d'),1024);
@@ -372,16 +476,16 @@ export function initAssets(){
     wood:new THREE.MeshStandardMaterial({map:canvasTex(256,drawWood,{repeat:1}),roughness:.9,metalness:0}),
     rock:new THREE.MeshStandardMaterial({color:0x7a6a58,roughness:1,metalness:0,flatShading:true}),
     rockDark:new THREE.MeshStandardMaterial({color:0x453f41,roughness:1,metalness:0,flatShading:true}),
-    // 枪械表面:程序化金属/聚合物贴图(拉丝·面板缝·螺丝·磨损·防滑纹)
-    gunDark:new THREE.MeshStandardMaterial({map:canvasTex(256,drawGunMetal),roughness:.42,metalness:.7}),
-    gunPoly:new THREE.MeshStandardMaterial({map:canvasTex(256,(g,S)=>drawPolymer(g,S,'#2c2f34')),roughness:.72,metalness:.12}),
-    gunFDE:new THREE.MeshStandardMaterial({map:canvasTex(256,(g,S)=>drawPolymer(g,S,'#6e5a42')),roughness:.75,metalness:.08}),
+    // Gun surfaces: 512 three-channel textures (colour + normal + roughness) — seams / screws / brushing / wear have real relief under IBL
+    gunDark:weaponMat(512,drawGunMetal,{metal:.7,rough:.42,envInt:1.0,nStr:1.3}),
+    gunPoly:weaponMat(512,(g,h,r,S)=>drawPolymer(g,h,r,S,'#2c2f34'),{metal:.12,rough:.72,envInt:.55,nStr:.9}),
+    gunFDE:weaponMat(512,(g,h,r,S)=>drawPolymer(g,h,r,S,'#6e5a42'),{metal:.08,rough:.75,envInt:.5,nStr:.9}),
     gunBrass:new THREE.MeshStandardMaterial({color:0xc8a050,roughness:.35,metalness:.9,emissive:0x664410,emissiveIntensity:.25}),
-    // 夸张武器:能量部件用发光栅格贴图(map 与 emissiveMap 同源,暗底不发光)
+    // Stylised weapons: energy parts use a glowing grid texture (map and emissiveMap share a source; dark areas do not glow)
     energyBlue:new THREE.MeshStandardMaterial({map:energyTexBlue,emissiveMap:energyTexBlue,emissive:0xffffff,emissiveIntensity:1.0,roughness:.4,metalness:.6}),
     energyPurple:new THREE.MeshStandardMaterial({map:energyTexPurple,emissiveMap:energyTexPurple,emissive:0xffffff,emissiveIntensity:.85,roughness:.4,metalness:.6}),
-    goldTrim:new THREE.MeshStandardMaterial({map:canvasTex(256,drawGoldTrim),roughness:.3,metalness:.95,emissive:0x9a6a18,emissiveIntensity:.3}),
-    // 英雄
+    goldTrim:weaponMat(512,drawGoldTrim,{metal:.95,rough:.3,envInt:1.1,nStr:.8}),
+    // Heroes
     queenArmor:new THREE.MeshStandardMaterial({color:0x8a2626,roughness:.5,metalness:.55}),
     queenGold:new THREE.MeshStandardMaterial({color:0xe0b25a,roughness:.3,metalness:.9}),
     skin:new THREE.MeshStandardMaterial({color:0xe8b898,roughness:.85,metalness:0}),
@@ -389,7 +493,7 @@ export function initAssets(){
     suitDark:new THREE.MeshStandardMaterial({color:0x232830,roughness:.7,metalness:.15}),
     vestGray:new THREE.MeshStandardMaterial({color:0x3a4250,roughness:.75,metalness:.2}),
     shades:new THREE.MeshStandardMaterial({color:0x0c0e12,roughness:.2,metalness:.8}),
-    // CS 阵营角色
+    // Faction characters
     ctFatigue:new THREE.MeshStandardMaterial({color:0x46536b,roughness:.78,metalness:.1}),
     ctArmor:new THREE.MeshStandardMaterial({color:0x2b3140,roughness:.72,metalness:.25}),
     ctHelmet:new THREE.MeshStandardMaterial({color:0x454f61,roughness:.6,metalness:.3}),
@@ -398,7 +502,7 @@ export function initAssets(){
     tRig:new THREE.MeshStandardMaterial({color:0x1e1c1c,roughness:.8,metalness:.15}),
     balaclava:new THREE.MeshStandardMaterial({color:0x17171c,roughness:.85,metalness:0}),
     beanie:new THREE.MeshStandardMaterial({color:0x565a60,roughness:.9,metalness:0}),
-    // 3D 真人风角色:肤色 / 发色 / 五官 / 靴具
+    // Realistic 3D characters: skin / hair / facial features / boots
     skinF:new THREE.MeshStandardMaterial({color:0xf3d0b8,roughness:.45,metalness:0}),
     skinM:new THREE.MeshStandardMaterial({color:0xdfab8c,roughness:.55,metalness:0}),
     skinN:new THREE.MeshStandardMaterial({color:0xd8a687,roughness:.55,metalness:0}),
@@ -413,7 +517,7 @@ export function initAssets(){
     gloveDark:new THREE.MeshStandardMaterial({color:0x3a3733,roughness:.6,metalness:.05}),
     bootDark:new THREE.MeshStandardMaterial({color:0x1a1815,roughness:.45,metalness:.08}),
     armSleeve:new THREE.MeshStandardMaterial({color:0x2a2e36,roughness:.7}),
-    // C1/C3:阵营识别件(臂章发光 / 头盔 / 头巾 / 镜片 / 第一人称袖套手套)
+    // C1/C3: faction identifiers (glowing armband / helmet / shemagh / lenses / first-person sleeves and gloves)
     ctAccent:new THREE.MeshStandardMaterial({color:0x2b3140,emissive:0x7fd4ff,emissiveIntensity:.9,roughness:.6}),
     tAccent:new THREE.MeshStandardMaterial({color:0x3a201a,emissive:0xff8a6a,emissiveIntensity:.9,roughness:.6}),
     helmet:new THREE.MeshStandardMaterial({color:0x454f61,roughness:.58,metalness:.3}),
@@ -423,9 +527,10 @@ export function initAssets(){
     armSleeveT:new THREE.MeshStandardMaterial({color:0x5a2420,roughness:.75}),
     gloveCT:new THREE.MeshStandardMaterial({color:0x2c3138,roughness:.55,metalness:.05}),
     gloveT:new THREE.MeshStandardMaterial({color:0x3a2e26,roughness:.6,metalness:.05}),
-    // CS 枪械木件 / 不锈钢件
-    gunWood:new THREE.MeshStandardMaterial({color:0x6b4a2a,roughness:.68,metalness:.05}),
-    gunSteel:new THREE.MeshStandardMaterial({color:0x9aa2ac,roughness:.35,metalness:.85}),
+    // Gun wood / stainless / olive drab paint (three-channel textures)
+    gunWood:weaponMat(512,drawGunWood,{metal:.05,rough:.68,envInt:.4,nStr:.8}),
+    gunSteel:weaponMat(512,drawSteel,{metal:.85,rough:.35,envInt:1.3,nStr:.5}),
+    gunGreen:weaponMat(512,drawGreen,{metal:.25,rough:.62,envInt:.7,nStr:.7}),
     droneBody:new THREE.MeshStandardMaterial({color:0x3c4148,roughness:.38,metalness:.72}),
     droneDark:new THREE.MeshStandardMaterial({color:0x22262c,roughness:.5,metalness:.6}),
     droneArmor:new THREE.MeshStandardMaterial({color:0x555b62,roughness:.55,metalness:.5}),
@@ -456,7 +561,7 @@ export function initAssets(){
     snow:canvasTex(64,(g,S)=>drawSoft(g,S,'rgba(255,255,255,1)','rgba(230,240,255,.7)'),{srgb:false}),
     ember:canvasTex(64,(g,S)=>drawSoft(g,S,'rgba(255,200,110,1)','rgba(255,90,30,.6)'),{srgb:false}),
     ring:canvasTex(128,drawRingTex,{srgb:false}),
-    // 曳光弹拖尾:尾端透明 → 头部白热(cylinder v 轴向 = 弹道前进方向)
+    // Tracer streak: transparent tail → white-hot head (cylinder v axis = direction of travel)
     streak:canvasTex(64,(g,S)=>{
       const gr=g.createLinearGradient(0,S,0,0);
       gr.addColorStop(0,'rgba(255,255,255,0)');
@@ -466,7 +571,7 @@ export function initAssets(){
       g.fillStyle=gr;g.fillRect(0,0,S,S);
     },{srgb:false}),
   };
-  // AbinStudio 广告贴图(赞助位:品牌 + AI 短剧制作 + 网址;中英双语,refreshAd 重绘)
+  // AbinStudio billboard art (sponsor slot: brand + AI short-drama production + URL; bilingual, redrawn by refreshAd)
   function drawAdFront(g,W,H){
     const bg=g.createLinearGradient(0,0,0,H);
     bg.addColorStop(0,'#0e1424');bg.addColorStop(1,'#1a2236');
@@ -514,7 +619,7 @@ export function initAssets(){
   const adB=makeAdCanvas(drawAdBack);
   A.tex.ad=adF.tex;
   A.tex.adBack=adB.tex;
-  // 语言切换后重绘广告贴图
+  // Redraw the billboard art after a language switch
   A.refreshAd=()=>{
     drawAdFront(adF.canvas.getContext('2d'),1024,512);
     drawAdBack(adB.canvas.getContext('2d'),1024,512);

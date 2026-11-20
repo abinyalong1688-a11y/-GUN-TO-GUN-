@@ -1,5 +1,5 @@
-// weapon.js —— CS 武器系统:1 主武器(阵营全部 4 把随身,按 1 循环) 2 沙漠之鹰 3 军刀
-// 半自动扳机 · 军刀挥砍/重刺 · viewmodel 后坐/ADS/换弹/切枪/枪口焰/抛壳
+// weapon.js — weapon system: 1 primary (all 4 faction primaries carried, press 1 to cycle) 2 Desert Eagle 3 combat knife
+// semi-auto trigger · knife slash / heavy stab · viewmodel recoil / ADS / reload / switching / muzzle flash / shell ejection
 import * as THREE from 'three';
 import {isEN} from './i18n.js';
 
@@ -9,9 +9,9 @@ const ADS_POS=new THREE.Vector3(0,-.098,-.34);
 const ADS_ROT=new THREE.Euler(0,0,0);
 const SPRINT_POS=new THREE.Vector3(.18,-.3,-.4);
 const SPRINT_ROT=new THREE.Euler(.32,-.5,.18);
-const LOWER_POS=new THREE.Vector3(.16,-.42,-.42); // 切枪收起
+const LOWER_POS=new THREE.Vector3(.16,-.42,-.42); // lowered while switching
 
-/* CS 武器库(参照 CS 原作数值:威力/射速/弹匣/换弹/持枪移速) */
+/* Weapon table (stats modelled on the real-world guns: damage / fire rate / magazine / reload / move speed while held) */
 export const WEAPON_DEFS={
   ak47:{id:'ak47',name:'AK-47 · 7.62×39MM',slotName:'AK-47',rpm:600,dmg:36,mag:30,reserve:90,
    spreadHip:.024,spreadAds:.0075,moveSpread:.0032,heatShot:.005,heatMax:.021,
@@ -29,7 +29,7 @@ export const WEAPON_DEFS={
    spreadHip:.021,spreadAds:.004,moveSpread:.0028,heatShot:.004,heatMax:.017,
    kick:.0088,kickAds:.004,recoilV:.0105,recoilH:.004,auto:true,
    tracer:0xffd27f,tracerW:.026,tracerSpeed:450,scope:true,scopeFov:34,reloadDur:3.28,speedMul:.85},
-  awp:{id:'awp',name:'AWP · .338 Lapua Magnum',slotName:'AWP',rpm:41,dmg:115,mag:10,reserve:30,
+  awp:{id:'awp',name:'LONGBOW · .338 Lapua Magnum',slotName:'LONGBOW',rpm:41,dmg:115,mag:10,reserve:30,
    spreadHip:.06,spreadAds:.0008,moveSpread:.02,heatShot:.02,heatMax:.04,
    kick:.045,kickAds:.03,recoilV:.05,recoilH:.012,auto:false,
    tracer:0xbfe3ff,tracerW:.05,tracerSpeed:640,scope:true,scopeFov:16,reloadDur:3.6,speedMul:.80},
@@ -46,12 +46,12 @@ export const WEAPON_DEFS={
    kick:0,kickAds:0,recoilV:0,recoilH:0,auto:false,tracer:0,tracerW:0,melee:true,reloadDur:0,speedMul:1.06},
 };
 
-/* 按当前语言取武器名/槽位名(其余武器名本身即为英文) */
+/* Weapon / slot name for the current language (the other weapon names are already English) */
 export const wName=d=>isEN()&&d.nameEn?d.nameEn:d.name;
 export const wSlot=d=>isEN()&&d.slotEn?d.slotEn:d.slotName;
 
-/* 后坐力弹道模式(确定性,可测试):第 i 发的垂直爬升 + 水平漂移(弧度)
-   前几发快速爬升,随后水平正弦摆动;ADS 整体收敛。 */
+/* Recoil pattern (deterministic, testable): vertical climb + horizontal drift (radians) of shot i
+   climbs quickly over the first shots, then sways horizontally; ADS tightens the whole pattern. */
 export function recoilShot(def,i,ads){
   const V=def.recoilV??.01, H=def.recoilH??V*.4;
   const climb=Math.min(1,.55+i*.16);
@@ -65,17 +65,17 @@ export class Weapon{
     this.audio=audio;this.ui=ui;this.viewScene=viewScene;this.assets=assets;
     this.faction='ct';
     this.armMats={sleeve:assets.mats.armSleeveCT,glove:assets.mats.gloveCT,skin:assets.mats.skinM};
-    this._armSleeves=[];this._armGloves=[];this._armSkins=[]; // 第一人称手臂材质克隆(C3 按阵营换色)
+    this._armSleeves=[];this._armGloves=[];this._armSkins=[]; // first-person arm material clones (C3 recolour per faction)
     this.group=new THREE.Group();
     viewScene.add(this.group);
     this.models={};
     this.buildAll(assets);
-    this._addFPArms(); // 第一人称手臂(随枪继承开火/ADS/切枪动画)
+    this._addFPArms(); // first-person arms (inherit the gun's fire / ADS / switch animations)
 
-    // 默认 CT 制式装填(开局按所选阵营 setLoadout 重设)
+    // Default Nova loadout (setLoadout resets it for the chosen faction at match start)
     this.defs=[WEAPON_DEFS.m4a4,WEAPON_DEFS.deagle,WEAPON_DEFS.knife];
-    this.primaryCount=1;      // 主武器数量(1 键反复按循环切换)
-    this.lastPrimary=0;       // 最近持有的主武器(从副武器/军刀按 1 直接回到它)
+    this.primaryCount=1;      // number of primaries (pressing 1 repeatedly cycles them)
+    this.lastPrimary=0;       // last primary held (1 returns straight to it from the pistol / knife)
     this.cur=0;
     this.state=this.defs.map(d=>({ammo:d.mag,reserve:d.reserve}));
     this.reloading=false;this.reloadT=0;this._reloadSnd=0;
@@ -85,16 +85,16 @@ export class Weapon{
     this.camKickYaw=0;this.recoilIdx=0;this.recoilReset=0;
     this.bobT=0;this._trigWasDown=false;this._adsWas=false;
     this.muzzleFlashT=0;
-    this.switchT=-1;      // 切枪动画计时
-    this.swingT=0;this.swingHeavy=false; // 军刀挥击动画
-    // 枪口焰
+    this.switchT=-1;      // weapon switch animation timer
+    this.swingT=0;this.swingHeavy=false; // knife swing animation
+    // Muzzle flash
     this.flash=new THREE.Mesh(new THREE.PlaneGeometry(.3,.3),
       new THREE.MeshBasicMaterial({map:assets.tex.flash,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false,depthTest:false}));
     this.flash.visible=false;this.flash.renderOrder=20;
     this.group.add(this.flash);
     this.flashLight=new THREE.PointLight(0xffb060,0,4,2);
     viewScene.add(this.flashLight);
-    // 抛壳池
+    // Shell casing pool
     this.shells=[];
     const sg=new THREE.BoxGeometry(.012,.012,.028);
     for(let i=0;i<14;i++){
@@ -105,7 +105,7 @@ export class Weapon{
     this._equip(0,true);
   }
 
-  /* ================= 模型 ================= */
+  /* ================= Models ================= */
   _mk(){return new THREE.Group();}
   _box(g,w,h,d,mat,x,y,z,rx=0,ry=0,rz=0){
     const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
@@ -120,28 +120,28 @@ export class Weapon{
 
   buildAll(A){
     const M=A.mats;
-    /* --- AK-47(T 制式):木护木/木托 + 弯弹匣 --- */
+    /* --- AK-47 (Rogue issue): wooden handguard / stock + curved magazine --- */
     {
       const g=this._mk();
       const box=(...a)=>this._box(g,...a),cyl=(...a)=>this._cyl(g,...a);
-      box(.05,.078,.26,M.gunDark,0,.01,-.04);          // 机匣
-      box(.052,.022,.24,M.gunDark,0,.062,-.05);        // 机匣盖
-      box(.05,.055,.17,M.gunWood,0,.002,-.25);         // 木护木
-      cyl(.013,.07,M.gunDark,0,.02,-.36);              // 导气管
-      cyl(.009,.2,M.gunDark,0,.02,-.46);               // 枪管
-      box(.014,.055,.012,M.gunDark,0,.052,-.53);       // 准星座
-      box(.026,.02,.045,M.gunDark,0,.02,-.565);        // 斜口消焰器
-      box(.045,.075,.15,M.gunWood,0,-.008,.16);        // 木托
-      box(.03,.09,.048,M.gunWood,0,-.082,.08,-.25);    // 握把
-      const mag=this._mk();                            // 弯弹匣(两段)
+      box(.05,.078,.26,M.gunDark,0,.01,-.04);          // receiver
+      box(.052,.022,.24,M.gunDark,0,.062,-.05);        // dust cover
+      box(.05,.055,.17,M.gunWood,0,.002,-.25);         // wooden handguard
+      cyl(.013,.07,M.gunDark,0,.02,-.36);              // gas tube
+      cyl(.009,.2,M.gunDark,0,.02,-.46);               // barrel
+      box(.014,.055,.012,M.gunDark,0,.052,-.53);       // front sight block
+      box(.026,.02,.045,M.gunDark,0,.02,-.565);        // slant muzzle brake
+      box(.045,.075,.15,M.gunWood,0,-.008,.16);        // wooden stock
+      box(.03,.09,.048,M.gunWood,0,-.082,.08,-.25);    // grip
+      const mag=this._mk();                            // curved magazine (two segments)
       this._box(mag,.03,.1,.05,M.gunDark,0,-.05,0,.32);
       this._box(mag,.03,.085,.048,M.gunDark,0,-.115,.028,.62);
       mag.position.set(0,-.045,-.03);
       g.add(mag);g.userData.mag=mag;
-      g.userData.muzzle=new THREE.Vector3(0,.02,-.6);   // 枪口端点(组内空间)
+      g.userData.muzzle=new THREE.Vector3(0,.02,-.6);   // muzzle point (group space)
       this.models.ak47=g;
     }
-    /* --- M4A4(CT 制式):全黑聚合物 + 机瞄框 --- */
+    /* --- M4A4 (Nova issue): all-black polymer + iron sight frame --- */
     {
       const g=this._mk();
       const box=(...a)=>this._box(g,...a),cyl=(...a)=>this._cyl(g,...a);
@@ -165,130 +165,158 @@ export class Weapon{
       box(t,hh*2,.05,M.gunDark,-hw,sy,sz);
       box(t,hh*2,.05,M.gunDark,hw,sy,sz);
       box(.028,.02,.04,M.gunDark,.026,sy-hh-.01,sz+.02);
-      g.userData.muzzle=new THREE.Vector3(0,.006,-.65); // 枪口端点(组内空间)
+      g.userData.muzzle=new THREE.Vector3(0,.006,-.65); // muzzle point (group space)
       this.models.m4a4=g;
     }
-    /* --- AWP(双阵营 selectable):长管栓动 + 大倍率镜,深绿涂装 --- */
+    /* --- Longbow (both factions): long bolt-action barrel + high-power scope, olive drab --- */
     {
       const g=this._mk();
       const box=(...a)=>this._box(g,...a),cyl=(...a)=>this._cyl(g,...a);
       if(!M.gunGreen)M.gunGreen=new THREE.MeshStandardMaterial({color:0x39463b,roughness:.6,metalness:.3});
-      box(.048,.078,.40,M.gunGreen,0,0,-.05);          // 枪身
-      cyl(.012,.30,M.gunDark,0,.012,-.42);             // 长枪管
-      box(.016,.02,.05,M.gunDark,0,.012,-.575);        // 消焰器
-      cyl(.028,.22,M.gunDark,0,.095,-.06);             // 大倍率瞄准镜
-      box(.03,.03,.05,M.gunDark,0,.095,.06);           // 镜座
-      cyl(.024,.01,M.shades,0,.095,.07);               // 目镜
-      box(.014,.03,.06,M.gunDark,.033,.02,.02);        // 栓柄
+      box(.048,.078,.40,M.gunGreen,0,0,-.05);          // body
+      cyl(.012,.30,M.gunDark,0,.012,-.42);             // long barrel
+      box(.016,.02,.05,M.gunDark,0,.012,-.575);        // flash hider
+      cyl(.028,.22,M.gunDark,0,.095,-.06);             // high-power scope
+      box(.03,.03,.05,M.gunDark,0,.095,.06);           // scope mount
+      cyl(.024,.01,M.shades,0,.095,.07);               // eyepiece
+      box(.014,.03,.06,M.gunDark,.033,.02,.02);        // bolt handle
+      // Details: elevation / windage turrets + bolt knob
+      this._box(g,.014,.014,.014,M.gunDark,0,.135,-.06);
+      this._box(g,.012,.012,.014,M.gunDark,.042,.095,-.06);
+      const boltBall=new THREE.Mesh(new THREE.SphereGeometry(.011,10,8),M.gunDark);
+      boltBall.position.set(.033,.02,.052);g.add(boltBall);
       g.userData.mag=box(.032,.08,.08,M.gunDark,0,-.07,-.05);
-      box(.045,.09,.14,M.gunGreen,0,-.005,.18);        // 托
-      box(.05,.02,.1,M.gunGreen,0,.055,.17);           // 贴腮
-      box(.03,.09,.045,M.gunPoly,0,-.085,.06,.15);     // 握把
+      box(.045,.09,.14,M.gunGreen,0,-.005,.18);        // stock
+      box(.05,.02,.1,M.gunGreen,0,.055,.17);           // cheek rest
+      box(.03,.09,.045,M.gunPoly,0,-.085,.06,.15);     // grip
       g.userData.muzzle=new THREE.Vector3(0,.012,-.6);
       this.models.awp=g;
     }
-    /* --- MP5(双阵营 selectable):紧凑冲锋枪 + 曲弹匣 --- */
+    /* --- MP5 (both factions): compact SMG + curved magazine --- */
     {
       const g=this._mk();
       const box=(...a)=>this._box(g,...a),cyl=(...a)=>this._cyl(g,...a);
-      box(.044,.068,.24,M.gunDark,0,0,-.05);           // 紧凑机匣
-      box(.048,.055,.12,M.gunPoly,0,-.002,-.19);       // 护木
-      cyl(.008,.1,M.gunDark,0,.006,-.30);              // 短枪管
-      box(.014,.04,.012,M.gunDark,0,.042,-.34);        // 准星圈座
-      const mp5mag=this._mk();                         // 曲弹匣
+      box(.044,.068,.24,M.gunDark,0,0,-.05);           // compact receiver
+      box(.048,.055,.12,M.gunPoly,0,-.002,-.19);       // handguard
+      cyl(.008,.1,M.gunDark,0,.006,-.30);              // short barrel
+      box(.014,.04,.012,M.gunDark,0,.042,-.34);        // front sight ring base
+      const mp5mag=this._mk();                         // curved magazine
       this._box(mp5mag,.026,.09,.04,M.gunDark,0,-.045,0,.18);
       this._box(mp5mag,.026,.07,.038,M.gunDark,0,-.125,.02,.4);
       mp5mag.position.set(0,-.035,-.06);
       g.add(mp5mag);g.userData.mag=mp5mag;
-      box(.012,.02,.16,M.gunDark,.028,.008,.06);       // 拉机柄槽
-      box(.04,.07,.1,M.gunPoly,0,-.005,.14);           // 伸缩托
-      box(.028,.085,.04,M.gunPoly,0,-.08,.05,.18);     // 握把
+      box(.012,.02,.16,M.gunDark,.028,.008,.06);       // charging handle slot
+      box(.04,.07,.1,M.gunPoly,0,-.005,.14);           // collapsible stock
+      box(.028,.085,.04,M.gunPoly,0,-.08,.05,.18);     // grip
       g.userData.muzzle=new THREE.Vector3(0,.006,-.36);
       this.models.mp5=g;
     }
-    /* --- SG 553(T 制式可选):紧凑突击步枪 + 一体式镜 --- */
+    /* --- SG 553 (Rogue option): compact assault rifle + integrated scope --- */
     {
       const g=this._mk();
       const box=(...a)=>this._box(g,...a),cyl=(...a)=>this._cyl(g,...a);
-      box(.05,.078,.28,M.gunDark,0,0,-.03);            // 机匣
-      box(.048,.052,.14,M.gunPoly,0,.004,-.21);        // 护木
-      cyl(.01,.14,M.gunDark,0,.01,-.33);               // 枪管
-      box(.02,.02,.04,M.gunDark,0,.01,-.41);           // 消焰器
-      cyl(.021,.13,M.gunDark,0,.082,-.04);             // 一体式镜筒
-      cyl(.017,.01,M.shades,0,.082,.045);              // 目镜
-      box(.05,.06,.11,M.gunPoly,0,-.005,.15);          // 折叠托
-      box(.03,.09,.045,M.gunPoly,0,-.085,.04,.15);     // 握把
+      box(.05,.078,.28,M.gunDark,0,0,-.03);            // receiver
+      box(.048,.052,.14,M.gunPoly,0,.004,-.21);        // handguard
+      cyl(.01,.14,M.gunDark,0,.01,-.33);               // barrel
+      box(.02,.02,.04,M.gunDark,0,.01,-.41);           // flash hider
+      cyl(.021,.13,M.gunDark,0,.082,-.04);             // integrated scope tube
+      cyl(.017,.01,M.shades,0,.082,.045);              // eyepiece
+      box(.05,.06,.11,M.gunPoly,0,-.005,.15);          // folding stock
+      box(.03,.09,.045,M.gunPoly,0,-.085,.04,.15);     // grip
       g.userData.mag=box(.03,.10,.05,M.gunDark,0,-.085,-.02,.1);
-      box(.026,.065,.03,M.gunPoly,0,-.07,-.15);        // 前握把
+      box(.026,.065,.03,M.gunPoly,0,-.07,-.15);        // foregrip
       g.userData.muzzle=new THREE.Vector3(0,.01,-.43);
       this.models.sg553=g;
     }
-    /* --- AUG(CT 制式可选):无托结构 + 一体式光学镜 --- */
+    /* --- AUG (Nova option): bullpup + integrated optic --- */
     {
       const g=this._mk();
       const box=(...a)=>this._box(g,...a),cyl=(...a)=>this._cyl(g,...a);
-      box(.05,.085,.30,M.gunPoly,0,0,-.02);            // 无托机匣
-      box(.046,.05,.14,M.gunPoly,0,.005,-.24);         // 前护木
-      cyl(.01,.12,M.gunDark,0,.008,-.35);              // 短枪管
-      box(.02,.02,.04,M.gunDark,0,.008,-.415);         // 消焰器
-      cyl(.023,.15,M.gunDark,0,.085,-.03);             // 一体式瞄准镜镜筒
-      box(.03,.03,.06,M.gunDark,0,.085,.04);           // 镜身座
-      cyl(.019,.01,M.shades,0,.085,.055);              // 目镜(暗色玻璃)
-      box(.02,.015,.12,M.gunDark,0,.052,-.14);         // 顶部导轨
-      box(.03,.085,.045,M.gunPoly,0,-.085,.03,.15);    // 握把(前置)
-      g.userData.mag=box(.032,.11,.05,M.gunDark,0,-.105,-.075,-.12); // 后置弹匣(bullpup 标志)
-      box(.048,.075,.12,M.gunPoly,0,-.005,.16);        // 后托
-      box(.026,.07,.03,M.gunPoly,0,-.075,-.17);        // 前垂直握把
+      box(.05,.085,.30,M.gunPoly,0,0,-.02);            // bullpup receiver
+      box(.046,.05,.14,M.gunPoly,0,.005,-.24);         // front handguard
+      cyl(.01,.12,M.gunDark,0,.008,-.35);              // short barrel
+      box(.02,.02,.04,M.gunDark,0,.008,-.415);         // flash hider
+      cyl(.023,.15,M.gunDark,0,.085,-.03);             // integrated scope tube
+      box(.03,.03,.06,M.gunDark,0,.085,.04);           // scope body mount
+      cyl(.019,.01,M.shades,0,.085,.055);              // eyepiece (dark glass)
+      box(.02,.015,.12,M.gunDark,0,.052,-.14);         // top rail
+      box(.03,.085,.045,M.gunPoly,0,-.085,.03,.15);    // grip (forward)
+      g.userData.mag=box(.032,.11,.05,M.gunDark,0,-.105,-.075,-.12); // rear magazine (bullpup signature)
+      box(.048,.075,.12,M.gunPoly,0,-.005,.16);        // butt
+      box(.026,.07,.03,M.gunPoly,0,-.075,-.17);        // vertical foregrip
       g.userData.muzzle=new THREE.Vector3(0,.008,-.44);
       this.models.aug=g;
     }
-    /* --- 沙漠之鹰:大滑套 .50 AE --- */
+    /* --- Desert Eagle: large-slide .50 AE --- */
     {
       const g=this._mk();
       const box=(...a)=>this._box(g,...a);
-      const slide=box(.044,.05,.2,M.gunSteel,0,.022,-.05); // 大滑套(射击时后滑)
+      const slide=box(.044,.05,.2,M.gunSteel,0,.022,-.05); // large slide (cycles back when firing)
       g.userData.slide=slide;slide.userData.z0=-.05;
-      box(.036,.036,.045,M.gunSteel,0,.022,-.175);     // 枪口块
-      box(.008,.016,.012,M.gunSteel,0,.054,-.135);     // 前准星
-      box(.014,.018,.012,M.gunSteel,0,.052,.03);       // 后照门
-      box(.042,.05,.13,M.gunDark,0,-.018,.03);         // 下机匣
-      box(.034,.1,.05,M.gunDark,0,-.09,.06,-.18);      // 握把
-      box(.01,.025,.012,M.gunSteel,0,.046,.055);       // 击锤
-      box(.012,.02,.05,M.gunDark,0,-.045,-.015);       // 扳机护弓
+      // Slide serrations (attached to the slide so they follow the recoil animation)
+      for(let i=0;i<3;i++)for(const sx of[-1,1])
+        this._box(slide,.004,.036,.006,M.gunDark,sx*.0225,.022,.02-i*.014);
+      box(.036,.036,.045,M.gunSteel,0,.022,-.175);     // muzzle block
+      box(.008,.016,.012,M.gunSteel,0,.054,-.135);     // front sight
+      box(.014,.018,.012,M.gunSteel,0,.052,.03);       // rear sight
+      box(.042,.05,.13,M.gunDark,0,-.018,.03);         // lower frame
+      box(.034,.1,.05,M.gunDark,0,-.09,.06,-.18);      // grip
+      box(.01,.025,.012,M.gunSteel,0,.046,.055);       // hammer
+      box(.012,.02,.05,M.gunDark,0,-.045,-.015);       // trigger guard
       g.userData.mag=box(.03,.055,.055,M.gunDark,0,-.075,.055,-.18);
-      g.userData.muzzle=new THREE.Vector3(0,.022,-.21); // 枪口端点(组内空间)
+      g.userData.muzzle=new THREE.Vector3(0,.022,-.21); // muzzle point (group space)
       this.models.deagle=g;
     }
-    /* --- 战术军刀 --- */
+    /* --- Tactical knife --- */
     {
       const g=this._mk();
       const box=(...a)=>this._box(g,...a);
-      box(.02,.044,.095,M.gunDark,0,-.005,.055);       // 刀柄
-      for(let i=0;i<3;i++)box(.023,.006,.02,M.gunPoly,0,-.02+i*.018,.075); // 缠柄
-      box(.036,.014,.014,M.gunDark,0,-.005,-.005);     // 护手
-      box(.007,.03,.15,M.gunSteel,0,0,-.085);          // 刀刃
-      box(.007,.02,.05,M.gunSteel,0,.006,-.178,.22);   // 刀尖
+      box(.02,.044,.095,M.gunDark,0,-.005,.055);       // handle
+      for(let i=0;i<3;i++)box(.023,.006,.02,M.gunPoly,0,-.02+i*.018,.075); // handle wrap
+      box(.036,.014,.014,M.gunDark,0,-.005,-.005);     // guard
+      box(.007,.03,.15,M.gunSteel,0,0,-.085);          // blade
+      box(.004,.026,.13,M.gunSteel,.0045,0,-.08);      // edge bevel (highlight strip on the right edge)
+      box(.007,.02,.05,M.gunSteel,0,.006,-.178,.22);   // tip
+      box(.006,.052,.008,M.gunDark,0,-.005,.108);      // pommel ring
       this.models.knife=g;
     }
-    /* --- 通用细节件:扳机/护弓/抛壳口(长枪类) --- */
+    /* --- Shared details: trigger / guard / ejection port (long guns) --- */
     const trigZ={ak47:.08,m4a4:.075,mp5:.05,sg553:.04,awp:.06,aug:.03};
     for(const id in trigZ){
       const g=this.models[id],z=trigZ[id];
       const box=(...a)=>this._box(g,...a);
-      box(.006,.018,.006,M.gunDark,0,-.036,z-.024,.25); // 扳机
-      box(.008,.005,.048,M.gunDark,0,-.055,z-.03);      // 护弓下沿
-      box(.008,.032,.005,M.gunDark,0,-.038,z-.054);     // 护弓前柱
-      box(.004,.016,.05,M.gunDark,(id==='ak47'?.024:.027),.018,-.01); // 抛壳口
+      box(.006,.018,.006,M.gunDark,0,-.036,z-.024,.25); // trigger
+      box(.008,.005,.048,M.gunDark,0,-.055,z-.03);      // guard bottom
+      box(.008,.032,.005,M.gunDark,0,-.038,z-.054);     // guard front post
+      box(.004,.016,.05,M.gunDark,(id==='ak47'?.024:.027),.018,-.01); // ejection port
     }
+    /* --- Extra detail: magazine ribs / front sight wings / butt plates --- */
+    const ribs={ak47:[.034,.05],m4a4:[.036,.06],awp:[.034,.064],mp5:[.03,.036],sg553:[.032,.042],aug:[.034,.042]};
+    for(const id in ribs){
+      const mag=this.models[id].userData.mag;
+      if(!mag)continue;
+      const [w,d]=ribs[id];
+      this._box(mag,w,.005,d,M.gunDark,0,.03,0);   // magazine top rib
+      this._box(mag,w,.005,d,M.gunDark,0,-.03,0);  // magazine bottom rib
+    }
+    // AK-47 front sight wings
+    this._box(this.models.ak47,.004,.028,.02,M.gunDark,-.014,.056,-.53);
+    this._box(this.models.ak47,.004,.028,.02,M.gunDark,.014,.056,-.53);
+    // MP5 front sight ring wings
+    this._box(this.models.mp5,.004,.02,.02,M.gunDark,-.013,.046,-.34);
+    this._box(this.models.mp5,.004,.02,.02,M.gunDark,.013,.046,-.34);
+    // M4A4 / AK-47 butt plates
+    this._box(this.models.m4a4,.05,.08,.014,M.gunPoly,0,-.005,.345);
+    this._box(this.models.ak47,.047,.08,.012,M.gunDark,0,-.008,.24);
     this.group.add(this.models.ak47,this.models.m4a4,this.models.aug,this.models.sg553,
       this.models.awp,this.models.mp5,this.models.deagle,this.models.knife);
     for(const k in this.models)this.models[k].visible=false;
     this.models.m4a4.visible=true;
   }
 
-  /* ================= 第一人称手臂 =================
-     单臂 = 挽袖小臂(肤色)+ 袖口(作战服)+ 手;挂在武器模型组内,
-     自动继承后坐/ADS/换弹/切枪/军刀挥砍动画。tip=握持点,entry=画面外入场点。 */
+  /* ================= First-person arms =================
+     One arm = rolled-sleeve forearm (skin) + cuff (uniform) + hand; parented inside the weapon model group,
+     so it inherits recoil / ADS / reload / switch / knife animations. tip = grip point, entry = off-screen entry point. */
   _arm(g,tip,entry,r=.034,opts={}){
     const M=this.assets.mats;
     const dir=entry.clone().sub(tip);
@@ -306,7 +334,7 @@ export class Weapon{
     slv.position.copy(tip).addScaledVector(dir,.82);
     slv.quaternion.copy(fore.quaternion);
     g.add(slv);
-    /* 战术手套:掌体 + 四指横排包裹 + 拇指(组空间:指节朝 -z 包住握把前缘) */
+    /* Tactical glove: palm + four wrapped fingers in a row + thumb (group space: knuckles toward -z around the front of the grip) */
     const glove=M.gloveDark.clone();
     this._armGloves.push(glove);
     const fist=new THREE.Group();
@@ -320,54 +348,54 @@ export class Weapon{
     const th=new THREE.Mesh(new THREE.BoxGeometry(r*.48,r*1.0,r*.62),glove);
     th.position.set((opts.side||-1)*r*.9,r*.25,-r*.3);th.rotation.z=.55*(opts.side||-1);
     fist.add(th);
-    // 腕口
+    // Wrist cuff
     const cuff=new THREE.Mesh(new THREE.BoxGeometry(r*1.7,r*.5,r*1.2),sleeveMat);
     cuff.position.y=r*1.15;fist.add(cuff);
     fist.position.copy(tip);
-    fist.position.z+=r*.4; // 拳体后移露出指节,别埋进握把
+    fist.position.z+=r*.4; // move the fist back to show the knuckles instead of burying them in the grip
     fist.rotation.x=opts.tilt!=null?opts.tilt:.15;
     g.add(fist);
   }
   _addFPArms(){
-    // 步枪:右手握把 + 左手压护木上沿(双手均为战术手套,袖口在画面边缘内)
+    // Rifles: right hand on the grip + left hand over the handguard (both gloved; cuffs stay inside the frame edge)
     for(const id of['ak47','m4a4']){
       const g=this.models[id];
       this._arm(g,new THREE.Vector3(.012,-.075,.08),new THREE.Vector3(.13,-.25,.18),.036,{tilt:.12,side:-1});
       this._arm(g,new THREE.Vector3(-.005,-.012,-.24),new THREE.Vector3(-.14,-.22,-.04),.038,{tilt:1.0,side:1});
     }
-    // AUG:握把 + 前垂直握把
+    // AUG: grip + vertical foregrip
     {
       const ag=this.models.aug;
       this._arm(ag,new THREE.Vector3(.01,-.075,.05),new THREE.Vector3(.13,-.25,.18),.036,{tilt:.12,side:-1});
       this._arm(ag,new THREE.Vector3(-.005,-.062,-.16),new THREE.Vector3(-.13,-.22,-.02),.037,{tilt:.95,side:1});
     }
-    // SG 553:握把 + 前握把
+    // SG 553: grip + foregrip
     {
       const sg=this.models.sg553;
       this._arm(sg,new THREE.Vector3(.01,-.078,.045),new THREE.Vector3(.13,-.25,.18),.036,{tilt:.12,side:-1});
       this._arm(sg,new THREE.Vector3(-.005,-.062,-.145),new THREE.Vector3(-.13,-.22,-.02),.037,{tilt:.95,side:1});
     }
-    // AWP:右手握把 + 左手托护木前部
+    // Longbow: right hand on the grip + left hand under the front of the handguard
     {
       const aw=this.models.awp;
       this._arm(aw,new THREE.Vector3(.012,-.08,.06),new THREE.Vector3(.13,-.25,.18),.035,{tilt:.12,side:-1});
       this._arm(aw,new THREE.Vector3(-.008,-.024,-.2),new THREE.Vector3(-.14,-.24,-.04),.038,{tilt:.95,side:1});
     }
-    // MP5:右手握把 + 左手托护木
+    // MP5: right hand on the grip + left hand under the handguard
     {
       const m5=this.models.mp5;
       this._arm(m5,new THREE.Vector3(.01,-.072,.05),new THREE.Vector3(.13,-.25,.18),.035,{tilt:.12,side:-1});
       this._arm(m5,new THREE.Vector3(-.008,-.058,-.18),new THREE.Vector3(-.13,-.22,-.02),.037,{tilt:.9,side:1});
     }
-    // 沙鹰:双手合握
+    // Desert Eagle: two-handed grip
     const dg=this.models.deagle;
     this._arm(dg,new THREE.Vector3(.01,-.075,.06),new THREE.Vector3(.13,-.24,.26),.032,{tilt:.12,side:-1});
     this._arm(dg,new THREE.Vector3(.045,-.058,.02),new THREE.Vector3(-.12,-.22,.14),.03,{tilt:.5,side:1});
-    // 军刀:单手反握
+    // Knife: single-handed reverse grip
     this._arm(this.models.knife,new THREE.Vector3(0,-.045,.05),new THREE.Vector3(.13,-.22,.24),.033,{tilt:.45,side:-1});
   }
 
-  /* C3:第一人称手臂按干员阵营/性别换色(CT 蓝灰 / T 暗红;女性肤色) */
+  /* C3: first-person arms recoloured by operator faction / gender (Nova blue-grey / Rogue dark red; female skin tone) */
   setFaction(op){
     if(!op)return;
     const A=this.assets.mats;
@@ -390,7 +418,7 @@ export class Weapon{
     }
   }
 
-  /* ================= 装填(阵营定装:全部主武器随身) ================= */
+  /* ================= Loadout (faction issue: every primary carried) ================= */
   setLoadout(primaryIds,startIndex=0){
     const list=(Array.isArray(primaryIds)?primaryIds:[primaryIds])
       .map(id=>WEAPON_DEFS[id]).filter(Boolean);
@@ -405,15 +433,15 @@ export class Weapon{
     this.ui.setSlotNames(this.defs.map(wSlot));
   }
 
-  /* ================= 切换(CS 槽位语义) =================
-     1 = 主武器槽:已在主武器上时反复按在 4 把之间循环;在副武器/军刀上按 1 回到最近主武器
-     2 = 沙漠之鹰  3 = 军刀  滚轮 = 全部武器顺序切换 */
+  /* ================= Switching (slot semantics) =================
+     1 = primary slot: pressing it on a primary cycles through all 4; from the pistol / knife it returns to the last primary
+     2 = Desert Eagle  3 = knife  wheel = cycle through every weapon */
   switchTo(idx){
     if(idx<0||idx>=this.defs.length)return;
     if(this.switchT>=0)return;
     let target=idx;
     if(idx===0&&this.primaryCount>1){
-      // 主武器槽:同槽循环
+      // Primary slot: cycle within the slot
       target=this.cur<this.primaryCount?(this.cur+1)%this.primaryCount:this.lastPrimary;
       if(target===this.cur)return;
     }
@@ -433,17 +461,17 @@ export class Weapon{
     const d=this.defs[idx],s=this.state[idx];
     this.ui.setAmmo(d.melee?-1:s.ammo,d.melee?0:s.reserve,this.reloading,wName(d));
     this.recoilIdx=0;this.camKickYaw=0;
-    // 武器负重移速(CS 机制:持重武器移动更慢)
+    // Weapon weight affects move speed (heavier weapons move slower)
     this.speedCb&&this.speedCb(d.speedMul||1);
   }
   get def(){return this.defs[this.cur];}
   get st(){return this.state[this.cur];}
   get muzzleLocal(){
-    // 相机空间近似:枪组实时位姿 + 枪口端点(随 ADS/后坐/呼吸摆动同步变化)
+    // Camera-space approximation: live gun group pose + muzzle point (follows ADS / recoil / sway)
     return this.muzzleCameraLocal(new THREE.Vector3());
   }
   muzzleCameraLocal(target){
-    // 可传入复用向量,热路径零分配
+    // Accepts a reusable vector: zero allocation on the hot path
     const d=this.def;
     if(d.melee)return target.copy(this.group.position);
     const tip=this.models[d.id].userData.muzzle;
@@ -454,8 +482,8 @@ export class Weapon{
     const d=this.def;
     let s=this.adsAmt>.7?d.spreadAds:d.spreadHip;
     s+=(1-this.adsAmt)*Math.min(.016,player.vel.length()*d.moveSpread);
-    if(player.airborne)s+=.045;   // 跳跃中精准度崩坏(CS 机制)
-    if(player.crouching)s*=.62;   // 蹲伏更稳
+    if(player.airborne)s+=.045;   // accuracy collapses while jumping
+    if(player.crouching)s*=.62;   // crouching is steadier
     s+=this.heat;
     return s;
   }
@@ -484,7 +512,7 @@ export class Weapon{
   }
 
   update(dt,input,player,cam,time,fireCb){
-    // 切枪动画
+    // Switch animation
     if(this.switchT>=0){
       this.switchT+=dt;
       const half=.16;
@@ -500,7 +528,7 @@ export class Weapon{
         this.switchT=-1;
       }
       this.ui.reloadRing(-1);
-      // 切枪期间不射击
+      // No firing while switching
       this.camKick*=Math.max(0,1-7*dt);
       this.gunKickZ*=Math.max(0,1-9*dt);this.gunKickRX*=Math.max(0,1-9*dt);this.gunKickRY*=Math.max(0,1-7*dt);
       this.camKickYaw*=Math.max(0,1-6*dt);
@@ -511,11 +539,11 @@ export class Weapon{
 
     const d=this.def,s=this.st;
 
-    // ADS(军刀无瞄准)
+    // ADS (the knife cannot aim)
     const wantAds=input.ads&&!d.melee&&!this.reloading&&!player.sprinting;
     this.adsAmt+=((wantAds?1:0)-this.adsAmt)*Math.min(1,10*dt);
 
-    // 换弹
+    // Reload
     const rdur=d.reloadDur/(this.reloadSpeedMul||1);
     if(this.reloading){
       this.reloadT+=dt;
@@ -527,10 +555,10 @@ export class Weapon{
       if(this.reloadT>=rdur){this.finishReload();this.ui.reloadRing(-1);}
     }else this.ui.reloadRing(-1);
 
-    // 开火
+    // Fire
     this.fireT-=dt;
     if(d.melee){
-      // 军刀:左键挥砍(40)/ 右键重刺(65)
+      // Knife: left click slash (40) / right click heavy stab (65)
       const slash=input.firing&&!this._trigWasDown;
       const stab=input.ads&&!this._adsWas;
       if(slash&&this.fireT<=0)this._swing(false,fireCb);
@@ -538,15 +566,16 @@ export class Weapon{
     }else{
       const canFire=!this.reloading&&s.ammo>0&&!player.sprinting;
       const trig=input.firing&&s.ammo>0;
-      const wantFire=d.auto?trig:(trig&&!this._trigWasDown); // 半自动:扳机沿触发
+      const wantFire=d.auto?trig:(trig&&!this._trigWasDown); // semi-auto: fires on the trigger edge
       if(wantFire&&canFire&&this.fireT<=0){
-        this.fireT=60/(d.rpm*(this.rpmMul||1));
+        // Carry over last frame's overshoot (at most one frame) so the fire rate is not rounded down by the frame rate (MP5 @60fps back from ~720 to 800 rpm)
+        this.fireT=Math.max(this.fireT,-dt)+60/(d.rpm*(this.rpmMul||1));
         s.ammo--;
         this.heat=Math.min(d.heatMax,this.heat+d.heatShot);
         const ads=this.adsAmt;
         const rm=this.recoilMul||1;
         this.camKick+=(ads>.7?d.kickAds:d.kick)*rm;
-        // 后坐力弹道模式:确定性垂直爬升 + 水平漂移(CS 风格压枪)
+        // Recoil pattern: deterministic vertical climb + horizontal drift (learnable spray control)
         const rec=recoilShot(d,this.recoilIdx,ads>.7);
         this.camKick+=rec.up*rm;
         this.camKickYaw+=rec.right*rm;
@@ -554,9 +583,9 @@ export class Weapon{
         this.recoilReset=.35;
         this.gunKickZ=Math.min(.07,this.gunKickZ+(d.id==='deagle'?.03:.018));
         this.gunKickRX=Math.min(.12,this.gunKickRX+(d.id==='deagle'?.05:.03));
-        this.gunKickRY+=(Math.random()-.5)*(d.id==='deagle'?.05:.02); // 随机水平甩动
+        this.gunKickRY+=(Math.random()-.5)*(d.id==='deagle'?.05:.02); // random horizontal flick
         this.gunKickRY=Math.max(-.07,Math.min(.07,this.gunKickRY));
-        if(d.id==='deagle')this._slide=1; // 套筒后滑
+        if(d.id==='deagle')this._slide=1; // slide cycles back
         this.muzzleFlashT=d.id==='deagle'?.05:.045;
         this._ejectShell();
         if(d.id==='deagle')this.audio.deagle();
@@ -569,7 +598,7 @@ export class Weapon{
       }
       if(input.firing)this._emptyClicked=false;
       this.heat=Math.max(0,this.heat-dt*.010);
-      // 停火后弹道模式复位
+      // Reset the recoil pattern once firing stops
       if(input.firing)this.recoilReset=.35;
       else{
         this.recoilReset-=dt;
@@ -579,7 +608,7 @@ export class Weapon{
     this._trigWasDown=!!input.firing;
     this._adsWas=!!input.ads;
 
-    // 后坐恢复
+    // Recoil recovery
     this.camKick*=Math.max(0,1-7*dt);
     this.gunKickZ*=Math.max(0,1-9*dt);
     this.gunKickRX*=Math.max(0,1-9*dt);
@@ -587,7 +616,7 @@ export class Weapon{
     this.camKickYaw*=Math.max(0,1-6*dt);
     this._slide=Math.max(0,this._slide-dt*9);
 
-    // 姿态
+    // Pose
     const spd=player.vel.length();
     if(spd>.5)this.bobT+=dt*spd*1.9;
     const bobA=(1-this.adsAmt*.85)*(player.sprinting?.35:1);
@@ -611,7 +640,7 @@ export class Weapon{
     pos.z+=this.gunKickZ;
     rot.x-=this.gunKickRX;
     rot.y+=this.gunKickRY;
-    // 套筒后滑(沙鹰)
+    // Slide recoil (Desert Eagle)
     const slide=this.models[d.id].userData.slide;
     if(slide)slide.position.z=slide.userData.z0+this._slide*.06;
     if(this.reloading){
@@ -619,7 +648,7 @@ export class Weapon{
       rot.z+=Math.sin(ph*Math.PI)*.5;
       rot.x+=Math.sin(ph*Math.PI*2)*.06;
     }
-    // 军刀挥击动画
+    // Knife swing animation
     if(this.swingT>0){
       this.swingT=Math.max(0,this.swingT-dt*(this.swingHeavy?1.6:2.6));
       const a=Math.sin(this.swingT*Math.PI);
@@ -627,14 +656,14 @@ export class Weapon{
       else{pos.z-=a*.1;rot.z-=a*.85;rot.x+=a*.18;}
     }
 
-    // 枪口焰(对准真实枪口端点,组内空间)
+    // Muzzle flash (aligned to the real muzzle point, group space)
     if(this.muzzleFlashT>0){
       this.muzzleFlashT-=dt;
       const tip=this.models[d.id].userData.muzzle;
       if(tip){
         this.flash.visible=true;
         this.flash.position.copy(tip);
-        this.flash.position.z-=.035; // 略前伸,避免被准星遮住
+        this.flash.position.z-=.035; // nudged forward so the crosshair does not hide it
         this.flash.rotation.z=Math.random()*Math.PI*2;
         const sc=d.id==='deagle'?.62:.95;
         const fs=(0.85+Math.random()*.5)*sc;
@@ -648,7 +677,7 @@ export class Weapon{
       this.flashLight.intensity*=Math.max(0,1-25*dt);
     }
 
-    // 抛壳
+    // Shell ejection
     for(const sh of this.shells){
       if(!sh.active)continue;
       sh.t+=dt;
@@ -662,7 +691,7 @@ export class Weapon{
     this.ui.weaponSlots(this.cur);
   }
 
-  /* 语言切换后刷新当前武器文案 */
+  /* Refresh the current weapon's labels after a language switch */
   refreshLang(){
     const d=this.def,s=this.st;
     this.ui.setSlotNames(this.defs.map(wSlot));

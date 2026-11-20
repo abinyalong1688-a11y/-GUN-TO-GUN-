@@ -1,6 +1,6 @@
-// leaderboard.js —— M4-P8 可选全球榜(默认关闭):
-//   · 关闭时零外部请求;开启时仅发送昵称+分数;失败静默;
-//   · 适配器接口:配置 endpoint 即可对接 Cloudflare Worker / Supabase。
+// leaderboard.js — M4-P8 optional global leaderboard (off by default):
+//   · zero external requests while off; when on, only callsign + score are sent; failures are silent;
+//   · adapter interface: set an endpoint to plug in a Cloudflare Worker / Supabase backend.
 const KEY='o07_leaderboard_optin';
 
 export class Leaderboard{
@@ -16,7 +16,7 @@ export class Leaderboard{
     try{localStorage.setItem(KEY,v?'1':'0');}catch(e){}
   }
 
-  /* 关闭或无端点时不发起任何请求 */
+  /* No request at all when disabled or without an endpoint */
   async submit(name,score){
     if(!this.enabled||!this.endpoint)return {ok:false,reason:'disabled'};
     try{

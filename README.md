@@ -8,7 +8,7 @@ Designed and developed end-to-end as an original project: every system — rende
 
 **Play online: https://abinyalong1688-a11y.github.io/-GUN-TO-GUN-/**
 
-Or **double-click [`dist/gun-to-gun.html`](dist/gun-to-gun.html)** (~0.65 MB, zero external requests, fully playable offline).
+Or **double-click [`dist/gun-to-gun.html`](dist/gun-to-gun.html)** (~0.8 MB, zero external requests, fully playable offline).
 
 | Key | Action |
 |---|---|
@@ -16,7 +16,7 @@ Or **double-click [`dist/gun-to-gun.html`](dist/gun-to-gun.html)** (~0.65 MB, ze
 | Space | Jump (gravity / landing physics — hop onto crates, stack-climb to container tops) |
 | Ctrl | Crouch (lower profile, slower movement, tighter spread) |
 | Mouse | Aim (left click to fire) · full 360° free look (unlimited pitch) |
-| Right click | Aim down sights (ADS) · high-magnification scope on AUG / AWP / SG 553 (scope overlay + zoom-compensated sensitivity) · heavy knife stab |
+| Right click | Aim down sights (ADS) · high-magnification scope on AUG / Longbow / SG 553 (scope overlay + zoom-compensated sensitivity) · heavy knife stab |
 | R | Reload |
 | 1 / 2 / 3 | Switch weapons: **tap 1 repeatedly to cycle all 4 primaries** / Desert Eagle / combat knife (mouse wheel cycles all 6) |
 | TAB | Scoreboard (deathmatch) |
@@ -27,21 +27,21 @@ Or **double-click [`dist/gun-to-gun.html`](dist/gun-to-gun.html)** (~0.65 MB, ze
 ## Characters
 
 - **Callsign login**: enter a nickname, shown in the killfeed and scoreboard
-- **Frost · CT Operative** (female): model-grade physique · ponytail that swings with the gait · refined facial features · tactical headset, 115 HP
-- **Ember · T Mercenary** (male): rugged and sharp · V-shaped broad shoulders / narrow waist · rolled-sleeve red jacket · clean short hair, +12% move speed / +25% reload speed
-- Both factions are mixed-gender squads (CT: Nightingale / Snowwolf / Swift / Thunder; T: Vulture / Firefox / Jackal / Blacksnake); first-person view shows gun-holding arms with tactical gloves
+- **Frost · Nova Operator** (female): model-grade physique · ponytail that swings with the gait · refined facial features · tactical headset, 115 HP
+- **Raven · Rogue Mercenary** (male): rugged and sharp · V-shaped broad shoulders / narrow waist · rolled-sleeve red jacket · clean short hair, +12% move speed / +25% reload speed
+- Both factions are mixed-gender squads (Nova: Frost / Snowwolf / Swift / Thunder; Rogue: Raven / Fox / Vulture / Viper); first-person view shows gun-holding arms with tactical gloves
 
 ## Weapons
 
 7 weapons with real ballistic physics; all 4 faction primaries are carried at once and switchable in-game.
 
 - **Primaries**
-  - CT: **M4A4** (31 dmg, stable) / **AUG** (30 dmg, 2.5× scope) / **AWP** (115 dmg, one-shot kill, 4.7× deep scope, bolt-action) / **MP5** (26 dmg, 800 RPM SMG)
-  - T: **AK-47** (36 dmg, heavy recoil) / **SG 553** (32 dmg, 2.2× scope) / **AWP** / **MP5**
+  - Nova: **M4A4** (31 dmg, stable) / **AUG** (30 dmg, 2.5× scope) / **Longbow** (115 dmg, one-shot kill, 4.7× deep scope, bolt-action) / **MP5** (26 dmg, 800 RPM SMG)
+  - Rogue: **AK-47** (36 dmg, heavy recoil) / **SG 553** (32 dmg, 2.2× scope) / **Longbow** / **MP5**
   - Switching: **tap 1 to cycle the 4 primaries** (from pistol/knife, 1 returns to the last primary); mouse wheel cycles all 6; the menu selection sets the starting weapon
 - **Sidearm**: Desert Eagle .50 AE (53 dmg, 7 rounds, semi-auto trigger — one click, one shot)
 - **Melee**: tactical combat knife (left-click slash 40 / right-click heavy stab 65, no ammo)
-- **Weapon weight affects movement**: AWP is the slowest, knife the fastest; applied instantly on every switch
+- **Weapon weight affects movement**: the Longbow is the slowest, the knife the fastest; applied instantly on every switch
 - **Recoil patterns**: deterministic climb + horizontal drift while firing, resets on release — spray control is a learnable skill
 - **Ballistics**: jumping wrecks accuracy, crouching tightens spread, movement increases dispersion, headshots ×2, red-core crits ×2.5
 - ADS sensitivity is automatically compensated by the zoom ratio
@@ -64,7 +64,7 @@ Four hand-built arenas, each with its own sky, lighting and atmosphere:
 ## Game Modes
 
 - **Endless Waves**: defend the outpost against three drone classes with detailed silhouettes — WASP (kamikaze) / REAPER (roaming shooter) / WARDEN (heavy: glowing sensor windows, core guard rings, wing plates / claw feet / gun shields, rotor hubs, breathing red-core pulse). Red-core crits ×2.5
-- **6-Player Deathmatch (3v3)**: you + 2 same-faction AI teammates vs 3 enemy AI. CT fires controlled bursts, T sprays. First to 25 kills wins, with killfeed, TAB scoreboard and respawns
+- **6-Player Deathmatch (3v3)**: you + 2 same-faction AI teammates vs 3 enemy AI. Nova fires controlled bursts, Rogue sprays. First to 25 kills wins, with killfeed, TAB scoreboard and respawns
   - Note: true networked multiplayer requires a persistent server, which conflicts with the "single file, offline-playable" goal — deathmatch delivers the same arena experience with AI combatants
 
 ## Sponsorship Placements
@@ -84,7 +84,7 @@ src/
   waves.js    Gameplay — wave scheduling / spawn throttling / supplies
   effects.js  FX — GPU point particles + dual-layer tracers (white-hot core / weapon-tinted halo / muzzle tip glow, parameterized per weapon) + hit flashes + normal-aligned bullet decals + fireballs / shock rings / debris
   audio.js    Audio — every sound effect synthesized live via WebAudio (including the Desert Eagle's heavy report and knife swings); zero audio files
-  ui.js       UI — login menu / four-state interface / killfeed / scoreboard (CT vs T) / weapon bar
+  ui.js       UI — login menu / four-state interface / killfeed / scoreboard (Nova vs Rogue) / weapon bar
   main.js     Main loop — state machine + raycast hits (statics / drones / character spheres) + knife melee checks + Bloom / ACES
 build.mjs     esbuild bundle into a single HTML file
 ```

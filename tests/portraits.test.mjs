@@ -1,5 +1,5 @@
-// portraits.test.mjs —— 立绘渲染器兜底(S1.3 验收):
-//   Node 无 WebGL 环境下不得抛异常,render() 返回 null;dispose() 可重复调用。
+// portraits.test.mjs — portrait renderer fallback (S1.3 acceptance):
+//   without WebGL (Node) nothing may throw, render() returns null; dispose() is idempotent.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
@@ -16,7 +16,7 @@ function fakeAssets(){
   }};
 }
 
-test('无 WebGL 环境:render 返回 null 且不抛异常',()=>{
+test('no WebGL: render returns null and does not throw',()=>{
   const p=new PortraitRenderer(fakeAssets());
   assert.equal(p.render(byId('frost')),null);
   assert.equal(p.render(byId('raven'),'snow'),null);
@@ -25,7 +25,7 @@ test('无 WebGL 环境:render 返回 null 且不抛异常',()=>{
   assert.equal(p.render(byId('frost')),null);
 });
 
-test('缓存键按 id|camo|size 区分(无 WebGL 时不产生缓存)',()=>{
+test('cache keys distinguish id|camo|size (no cache entries without WebGL)',()=>{
   const p=new PortraitRenderer(fakeAssets());
   p.render(byId('frost'),'default',256);
   assert.equal(p.cache.size,0);

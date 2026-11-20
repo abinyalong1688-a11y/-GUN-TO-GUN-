@@ -1,5 +1,5 @@
-// character.test.mjs —— 角色构建器(S1.2 验收):
-//   部件完整 / 材质数量 / 几何共享 / 迷彩覆盖 / 淡出与自发光 / dispose 不释放共享几何
+// character.test.mjs — operator mesh builder (S1.2 acceptance):
+//   complete parts / material count / shared geometry / camo override / fade and emissive / dispose keeps shared geometry
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
@@ -22,48 +22,48 @@ function collectGeometries(root){
   return set;
 }
 
-test('角色部件完整:头/躯干/四肢/马尾/步枪/枪口',()=>{
+test('character parts complete: head / torso / limbs / ponytail / rifle / muzzle',()=>{
   const built=buildOperatorMesh(fakeAssets(),byId('frost'));
   const p=built.parts;
   for(const k of ['head','torso','armL','armR','legL','legR','pony','rifle','gunTip','nameTagAnchor'])
-    assert.ok(p[k],`缺少部件 ${k}`);
+    assert.ok(p[k],`missing part ${k}`);
   assert.ok(p.headY>1.5&&p.headY<1.7);
   assert.ok(built.group.children.length>0);
   built.dispose();
 });
 
-test('每角色材质 ≤12 且互相独立',()=>{
+test('at most 12 materials per character, independent between characters',()=>{
   const assets=fakeAssets();
   const a=buildOperatorMesh(assets,byId('frost'));
   const b=buildOperatorMesh(assets,byId('frost'));
-  assert.ok(a.materials.length<=12,`材质数量 ${a.materials.length} 超过 12`);
-  assert.equal(new Set(a.materials).size,a.materials.length,'材质数组不应重复');
-  for(const m of a.materials)assert.ok(!b.materials.includes(m),'两个角色不应共享克隆材质');
+  assert.ok(a.materials.length<=12,`material count ${a.materials.length} exceeds 12`);
+  assert.equal(new Set(a.materials).size,a.materials.length,'material array must not contain duplicates');
+  for(const m of a.materials)assert.ok(!b.materials.includes(m),'two characters must not share cloned materials');
   a.dispose();b.dispose();
 });
 
-test('几何体缓存:同参数角色共享几何',()=>{
+test('geometry cache: characters with the same parameters share geometry',()=>{
   const assets=fakeAssets();
   const a=buildOperatorMesh(assets,byId('frost'));
   const b=buildOperatorMesh(assets,byId('frost'));
   const ga=collectGeometries(a.group),gb=collectGeometries(b.group);
   assert.equal(gb.size,ga.size);
-  for(const g of gb)assert.ok(ga.has(g),'同参数几何应命中缓存');
+  for(const g of gb)assert.ok(ga.has(g),'same-parameter geometry should hit the cache');
   a.dispose();b.dispose();
 });
 
-test('迷彩覆盖服装色但不改强调色',()=>{
+test('camo overrides clothing colours but not the accent colour',()=>{
   const assets=fakeAssets();
   const def=byId('frost');
   const normal=buildOperatorMesh(assets,def,{camo:'default'});
   const snow=buildOperatorMesh(assets,def,{camo:'snow'});
-  const jacketIdx=2; // materials 顺序:skin,hair,jacket,...
+  const jacketIdx=2; // material order: skin, hair, jacket, ...
   assert.notEqual(snow.materials[jacketIdx].color.getHex(),normal.materials[jacketIdx].color.getHex());
-  assert.equal(snow.materials[5].color.getHex(),def.palette.accent,'迷彩不应改强调色');
+  assert.equal(snow.materials[5].color.getHex(),def.palette.accent,'camo must not change the accent colour');
   normal.dispose();snow.dispose();
 });
 
-test('fadeMaterials:透明/不写深度;setEmissive:自发光',()=>{
+test('fadeMaterials: transparent / no depth write; setEmissive: emissive',()=>{
   const built=buildOperatorMesh(fakeAssets(),byId('raven'));
   fadeMaterials(built.materials,.4);
   for(const m of built.materials){
@@ -83,7 +83,7 @@ test('fadeMaterials:透明/不写深度;setEmissive:自发光',()=>{
   built.dispose();
 });
 
-test('dispose 只释放克隆材质,不释放共享几何',()=>{
+test('dispose frees only cloned materials, never shared geometry',()=>{
   const built=buildOperatorMesh(fakeAssets(),byId('frost'));
   const geom=built.parts.head.children[0].geometry;
   let geoDisposed=false;
@@ -95,6 +95,6 @@ test('dispose 只释放克隆材质,不释放共享几何',()=>{
     m.dispose=()=>{matDisposed++;od();};
   }
   built.dispose();
-  assert.equal(geoDisposed,false,'共享几何不应被 dispose');
-  assert.equal(matDisposed,built.materials.length,'克隆材质应全部释放');
+  assert.equal(geoDisposed,false,'shared geometry must not be disposed');
+  assert.equal(matDisposed,built.materials.length,'all cloned materials should be disposed');
 });
