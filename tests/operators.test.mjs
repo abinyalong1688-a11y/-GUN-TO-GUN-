@@ -30,7 +30,6 @@ test('operator required fields are complete',()=>{
     for(const k of ['skin','hair','jacket','armor','accent','cloth'])
       assert.equal(typeof o.palette[k],'number',`${o.id} palette.${k} should be a number`);
     assert.ok(Array.isArray(o.extras)&&o.extras.length<=3,`${o.id} extras should be an array of at most 3`);
-    assert.ok(o.bio.zh&&o.bio.en,`${o.id} is missing a bio`);
     assert.ok(o.quote.zh&&o.quote.en,`${o.id} is missing a quote`);
     assert.ok(o.voice.pitch>0,`${o.id} is missing a voice pitch`);
   }

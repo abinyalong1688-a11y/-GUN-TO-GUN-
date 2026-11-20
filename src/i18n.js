@@ -22,7 +22,6 @@ const STR={
     op_locked:'未解锁',
     op_select:'选择',
     op_camo:'迷彩',
-    op_bio:'档案',
     op_quote:'台词',
     op_hp:'生命',
     op_speed:'移速',
@@ -147,7 +146,6 @@ const STR={
     op_locked:'LOCKED',
     op_select:'SELECT',
     op_camo:'CAMO',
-    op_bio:'BIO',
     op_quote:'QUOTE',
     op_hp:'HP',
     op_speed:'SPEED',
@@ -333,5 +331,5 @@ export function applyStatic(){
   // Map / mode chips (looked up by data attribute)
   document.querySelectorAll('#m-maps .chip').forEach(c=>{c.textContent=t('map_'+c.dataset.map);});
   document.querySelectorAll('#m-modes .chip').forEach(c=>{c.textContent=t('mode_'+c.dataset.mode);});
-  // Operator cards are rebuilt by UI.buildOperators() (names / bios / quotes come from operators.js)
+  // Operator cards are rebuilt by UI.buildOperators() (names / quotes come from operators.js)
 }

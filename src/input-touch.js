@@ -1,5 +1,6 @@
 // input-touch.js — M4-P1 touch support:
-//   left virtual stick writes WASD, right-side drag writes look, buttons write fire / aim / reload / jump / crouch / switch / grenade;
+//   left virtual stick writes WASD, right-side drag writes look;
+//   right cluster = big hold-to-fire button with aux buttons on an arc around it (fire / aim / reload / jump / crouch / switch / grenade);
 //   light aim assist within 6° can be disabled in settings; ?touch=1 forces it on desktop for testing.
 import * as THREE from 'three';
 
@@ -26,6 +27,9 @@ export class TouchAdapter{
     const root=document.getElementById('touch-ui');
     if(!root)return;
     root.classList.remove('hidden');
+    document.body.classList.add('touch');
+    this.layout();
+    this._on(window,'resize',()=>this.layout());
     const stick=document.getElementById('touch-stick');
     const knob=stick&&stick.querySelector('i');
     const look=document.getElementById('touch-look');
@@ -38,7 +42,10 @@ export class TouchAdapter{
       if(this.dy>.18)g.keys.add('KeyS');
       if(this.dx<-.18)g.keys.add('KeyA');
       if(this.dx>.18)g.keys.add('KeyD');
-      if(knob)knob.style.transform=`translate(${this.dx*34}px,${this.dy*34}px)`;
+      if(knob){
+        const travel=stick.clientWidth*.26;
+        knob.style.transform=`translate(${this.dx*travel}px,${this.dy*travel}px)`;
+      }
     };
 
     if(stick){
@@ -81,11 +88,12 @@ export class TouchAdapter{
 
     for(const btn of document.querySelectorAll('#touch-acts button')){
       const act=btn.dataset.act;
+      if(act==='ads'&&g._mouseAds)btn.classList.add('on');
       this._on(btn,'pointerdown',e=>{
         e.preventDefault();
         if(g.state!=='playing')return;
-        if(act==='fire'){g.input.firing=true;g._mouseFire=true;} // merged with gamepad polling so it is not overwritten
-        else if(act==='ads'){g._mouseAds=!g._mouseAds;g.input.ads=g._mouseAds;}
+        if(act==='fire'){g.input.firing=true;g._mouseFire=true;btn.classList.add('held');} // merged with gamepad polling so it is not overwritten
+        else if(act==='ads'){g._mouseAds=!g._mouseAds;g.input.ads=g._mouseAds;btn.classList.toggle('on',g._mouseAds);}
         else if(act==='reload')g.weapon.startReload();
         else if(act==='jump'||act==='crouch')g.keys.add(act==='jump'?'Space':'ControlLeft');
         else if(act==='switch')g.weapon.switchTo((g.weapon.cur+1)%g.weapon.primaryCount);
@@ -93,7 +101,7 @@ export class TouchAdapter{
       });
       const end=e=>{
         e.preventDefault();
-        if(act==='fire'){g.input.firing=false;g._mouseFire=false;}
+        if(act==='fire'){g.input.firing=false;g._mouseFire=false;btn.classList.remove('held');}
         else if(act==='jump'||act==='crouch')g.keys.delete(act==='jump'?'Space':'ControlLeft');
       };
       this._on(btn,'pointerup',end);
@@ -108,6 +116,34 @@ export class TouchAdapter{
     };
     this._on(window,'resize',check); // tracked in _handlers so detach removes it too
     check();
+  }
+
+  /* Fire cluster: big fire button bottom-right, six aux buttons on a quarter-arc (left → top) around it.
+     Everything scales with the short viewport edge so small landscape phones stay inside the screen. */
+  layout(){
+    const root=document.getElementById('touch-ui');
+    if(!root||root.classList.contains('hidden'))return;
+    const W=innerWidth,H=innerHeight;
+    const u=Math.max(.8,Math.min(1.5,Math.min(W,H)/400));
+    // aux targets keep a >=50px (~9mm) floor on small phones; arc radius buys >=2mm inter-key gaps.
+    // caps stop the cluster over-reaching on large/tablet landscape.
+    const fireR=54*u,auxR=Math.max(25,Math.min(30,26*u)),arc=Math.min(200,195*u);
+    const cx=W-fireR-28*u,cy=H-fireR-26*u;
+    const place=(act,x,y,r)=>{
+      const b=document.querySelector(`#touch-acts [data-act=${act}]`);
+      if(!b)return;
+      b.style.left=x+'px';b.style.top=y+'px';
+      b.style.width=b.style.height=r*2+'px';
+      const s=b.querySelector('span');
+      if(s)s.style.fontSize=(act==='fire'?r*.2:Math.max(8,r*.35))+'px';
+    };
+    place('fire',cx,cy,fireR);
+    const order=['ads','reload','grenade','switch','crouch','jump'];
+    const a0=185*Math.PI/180,a1=85*Math.PI/180; // left of fire → above fire
+    order.forEach((act,i)=>{
+      const a=a0+(a1-a0)*i/(order.length-1);
+      place(act,cx+arc*Math.cos(a),cy-arc*Math.sin(a),auxR);
+    });
   }
 
   /* 6° light aim assist: only nudges when the crosshair is already near a target */
@@ -136,6 +172,7 @@ export class TouchAdapter{
     this._handlers.length=0;
     const root=document.getElementById('touch-ui');
     if(root)root.classList.add('hidden');
+    document.body.classList.remove('touch');
     for(const k of DIRS)this.game.keys.delete(k);
   }
 }

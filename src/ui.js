@@ -35,6 +35,7 @@ export class UI{
   progress:$('m-progress'),
       wslots:[...document.querySelectorAll('.wslot')],
       grenades:{frag:$('g-frag'),flash:$('g-flash'),smoke:$('g-smoke')},
+      fragBadge:$('tb-frag'),
       scope:$('scope-overlay'),
     };
     this.bannerT=0;
@@ -154,7 +155,6 @@ export class UI{
         const url=this.portraits?this.portraits.render(o,camo,256,{frame:'bust'}):null;
         const name=isEN()?o.name.en:o.name.zh;
         const role=isEN()?o.role.en:o.role.zh;
-        const bio=isEN()?o.bio.en:o.bio.zh;
         const quote=isEN()?o.quote.en:o.quote.zh;
         const selected=o.id===s.operator;
         const speed=(5.2*o.speedMul).toFixed(1);
@@ -163,7 +163,7 @@ export class UI{
           <div class="op-name">${escHTML(name)}</div>
           <div class="op-role">${escHTML(role)}</div>
           <div class="op-stats">${t('op_hp')} ${o.hp} · ${t('op_speed')} ${speed}</div>
-          ${selected?`<div class="op-bio">${escHTML(bio)}</div><div class="op-quote">“${escHTML(quote)}”</div>`:''}
+          ${selected?`<div class="op-quote">“${escHTML(quote)}”</div>`:''}
         </div>`);
       }
       html.push('</div></div>');
@@ -484,6 +484,10 @@ export class UI{
     if(g.frag)g.frag.textContent=counts.frag;
     if(g.flash)g.flash.textContent=counts.flash;
     if(g.smoke)g.smoke.textContent=counts.smoke;
+    if(this.el.fragBadge){
+      this.el.fragBadge.textContent=counts.frag;
+      this.el.fragBadge.classList.toggle('empty',counts.frag<=0);
+    }
   }
   /* M4-P4: KOTH capture status bar */
   setKoth(owner,ratio,a,b){

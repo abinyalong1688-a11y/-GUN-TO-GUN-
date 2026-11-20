@@ -178,10 +178,13 @@
     <div id="touch-stick"><i></i></div>
     <div id="touch-look"></div>
     <div id="touch-acts">
-      <button data-act="fire">FIRE</button><button data-act="ads">ADS</button>
-      <button data-act="reload">R</button><button data-act="jump">JMP</button>
-      <button data-act="crouch">CR</button><button data-act="switch">SW</button>
-      <button data-act="grenade">G</button>
+      <button data-act="fire" aria-label="Fire"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="1.8" fill="currentColor" stroke="none"/></svg><span>FIRE</span></button>
+      <button data-act="ads" aria-label="Aim down sights"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg><span>ADS</span></button>
+      <button data-act="reload" aria-label="Reload"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 3v4h-4"/></svg><span>R</span></button>
+      <button data-act="jump" aria-label="Jump"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V6"/><path d="M6 12l6-6 6 6"/></svg><span>JMP</span></button>
+      <button data-act="crouch" aria-label="Crouch"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v13"/><path d="M6 12l6 6 6-6"/></svg><span>CR</span></button>
+      <button data-act="switch" aria-label="Switch weapon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h13"/><path d="M14 4l4 4-4 4"/><path d="M20 16H7"/><path d="M10 12l-4 4 4 4"/></svg><span>SW</span></button>
+      <button data-act="grenade" aria-label="Throw grenade"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="14" r="6"/><path d="M10 8V5h4v3"/><path d="M14 5l4-3"/></svg><span>G</span><b id="tb-frag" class="tb-badge">2</b></button>
     </div>
   </div>
   <div id="rotate-hint" class="hidden" data-i="rotate_hint">Rotate your device to landscape</div>
