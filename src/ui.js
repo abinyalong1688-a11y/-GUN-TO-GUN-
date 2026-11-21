@@ -28,7 +28,7 @@ export class UI{
       oKicker:$('o-kicker'),oTitle:$('o-title'),oBoard:$('o-board'),oMvp:$('o-mvp'),
       debug:$('debug'),
       dmTop:$('dm-top'),dmTimer:$('dm-timer'),dmA:$('dm-a'),dmB:$('dm-b'),
-      killfeed:$('killfeed'),killcard:$('killcard'),barks:$('barks'),board:$('board'),
+      killfeed:$('killfeed'),barks:$('barks'),board:$('board'),
       dmgDir:$('dmg-dir'),combo:$('combo-callout'),
       mOperators:$('m-operators'),mCamos:$('m-camos'),
       koth:{bar:$('koth-bar'),name:$('koth-name'),fill:$('koth-fill'),score:$('koth-score')},
@@ -63,7 +63,6 @@ export class UI{
       this.barkPool.push({el:d,t:0});
     }
     this._barkIdx=0;
-    this.killcardT=0;
     this.errors=[];
     this._pv=new THREE.Vector3(); // reused for per-frame score popups
     this.dmgDirT=0;this.comboT=0;
@@ -408,26 +407,6 @@ export class UI{
     slot.el.innerHTML=`<b>${escHTML(killer)}</b> <span class="w">[${escHTML(weapon)}]</span> ${mine?'✖':t('killed')} <i>${escHTML(victim)}</i>`;
     slot.el.style.display='block';
   }
-  /* M2-A3: kill card (both portraits + callsigns + weapon, 1.6 s) */
-  killCard({killer,victim,weapon,mine,killerOp,victimOp}){
-    const el=this.el.killcard;
-    if(!el)return;
-    const face=(op,name)=>{
-      let url=null;
-      try{if(op&&this.portraits)url=this.portraits.render(op,'default',128,{frame:'bust'});}catch(e){}
-      return url
-        ?`<div class="kc-face" style="background-image:url('${url}')"></div>`
-        :`<div class="kc-face kc-fallback">${escHTML(String(name||'?').slice(0,1))}</div>`;
-    };
-    el.classList.remove('hidden');
-    el.classList.add('show');
-    el.classList.toggle('death',!mine);
-    el.innerHTML=`
-      <div class="kc-side">${face(killerOp,killer)}<div class="kc-name">${escHTML(killer)}</div></div>
-      <div class="kc-mid"><div class="kc-w">${escHTML(weapon||'')}</div><div class="kc-arrow">▶</div></div>
-      <div class="kc-side">${face(victimOp,victim)}<div class="kc-name">${escHTML(victim)}</div></div>`;
-    this.killcardT=1.6;
-  }
   /* M2-A2: radio barks (names from the operator def, lines from i18n) */
   bark(name,text,faction){
     const pool=this.barkPool;
@@ -556,13 +535,6 @@ export class UI{
     this.dmgLevel=Math.max(0,this.dmgLevel-dt*1.6);
     if(this.barkPool)for(const p of this.barkPool){
       if(p.t>0){p.t-=dt;if(p.t<=0)p.el.style.display='none';}
-    }
-    if(this.killcardT>0){
-      this.killcardT-=dt;
-      if(this.killcardT<=0&&this.el.killcard){
-        this.el.killcard.classList.remove('show');
-        this.el.killcard.classList.add('hidden');
-      }
     }
     const low=Math.max(0,1-health/max*2.2)*(0.55+Math.sin(performance.now()*.006)*.2);
     this.el.dmg.style.opacity=Math.min(1,this.dmgLevel+low*.7);

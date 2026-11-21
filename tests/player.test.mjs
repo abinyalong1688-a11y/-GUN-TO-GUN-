@@ -94,6 +94,14 @@ test('air control damping: air acceleration is clearly weaker than on the ground
   KEYS.delete('KeyW');
 });
 
+test('spawn: a fresh player faces the enemy side (-z), not away from it',()=>{
+  const p=makePlayer();
+  assert.ok(Math.abs(p.yaw)<.001,'spawn yaw should be 0');
+  p.reset();
+  const f=p.forward();
+  assert.ok(f.z<-.99&&Math.abs(f.x)<.001,'spawn and redeploy should both face -z, got x='+f.x.toFixed(2)+' z='+f.z.toFixed(2));
+});
+
 test('forward vector: yaw maps to the right travel direction',()=>{
   const p=makePlayer();
   p.yaw=0; // facing -z

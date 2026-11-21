@@ -235,7 +235,6 @@ class Game{
     if(this.shotMode==='combat')this._shotCombat();
     else if(this.shotMode==='dm')this._shotDm();
     else if(this.shotMode==='over')this._shotOver();
-    else if(this.shotMode==='killcard')this._shotKillcard();
     else if(this.shotMode==='mvp')this._shotMvp();
     else if(this.shotMode==='tutorial')this._shotTutorial();
     else if(this.shotMode==='spectate')this._shotSpectate();
@@ -807,12 +806,6 @@ class Game{
     if(v)v.deaths++;
     const mine=killerName===this.playerName;
     this.ui.killFeed(killerName,victimHero.name,t('kill_verb'),mine);
-    const ks=this.dm.scores.get(killerName);
-    this.ui.killCard({
-      killer:killerName,victim:victimHero.name,
-      weapon:(ks&&ks.op&&ks.op.rifle||'rifle').toUpperCase(),
-      mine,killerOp:ks&&ks.op||this.playerOperator,victimOp:victimHero.def,
-    });
     if(mine){
       this.stats.kills++;
       this.addScore(200,victimHero.pos.clone().add(new THREE.Vector3(0,1.4,0)));
@@ -839,12 +832,6 @@ class Game{
         const killer=this.heroes.list.find(h=>h.name===fromName);
         if(killer&&killer.alive)this.spectate={target:killer,t:2.5};
       }
-      const src=this.heroes.list.find(h=>h.name===fromName);
-      this.ui.killCard({
-        killer:fromName,victim:this.playerName,
-        weapon:(src&&src.def.rifle||'rifle').toUpperCase(),
-        mine:false,killerOp:src&&src.def,victimOp:this.playerOperator,
-      });
     }
   }
   /* U2: world position → screen direction (0 straight ahead, positive clockwise), fades out over 0.8 s */
@@ -1252,15 +1239,6 @@ class Game{
 
   /* M3-G7: onboarding screenshot */
   _shotTutorial(){this.ui.showTutorial(TUTORIAL,()=>{});}
-
-  /* M2-A3: kill card screenshot */
-  _shotKillcard(){
-    const k=byId('frost'),v=byId('raven');
-    this.ui.killCard({
-      killer:isEN()?k.name.en:k.name.zh,victim:isEN()?v.name.en:v.name.zh,
-      weapon:'M4A4',mine:true,killerOp:k,victimOp:v,
-    });
-  }
 
   /* M2-A4: MVP results screenshot */
   _shotMvp(){
@@ -1719,18 +1697,6 @@ class Game{
       const d=cv.getContext('2d').getImageData(600,315,1,1).data;
       assert(d[3]>0,'share card should draw an opaque background');
       assert(typeof this.ui.downloadShareCard==='function','a download entry point should exist');
-    });
-    await run('killcard',()=>{
-      const evil='<img src=x onerror=alert(1)>';
-      this.ui.killCard({killer:evil,victim:'Frost',weapon:'AK47',mine:false,
-        killerOp:byId('raven'),victimOp:byId('frost')});
-      const el=document.getElementById('killcard');
-      assert(!el.classList.contains('hidden'),'kill card should show');
-      assert(this.ui.killcardT>1.5,'kill card should last 1.6 s');
-      assert(!el.innerHTML.includes('<img'),'player names should be escaped (no XSS)');
-      assert(el.classList.contains('death'),'being killed should use the death colour scheme');
-      this.ui.update(1.7,100,100);
-      assert(el.classList.contains('hidden'),'should hide automatically after 1.6 s');
     });
     await run('music-bgm',()=>{
       const a=this.audio;

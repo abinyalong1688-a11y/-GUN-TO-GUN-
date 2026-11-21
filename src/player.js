@@ -19,7 +19,7 @@ export class Player{
     this.airborne=false;         // in the air (hurts accuracy)
     this._eye=new THREE.Vector3();
     this._forward=new THREE.Vector3();
-    this.yaw=Math.PI/2+Math.PI*.15; // initially facing into the outpost
+    this.yaw=0;                     // initially facing the outpost center (-z), toward the enemy side
     this.pitch=-.05;
     this.health=100;this.maxHealth=100;this.alive=true;
     this.radius=.4;this.eyeHCur=EYE_STAND;
@@ -33,7 +33,7 @@ export class Player{
   reset(){
     this.pos.set(0,0,7);this.vel.set(0,0,0);
     this.velY=0;this.grounded=true;this.crouching=false;this.eyeHCur=EYE_STAND;
-    this.yaw=Math.PI/2+Math.PI*.15;this.pitch=-.05;
+    this.yaw=0;this.pitch=-.05;
     this.health=this.maxHealth;this.alive=true;this.lastHurt=-99;
   }
   get eye(){
