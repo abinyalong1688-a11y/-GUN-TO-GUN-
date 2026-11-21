@@ -463,8 +463,12 @@ export function buildOperatorMeshGLTF(assets,def,{camo='default'}={}){
   parts.pony=bones.pony||null;
   mountRifleTo(group,parts,bones,M,def,inst.profile);
   if(bones.headAnchor){
-    makeHeadgear(bones.headAnchor,M,def,def.gender==='f');
-    if(def.hair==='ponytail'&&!bones.pony)makePony(bones.headAnchor,M,parts); // no hair bone in the rig → procedural fallback
+    // Headgear pieces are sized for the procedural skull (~.105 m); scale to the rig's actual head
+    const H=new THREE.Group();
+    H.scale.setScalar(inst.profile.headR?inst.profile.headR/.105:1);
+    bones.headAnchor.add(H);
+    makeHeadgear(H,M,def,def.gender==='f');
+    if(def.hair==='ponytail'&&!bones.pony)makePony(H,M,parts); // no hair bone in the rig → procedural fallback
   }
   addExtrasGLTF(parts,M,def,bones);
   const anchor=new THREE.Object3D();

@@ -395,7 +395,8 @@ export class Weapon{
     this._arm(this.models.knife,new THREE.Vector3(0,-.045,.05),new THREE.Vector3(.13,-.22,.24),.033,{tilt:.45,side:-1});
   }
 
-  /* C3: first-person arms recoloured by operator faction / gender (Nova blue-grey / Rogue dark red; female skin tone) */
+  /* C3: first-person arms recoloured by operator faction / gender (Nova blue-grey / Rogue dark red; female skin tone).
+     Maps follow the faction bases too — the clone carries the old map, so reassign + needsUpdate (shader variant). */
   setFaction(op){
     if(!op)return;
     const A=this.assets.mats;
@@ -404,18 +405,17 @@ export class Weapon{
     const glove=this.faction==='ct'?A.gloveCT:A.gloveT;
     const skin=op.gender==='f'?A.skinF:A.skinM;
     this.armMats={sleeve,glove,skin};
-    for(const m of this._armSleeves){
-      m.color.copy(sleeve.color);
-      m.roughness=sleeve.roughness;m.metalness=sleeve.metalness;
-    }
-    for(const m of this._armGloves){
-      m.color.copy(glove.color);
-      m.roughness=glove.roughness;m.metalness=glove.metalness;
-    }
-    for(const m of this._armSkins){
-      m.color.copy(skin.color);
-      m.roughness=skin.roughness;m.metalness=skin.metalness;
-    }
+    const remap=(m,src)=>{
+      m.color.copy(src.color);
+      m.roughness=src.roughness;m.metalness=src.metalness;
+      m.envMapIntensity=src.envMapIntensity;
+      const map=src.map||null,nMap=src.normalMap||null,rMap=src.roughnessMap||null;
+      if(m.map!==map||m.normalMap!==nMap||m.roughnessMap!==rMap)m.needsUpdate=true;
+      m.map=map;m.normalMap=nMap;m.roughnessMap=rMap;
+    };
+    for(const m of this._armSleeves)remap(m,sleeve);
+    for(const m of this._armGloves)remap(m,glove);
+    for(const m of this._armSkins)remap(m,skin);
   }
 
   /* ================= Loadout (faction issue: every primary carried) ================= */

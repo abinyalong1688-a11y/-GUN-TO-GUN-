@@ -812,7 +812,7 @@ export function initAssets(){
     // Realistic 3D characters: skin pore map / hair / facial features / leather boots+gloves
     skinF:weaponMat(256,drawSkin,{metal:0,rough:.62,envInt:.3,nStr:.35}),
     skinM:weaponMat(256,drawSkin,{metal:0,rough:.7,envInt:.3,nStr:.35}),
-    skinN:new THREE.MeshStandardMaterial({color:0xd8a687,roughness:.55,metalness:0}),
+    skinN:weaponMat(256,drawSkin,{metal:0,rough:.62,envInt:.3,nStr:.35}),
     sclera:new THREE.MeshStandardMaterial({color:0xf6f3f0,roughness:.25}),
     iris:new THREE.MeshStandardMaterial({color:0x33241c,roughness:.3}),
     brow:new THREE.MeshStandardMaterial({color:0x2a1a12,roughness:.8}),
@@ -830,10 +830,10 @@ export function initAssets(){
     helmet:new THREE.MeshStandardMaterial({color:0x454f61,roughness:.58,metalness:.3}),
     shemagh:new THREE.MeshStandardMaterial({color:0x5a2a24,roughness:.92,metalness:0}),
     goggleGlass:new THREE.MeshStandardMaterial({color:0x101820,emissive:0x7fd4ff,emissiveIntensity:1.2,roughness:.2,metalness:.6}),
-    armSleeveCT:new THREE.MeshStandardMaterial({color:0x3d4a5e,roughness:.7}),
-    armSleeveT:new THREE.MeshStandardMaterial({color:0x5a2420,roughness:.75}),
-    gloveCT:new THREE.MeshStandardMaterial({color:0x2c3138,roughness:.55,metalness:.05}),
-    gloveT:new THREE.MeshStandardMaterial({color:0x3a2e26,roughness:.6,metalness:.05}),
+    armSleeveCT:weaponMat(256,drawCloth,{metal:.05,rough:.9,envInt:.3,nStr:.55}),
+    armSleeveT:weaponMat(256,drawCloth,{metal:.05,rough:.92,envInt:.3,nStr:.55}),
+    gloveCT:weaponMat(256,drawLeather,{metal:.04,rough:.92,envInt:.25,nStr:.75}),
+    gloveT:weaponMat(256,drawLeather,{metal:.04,rough:.92,envInt:.25,nStr:.75}),
     // Gun wood / stainless / olive drab paint (three-channel textures)
     gunWood:weaponMat(512,drawGunWood,{metal:.05,rough:.68,envInt:.4,nStr:.8}),
     gunSteel:weaponMat(512,drawSteel,{metal:.85,rough:.35,envInt:1.3,nStr:.5}),

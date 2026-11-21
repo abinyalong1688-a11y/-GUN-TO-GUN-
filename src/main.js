@@ -1762,7 +1762,9 @@ class Game{
       h.deathT=5.6;
       h.update(.016,this.time,()=>true);
       assert(h.alive&&h.state==='active','should respawn after 5.5 s');
-      assert(h.parts.rifle.parent===h.group,'the rifle should be back in hand after respawn');
+      // GLB rigs hold the rifle on the hand BONE (a group descendant); proc holds it on the group
+      const rp=h.parts.rifle.parent;
+      assert(rp===h.group||h.group.getObjectById(rp.id),'the rifle should be back in hand after respawn');
       assert(Math.abs(h.materials[0].opacity-1)<.01,'materials should be opaque again after respawn');
       this.effects.explosion=orig;
     });
