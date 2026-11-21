@@ -160,12 +160,12 @@ function boneSide(name){
    dummy rigs need the procedural hold override. Tune rifle/head anchors against ?portraits. */
 const PROFILES={
   male:{
-    height:1.80,headDY:.115,headR:.105,yawFix:-Math.PI/2,
+    height:1.80,headDY:.075,headR:.076,yawFix:-Math.PI/2,
     hold:{armR:{x:-1.1,y:0,z:1.05},foreR:{x:-.75,z:-.5},armL:{x:-1.1,y:0,z:-1.05},foreL:{x:-.75,z:.5}},
     rifle:{scale:1},
   },
   female:{
-    height:1.75,headDY:.11,headR:.10,yawFix:-Math.PI/2,
+    height:1.75,headDY:.06,headR:.072,yawFix:-Math.PI/2,
     hold:{armR:{x:-1.1,y:0,z:1.05},foreR:{x:-.75,z:-.5},armL:{x:-1.1,y:0,z:-1.05},foreL:{x:-.75,z:.5}},
     rifle:{scale:.94},
   },
@@ -214,13 +214,15 @@ function normalizeTemplate(gender,scene){
   // 2. Scale to operator height, 3. feet on the ground — on the ORIENTER (the game owns the wrapper)
   const box=new THREE.Box3().setFromObject(wrapper);
   const h=box.max.y-box.min.y;
+  let s=1;
   if(h>1e-3){
-    const s=profile.height/h;
+    s=profile.height/h;
     orienter.scale.setScalar(s);
     wrapper.updateMatrixWorld(true);
     const box2=new THREE.Box3().setFromObject(wrapper);
     orienter.position.y=-box2.min.y;
   }
+  orienter.updateMatrixWorld(true);
   wrapper.updateMatrixWorld(true);
 
   // 4. Bone map for the animation contract (spine chain: first = spine, last = chest)
@@ -278,7 +280,7 @@ function normalizeTemplate(gender,scene){
   let headY=profile.height-.13;
   if(map.head){
     const hp=new THREE.Vector3();map.head.getWorldPosition(hp);
-    headY=hp.y+profile.headDY;
+    headY=hp.y+profile.headDY*s;
     const anchor=new THREE.Group();
     anchor.name='headAnchor';
     anchor.position.set(0,profile.headDY,0);

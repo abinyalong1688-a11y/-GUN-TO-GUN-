@@ -108,8 +108,11 @@ function makeFace(H,M,{fem}){
 }
 
 /* ============ Headgear (C1 silhouette coding) ============ */
-function makeHeadgear(H,M,def,fem){
+/* depth: z-offset multiplier — the real rigs' heads are ~half as deep as the procedural
+   skull, so face-front pieces (goggles lenses / headset mic) need pulling back */
+function makeHeadgear(H,M,def,fem,depth=1){
   const gear=def.headgear||'headset';
+  const z=v=>v*depth;
   if(gear==='helmet'){
     // Nova helmet: low dome + brim + top identification stripe
     mesh(H,sphere(.114,18,12),M.armor,0,.028,-.006,0,0,0,1.03,.8,1.04);
@@ -123,19 +126,19 @@ function makeHeadgear(H,M,def,fem){
   }else if(gear==='shemagh'){
     // Rogue shemagh: wraps crown and jaw + forehead band + hanging tails
     mesh(H,sphere(.116,16,12),M.clothDark,0,.022,-.008,0,0,0,1.03,.9,1.03);
-    detail(H,box(.17,.055,.03),M.armor,0,.038,.088,-.08);
-    detail(H,box(.05,.2,.018),M.jacket,.085,-.105,-.015,.12,0,.22);
-    detail(H,box(.038,.13,.016),M.armor,-.088,-.075,-.02,.1,0,-.18);
+    detail(H,box(.17,.055,.03),M.armor,0,.038,z(.088),-.08);
+    detail(H,box(.05,.2,.018),M.jacket,.085,-.105,z(-.015),.12,0,.22);
+    detail(H,box(.038,.13,.016),M.armor,-.088,-.075,z(-.02),.1,0,-.18);
   }else if(gear==='goggles'){
     // Rogue goggles: strap + twin lenses (accent glow)
-    detail(H,box(.19,.032,.02),M.clothDark,0,.032,.09);
-    for(const s of[-1,1])detail(H,sphere(.038,12,8),M.accent,s*.045,.03,.096,0,0,0,1.12,.72,.42);
-    detail(H,box(.03,.02,.02),M.gunDark,0,.032,.108);
+    detail(H,box(.19,.032,.02),M.clothDark,0,.032,z(.09));
+    for(const s of[-1,1])detail(H,sphere(.038,12,8),M.accent,s*.045,.03,z(.096),0,0,0,1.12,.72,.42);
+    detail(H,box(.03,.02,.02),M.gunDark,0,.032,z(.108));
   }else{
     // Nova tactical headset + boom mic
     detail(H,torus(.104,.007,8,20,Math.PI),M.gunDark,0,.005,0);
     for(const s of[-1,1])detail(H,cyl(.026,.026,.016,10),M.gunDark,s*.10,0,0,0,0,Math.PI/2);
-    detail(H,box(.01,.01,.065),M.gunDark,-.095,-.045,.035,.3,.4,0);
+    detail(H,box(.01,.01,.065),M.gunDark,-.095,-.045,z(.035),.3,.4,0);
   }
 }
 
@@ -465,8 +468,13 @@ function addExtrasGLTF(parts,M,def,bones,charQuat){
     mesh.position.copy(p);mesh.quaternion.copy(q);mesh.scale.copy(s);
   };
   if(ex.includes('armband')){
-    for(const arm of [bones.foreR,bones.foreL])
-      fix(arm,V3(0,-.02,.01),detail(arm,cyl(.045,.045,.03,12),M.accent,0,0,0));
+    // mid-forearm: interpolate between the forearm bone and the hand bone; boneAttach wants
+    // the DELTA from the bone origin, so subtract it before placing
+    const armPair=(fore,hand)=>{const a=new THREE.Vector3(),b=new THREE.Vector3();
+      fore.getWorldPosition(a);hand.getWorldPosition(b);
+      return a.lerp(b,.42).sub(a);};
+    for(const [arm,hand] of [[bones.foreR,bones.handR],[bones.foreL,bones.handL]])
+      fix(arm,armPair(arm,hand),detail(arm,cyl(.042,.042,.03,12),M.accent,0,0,0));
   }
   if(ex.includes('kneepads')){
     for(const calf of [bones.calfL,bones.calfR])
@@ -499,12 +507,13 @@ export function buildOperatorMeshGLTF(assets,def,{camo='default'}={}){
   parts.pony=bones.pony||null;
   mountRifleTo(group,parts,bones,M,def,inst.profile,inst.charQuat);
   if(bones.headAnchor){
-    // Headgear pieces are sized for the procedural skull (~.105 m); scale to the rig's actual head.
+    // Headgear pieces are sized for the procedural skull (~.105 m deep); scale to the rig's
+    // actual head and pull face-front pieces back (real heads are ~half as deep).
     // The real models' hair is baked into the mesh — no procedural hair fallback here.
     const H=new THREE.Group();
     H.scale.setScalar(inst.profile.headR?inst.profile.headR/.105:1);
     bones.headAnchor.add(H);
-    makeHeadgear(H,M,def,def.gender==='f');
+    makeHeadgear(H,M,def,def.gender==='f',.55);
   }
   addExtrasGLTF(parts,M,def,bones,inst.charQuat);
   const anchor=new THREE.Object3D();
