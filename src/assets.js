@@ -47,7 +47,7 @@ function heightToNormal(heightCanvas,strength=1){
 }
 
 /* ---------- Ground height/texture generators (one set per map) ---------- */
-const noiseSand=valueNoise(101),noiseConcrete=valueNoise(202),noiseMetal=valueNoise(303),noiseSnow=valueNoise(404),noiseBasalt=valueNoise(505);
+const noiseSand=valueNoise(101),noiseConcrete=valueNoise(202),noiseMetal=valueNoise(303),noiseSnow=valueNoise(404),noiseBasalt=valueNoise(505),noiseIce=valueNoise(606),noiseAsphalt=valueNoise(707);
 
 function drawSand(g,S){
   g.fillStyle='#c69a62';g.fillRect(0,0,S,S);
@@ -114,6 +114,167 @@ function drawBasalt(g,S){
     g.fillStyle=Math.random()>.7?'rgba(255,140,40,.5)':'rgba(10,8,9,.4)';
     g.fillRect(Math.random()*S,Math.random()*S,1.4,1.4);
   }
+}
+
+/* Glacier-lake ice sheet (map 2 "Glacier Lake"): pale blue-white, branching pressure cracks + wind ridges.
+   Triple-channel: cracks recessed in height, glossier in roughness (moonlight sheen reads on the sheet) */
+function drawIce(g,h,r,S){
+  g.fillStyle='#d3e2ee';g.fillRect(0,0,S,S);
+  h.fillStyle=gv(128);h.fillRect(0,0,S,S);
+  r.fillStyle=gv(150);r.fillRect(0,0,S,S);
+  for(let i=0;i<420;i++){
+    const v=noiseIce(i*2.3,i*3.1),r2=10+Math.random()*60;
+    g.fillStyle=v>.55?'rgba(255,255,255,.5)':'rgba(140,175,205,.14)';
+    g.beginPath();g.arc(Math.random()*S,Math.random()*S,r2,0,7);g.fill();
+  }
+  // Pressure cracks: wide dark fracture + thin bright glint beside it, recessed in height
+  for(let i=0;i<26;i++){
+    let x=Math.random()*S,y=Math.random()*S;
+    const pts=[[x,y]];
+    for(let k=0;k<7;k++){x+=(Math.random()-.5)*90;y+=(Math.random()-.5)*90;pts.push([x,y]);}
+    g.strokeStyle='rgba(80,125,165,.4)';g.lineWidth=2+Math.random()*2.5;
+    g.beginPath();g.moveTo(pts[0][0],pts[0][1]);for(const [px,py] of pts)g.lineTo(px,py);g.stroke();
+    g.strokeStyle='rgba(225,242,252,.5)';g.lineWidth=1;
+    g.beginPath();g.moveTo(pts[0][0]+2,pts[0][1]+2);for(const [px,py] of pts)g.lineTo(px+2,py+2);g.stroke();
+    h.strokeStyle=gv(86);h.lineWidth=3;
+    h.beginPath();h.moveTo(pts[0][0],pts[0][1]);for(const [px,py] of pts)h.lineTo(px,py);h.stroke();
+    r.strokeStyle=gv(210);r.lineWidth=3;
+    r.beginPath();r.moveTo(pts[0][0],pts[0][1]);for(const [px,py] of pts)r.lineTo(px,py);r.stroke();
+  }
+  // Wind-blown snow ridges (raised, matte)
+  for(let i=0;i<30;i++){
+    const y=Math.random()*S;
+    g.strokeStyle='rgba(255,255,255,.4)';g.lineWidth=3+Math.random()*5;
+    g.beginPath();
+    for(let x=0;x<=S;x+=8)g.lineTo(x,y+Math.sin(x*.04+i*2)*7);
+    g.stroke();
+    h.strokeStyle=gv(150);g.lineWidth=4;
+    h.beginPath();
+    for(let x=0;x<=S;x+=8)h.lineTo(x,y+Math.sin(x*.04+i*2)*7);
+    h.stroke();
+    r.strokeStyle=gv(185);
+    r.beginPath();
+    for(let x=0;x<=S;x+=8)r.lineTo(x,y+Math.sin(x*.04+i*2)*7);
+    r.stroke();
+  }
+  // Frost sparkle specks (glinty)
+  for(let i=0;i<600;i++){
+    g.fillStyle='rgba(255,255,255,.5)';g.fillRect(Math.random()*S,Math.random()*S,1.4,1.4);
+    r.fillStyle=gv(60);g.fillRect(Math.random()*S,Math.random()*S,1.4,1.4);
+  }
+}
+
+/* Wet asphalt (map 3 "Neon Docklands"): near-black aggregate + faded lane paint; puddles are dark in the
+   roughness canvas so they go glossy and catch the neon/lamp speculars */
+function drawAsphalt(g,h,r,S){
+  g.fillStyle='#1f2126';g.fillRect(0,0,S,S);
+  h.fillStyle=gv(128);h.fillRect(0,0,S,S);
+  r.fillStyle=gv(225);r.fillRect(0,0,S,S);
+  for(let i=0;i<640;i++){
+    const v=noiseAsphalt(i*1.9,i*2.7);
+    g.fillStyle=v>.5?'rgba(120,126,136,.13)':'rgba(6,7,9,.3)';
+    g.beginPath();g.arc(Math.random()*S,Math.random()*S,3+Math.random()*26,0,7);g.fill();
+    h.fillStyle=gv(v>.5?133:122);g.beginPath();g.arc(Math.random()*S,Math.random()*S,3+Math.random()*26,0,7);h.fill();
+  }
+  for(let i=0;i<1400;i++){ // aggregate specks
+    const l=Math.random();
+    g.fillStyle=l>.5?'rgba(150,155,165,.25)':'rgba(0,0,0,.4)';
+    g.fillRect(Math.random()*S,Math.random()*S,1.2,1.2);
+  }
+  // Faded lane paint (raised, worn)
+  const paint=(y,c)=>{g.fillStyle=c;g.fillRect(S*.06,y,S*.88,7);
+    h.fillStyle=gv(140);h.fillRect(S*.06,y,S*.88,7);
+    r.fillStyle=gv(170);r.fillRect(S*.06,y,S*.88,7);};
+  paint(S*.24,'rgba(196,166,66,.3)');paint(S*.68,'rgba(210,214,220,.22)');paint(S*.82,'rgba(196,166,66,.22)');
+  // Puddles: dark + glossy (low roughness), slight rim highlight
+  for(let i=0;i<14;i++){
+    const x=Math.random()*S,y=Math.random()*S,rx=14+Math.random()*46,ry=rx*(.4+Math.random()*.4);
+    g.fillStyle='rgba(8,10,14,.55)';g.beginPath();g.ellipse(x,y,rx,ry,Math.random()*3,0,7);g.fill();
+    g.strokeStyle='rgba(190,205,220,.14)';g.lineWidth=1.2;
+    g.beginPath();g.ellipse(x,y,rx,ry,0,0,7);g.stroke();
+    r.fillStyle=gv(48);g.beginPath();g.ellipse(x,y,rx,ry,0,0,7);r.fill();
+  }
+}
+
+/* Glacial ice block cover (map 2): pale blue with internal fracture lines, semi-gloss */
+function drawIceBlock(g,h,r,S){
+  g.fillStyle='#b9d4e6';g.fillRect(0,0,S,S);
+  h.fillStyle=gv(128);h.fillRect(0,0,S,S);
+  r.fillStyle=gv(105);r.fillRect(0,0,S,S);
+  for(let i=0;i<380;i++){
+    const v=Math.random();
+    g.fillStyle=v>.5?'rgba(255,255,255,.16)':'rgba(110,150,185,.12)';
+    g.beginPath();g.arc(Math.random()*S,Math.random()*S,4+Math.random()*24,0,7);g.fill();
+  }
+  // Internal fractures: bright glint line next to a recessed seam
+  for(let i=0;i<16;i++){
+    let x=Math.random()*S,y=Math.random()*S;const pts=[[x,y]];
+    for(let k=0;k<6;k++){x+=(Math.random()-.5)*70;y+=(Math.random()-.5)*70;pts.push([x,y]);}
+    g.strokeStyle='rgba(235,248,255,.55)';g.lineWidth=1.5;
+    g.beginPath();g.moveTo(pts[0][0],pts[0][1]);for(const [px,py] of pts)g.lineTo(px,py);g.stroke();
+    h.strokeStyle=gv(90);h.lineWidth=2.5;
+    h.beginPath();h.moveTo(pts[0][0],pts[0][1]);for(const [px,py] of pts)h.lineTo(px,py);h.stroke();
+  }
+  // Chipped edges / frost wear
+  for(let i=0;i<30;i++){
+    const x=Math.random()*S,y=Math.random()*S,w=3+Math.random()*12;
+    g.fillStyle='rgba(240,250,255,.3)';g.fillRect(x,y,w,1.5);
+    r.fillStyle=gv(60);g.fillRect(x,y,w,1.5);
+  }
+}
+
+/* Lava pool surface (map 4 "Volcano Caldera"): dark crust plates with glowing molten cracks between them.
+   One canvas feeds map AND emissiveMap — crust stays dark, cracks glow */
+function drawLavaPool(g,S){
+  g.fillStyle='#150a07';g.fillRect(0,0,S,S);
+  // Crust plates
+  for(let i=0;i<46;i++){
+    const v=Math.random();
+    g.fillStyle=v>.5?'rgba(60,30,18,.55)':'rgba(20,10,8,.7)';
+    g.beginPath();g.arc(Math.random()*S,Math.random()*S,14+Math.random()*44,0,7);g.fill();
+  }
+  // Molten cracks (wide glow + white-hot core)
+  for(let i=0;i<22;i++){
+    let x=Math.random()*S,y=Math.random()*S;
+    const pts=[[x,y]];
+    for(let k=0;k<6;k++){x+=(Math.random()-.5)*110;y+=(Math.random()-.5)*110;pts.push([x,y]);}
+    g.shadowColor='rgba(255,120,30,.95)';g.shadowBlur=12;
+    g.strokeStyle='rgba(255,110,25,.9)';g.lineWidth=3+Math.random()*4;
+    g.beginPath();g.moveTo(pts[0][0],pts[0][1]);for(const [px,py] of pts)g.lineTo(px,py);g.stroke();
+    g.shadowBlur=0;
+    g.strokeStyle='rgba(255,230,170,.9)';g.lineWidth=1.4;
+    g.beginPath();g.moveTo(pts[0][0],pts[0][1]);for(const [px,py] of pts)g.lineTo(px,py);g.stroke();
+  }
+  // Cinder specks
+  for(let i=0;i<400;i++){
+    g.fillStyle=Math.random()>.6?'rgba(255,150,50,.55)':'rgba(0,0,0,.5)';
+    g.fillRect(Math.random()*S,Math.random()*S,1.6,1.6);
+  }
+}
+
+/* Neon sign (map 3 "Neon Docklands"): dark panel + tube border + glowing lettering (bilingual).
+   Same canvas feeds map AND emissiveMap — the panel stays dark, tubes glow and bloom gently */
+function drawNeon(g,S,color,main,sub){
+  g.fillStyle='#0a0c12';g.fillRect(0,0,S,S);
+  const gr=g.createLinearGradient(0,0,0,S);
+  gr.addColorStop(0,'rgba(26,32,44,.9)');gr.addColorStop(1,'rgba(12,14,20,.9)');
+  g.fillStyle=gr;g.fillRect(0,0,S,S);
+  // Tube border (double stroke: wide glow + bright core)
+  g.shadowColor=color;g.shadowBlur=14;
+  g.strokeStyle=color;g.lineWidth=4;g.strokeRect(10,10,S-20,S-20);
+  g.shadowBlur=0;
+  g.strokeStyle='rgba(255,255,255,.75)';g.lineWidth=1.4;g.strokeRect(10,10,S-20,S-20);
+  // Lettering
+  g.textAlign='center';
+  g.shadowColor=color;g.shadowBlur=12;
+  g.fillStyle=color;
+  g.font=`bold ${S*.24}px "Segoe UI","Microsoft YaHei",Arial,sans-serif`;
+  g.fillText(main,S/2,S*.44);
+  g.fillStyle='rgba(255,255,255,.92)';
+  g.font=`bold ${S*.13}px Consolas,"Microsoft YaHei",monospace`;
+  g.fillText(sub,S/2,S*.72);
+  g.shadowBlur=0;
+  g.textAlign='left';
 }
 
 function drawConcrete(g,S){
@@ -460,10 +621,20 @@ export function initAssets(){
     const normal=heightToNormal(c,normStrength);normal.repeat.set(repeat,repeat);
     return new THREE.MeshStandardMaterial({map,normalMap:normal,normalScale:new THREE.Vector2(.65,.65),roughness:.96,metalness:.02});
   }
+  // Triple-channel ground (colour + height + roughness in one brush pass) at tiling resolution
+  function groundTriple(draw,repeat,{metal=.02,rough=.96,nStr=1}={}){
+    const m=weaponMat(1024,draw,{metal,rough,nStr});
+    m.map.repeat.set(repeat,repeat);
+    m.normalMap.repeat.set(repeat,repeat);
+    m.roughnessMap.repeat.set(repeat,repeat);
+    return m;
+  }
   A.ground={
     sand:groundMat(drawSand,2.0,10),
     snow:groundMat(drawSnow,1.2,10),
     basalt:groundMat(drawBasalt,2.6,10),
+    ice:groundTriple(drawIce,10,{rough:.6,nStr:1.4}),          // glacier lake sheet: moonlit sheen
+    asphalt:groundTriple(drawAsphalt,10,{metal:.08,rough:.92,envInt:.7,nStr:.8}), // wet dock yard
   };
 
   const energyTexBlue=canvasTex(128,(g,S)=>drawEnergyCells(g,S,[64,196,255]));
@@ -541,7 +712,17 @@ export function initAssets(){
     boltW:new THREE.MeshBasicMaterial({color:0xff4430}),
     debris:new THREE.MeshStandardMaterial({color:0x24262a,roughness:.8,metalness:.4}),
     lava:new THREE.MeshBasicMaterial({color:0xff5a18}),
+    // Map-specific: glacier ice blocks / obsidian shards / dock neon signs
+    ice:weaponMat(512,drawIceBlock,{metal:.05,rough:.34,nStr:.9}),
+    obsidian:new THREE.MeshStandardMaterial({color:0x0e0c14,roughness:.3,metalness:.1,flatShading:true}),
+    column:new THREE.MeshStandardMaterial({color:0x37333a,roughness:.92,metalness:.05,flatShading:true}),
   };
+  // Neon signage: dark panel canvas feeds map AND emissiveMap (panel stays dark, tubes glow)
+  const neonTex=(color,main,sub)=>canvasTex(256,(g,S)=>drawNeon(g,S,color,main,sub));
+  const neonSign=tex=>new THREE.MeshStandardMaterial({map:tex,emissiveMap:tex,emissive:0xffffff,emissiveIntensity:1.35,roughness:.5,metalness:.3});
+  M.neonDock=neonSign(neonTex('#4fe3ff',isEN()?'DOCK 07':'七号码头',isEN()?'CARGO · 24H':'集装箱 · 通宵'));
+  M.neonFerry=neonSign(neonTex('#ff5f9e',isEN()?'NIGHT FERRY':'夜航渡轮',isEN()?'GATE 3 · 24H':'3号闸 · 通宵'));
+  M.neonCargo=neonSign(neonTex('#ffb84f',isEN()?'CARGO ZONE':'装卸区',isEN()?'KEEP CLEAR':'严禁停留'));
   A.mats=M;
 
   A.containers={
@@ -550,6 +731,9 @@ export function initAssets(){
     arctic:new THREE.MeshStandardMaterial({map:canvasTex(512,drawContainer('#4a5a66','rgba(15,20,26,.85)',{snowCap:true})),roughness:.5,metalness:.3}),
     charcoal:new THREE.MeshStandardMaterial({map:canvasTex(512,drawContainer('#3a3438','rgba(12,10,12,.85)')),roughness:.6,metalness:.4}),
     emberTrim:new THREE.MeshStandardMaterial({map:canvasTex(512,drawContainer('#4a2c24','rgba(14,8,6,.85)')),roughness:.6,metalness:.35,emissive:0x9a2a08,emissiveIntensity:.12}),
+    // Port palette (Neon Docklands)
+    seaBlue:new THREE.MeshStandardMaterial({map:canvasTex(512,drawContainer('#33506e','rgba(10,16,24,.85)')),roughness:.55,metalness:.4}),
+    mustard:new THREE.MeshStandardMaterial({map:canvasTex(512,drawContainer('#b08030','rgba(46,32,10,.85)')),roughness:.62,metalness:.35}),
   };
 
   A.tex={
@@ -561,6 +745,7 @@ export function initAssets(){
     snow:canvasTex(64,(g,S)=>drawSoft(g,S,'rgba(255,255,255,1)','rgba(230,240,255,.7)'),{srgb:false}),
     ember:canvasTex(64,(g,S)=>drawSoft(g,S,'rgba(255,200,110,1)','rgba(255,90,30,.6)'),{srgb:false}),
     ring:canvasTex(128,drawRingTex,{srgb:false}),
+    lavaPool:canvasTex(512,drawLavaPool,{repeat:2}), // caldera lava surface (map+emissiveMap, UV-scrolled by worldAnim)
     // Tracer streak: transparent tail → white-hot head (cylinder v axis = direction of travel)
     streak:canvasTex(64,(g,S)=>{
       const gr=g.createLinearGradient(0,S,0,0);

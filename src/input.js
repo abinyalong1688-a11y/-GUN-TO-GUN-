@@ -107,10 +107,21 @@ export class KeyboardMouseAdapter{
     });
 
     this._on(document,'pointerlockchange',()=>{
-      if(!document.pointerLockElement&&g.state==='playing'&&!g.fallbackAim)g.pause();
+      // Lock lost while playing = the user pressed ESC → industry-standard auto-pause.
+      // The game's own unlocks (DM death spectate) set _suppressPauseOnce so they don't pop the pause menu.
+      if(!document.pointerLockElement&&g.state==='playing'&&!g.fallbackAim){
+        if(g._suppressPauseOnce)g._suppressPauseOnce=false;
+        else g.pause();
+      }
+      if(g._updateCursor)g._updateCursor();
     });
 
-    this._on(document,'pointerlockerror',()=>{g.fallbackAim=true;});
+    this._on(document,'pointerlockerror',()=>{g.fallbackAim=true;if(g._updateCursor)g._updateCursor();});
+
+    // Click to (re)lock while the hint "click to lock mouse" is showing: cursor is visible exactly when a click is needed
+    this._on(g.renderer.domElement,'click',()=>{
+      if(g.state==='playing'&&!document.pointerLockElement&&!g.fallbackAim)g._requestLock();
+    });
   }
 
   detach(){

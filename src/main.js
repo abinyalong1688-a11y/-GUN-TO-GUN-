@@ -42,7 +42,7 @@ const TUTORIAL=[
   {zh:'按 1 循环主武器,2 手枪,3 军刀',en:'Press 1 to cycle primaries, 2 sidearm, 3 knife'},
   {zh:'按 G / F / V 投掷破片 / 闪光 / 烟雾',en:'Press G / F / V for frag / flash / smoke'},
 ];
-const VERSION='1.7.1';
+const VERSION='1.8.1';
 const _rsO=new THREE.Vector3(); // reused ray-sphere test vector (zero allocation on the hot path)
 
 class Game{
@@ -54,6 +54,7 @@ class Game{
     this.rosterMode=new URLSearchParams(location.search).has('roster');
     this.portraitsMode=new URLSearchParams(location.search).has('portraits');
     this.bossMode=new URLSearchParams(location.search).get('boss')==='1';
+    this.mapOverride=new URLSearchParams(location.search).get('map'); // ?map= test hook (validated against MAPS before use)
     this.padMode=new URLSearchParams(location.search).has('pad');
     this.touchMode=new URLSearchParams(location.search).has('touch')||
       (typeof matchMedia==='function'&&matchMedia('(pointer:coarse)').matches);
@@ -64,6 +65,8 @@ class Game{
     this.keys=new Set();
     this.input={firing:false,ads:false};
     this.fallbackAim=false;
+    this._suppressPauseOnce=false; // set before game-initiated unlocks (DM death) so the lock-loss auto-pause is skipped
+    this._lastCursor=null;         // deduped per-frame canvas cursor state
     // S1.4 settings hub: unified reads + legacy key migration
     this.settings=settings;
     this.save=new SaveSystem();
@@ -140,6 +143,7 @@ class Game{
     this.portraits=new PortraitRenderer(this.assets);
     this.ui.portraits=this.portraits; // C4: menu operator card portraits
     this.audio=new AudioFX();
+    if(this.mapOverride&&MAPS[this.mapOverride])this.ui.sel.map=this.mapOverride; // per-map screenshot / verification hook
     this.buildWorldFor(this.ui.sel.map);
 
     this.effects=new Effects(this.scene,this.assets,this.quality);
@@ -410,6 +414,16 @@ class Game{
     if(rate)this.player.yaw-=rate*dt;
   }
 
+  /* Cursor lifecycle: hide the OS pointer whenever aiming is active (pointer lock hides it natively; this CSS
+     toggle covers the fallback-aim path so the cursor never lingers over the crosshair mid-match), restore it
+     for every state where a mouse click is needed (menu / pause / upgrade / tutorial / game-over / lock hint) */
+  _updateCursor(){
+    if(this.touchMode)return;
+    const hide=(this.state==='playing'||this.state==='dying')&&!!(document.pointerLockElement||this.fallbackAim);
+    const cur=hide?'none':'';
+    if(this._lastCursor!==cur){this._lastCursor=cur;this.renderer.domElement.style.cursor=cur;}
+  }
+
   /* C5: camo source (player uses the current selection, bots use their own saved/unlocked camo) */
   camoFor(op){
     if(this.ui&&this.ui.sel&&op.id===this.ui.sel.operator&&this.ui.sel.camo)return this.ui.sel.camo;
@@ -518,7 +532,7 @@ class Game{
       });
     }
     for(const e of [...this.enemies.list])if(e.decor)this.enemies.kill(e,false,true);
-    this.audio.setWind(.05);
+    this.audio.setAmbient(this.world.mapKey);
   }
 
   pause(){
@@ -962,6 +976,7 @@ class Game{
     this.time+=dt;
     this.weapon.group.visible=active||this.state==='paused';
     if(this.state!=='playing')this.ui.setScope(false); // force the scope off outside combat
+    this._updateCursor(); // hide the OS pointer during aim, show it whenever a click is needed
 
     if(active){
       this.stats.time+=dt;
@@ -978,6 +993,8 @@ class Game{
           this.player.god=true;this.invulnT=2;
           this.audio.respawn();
           this.ui.deathFlash();
+          this._suppressPauseOnce=false; // the death unlock was consumed; normal lock-loss behaviour resumes
+          this._requestLock();           // re-acquire aim control without waiting for the player to click
         }
       }
       if(this.invulnT>0){
@@ -1050,6 +1067,7 @@ class Game{
           if(this.lastKiller&&this.lastKiller.alive)this.spectate={target:this.lastKiller,t:2.5};
           this.ui.deathFlash();
           this.audio.hurt();
+          this._suppressPauseOnce=true; // this unlock is the game's own (spectate window) — it must not auto-pause
           if(document.pointerLockElement)document.exitPointerLock();
         }else{
           this.state='dying';this.dyingT=1.5;
@@ -1110,7 +1128,7 @@ class Game{
       const low=this.player.health/this.player.maxHealth<.35;
       if(low!==this._musicLow){this._musicLow=low;this.audio.musicSet(low?.9:.7);}
     }
-    this.audio.setWind(this.state==='menu'?.08:.05);
+    this.audio.setAmbient(this.state==='menu'?'menu':this.world.mapKey);
 
     // Shadows every other frame (autoUpdate is off): odd frames recompute casters, even frames reuse last frame's depth
     this._frame=(this._frame||0)+1;

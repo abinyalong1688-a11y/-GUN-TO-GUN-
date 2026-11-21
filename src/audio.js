@@ -29,7 +29,7 @@ export class AudioFX{
       b0=.997*b0+.029*w;b1=.985*b1+.032*w;b2=.95*b2+.048*w;
       d[i]=(b0+b1+b2+w*.05)*.55;
     }
-    this._wind();this._droneHum();
+    this._wind();this._droneHum();this._rainPatter();this._rumble();
     this.ok=true;
   }
   resume(){if(this.ctx&&this.ctx.state==='suspended')this.ctx.resume();}
@@ -76,6 +76,36 @@ export class AudioFX{
     this._windGain=g;
   }
   setWind(v){if(this._windGain)this._windGain.gain.value=v;}
+
+  /* Per-map ambience: wind character from the environment + optional rain patter / lava rumble loops */
+  _rainPatter(){
+    const src=this.ctx.createBufferSource();src.buffer=this.noiseBuf;src.loop=true;src.playbackRate.value=1.4;
+    const f=this.ctx.createBiquadFilter();f.type='highpass';f.frequency.value=2600;
+    const g=this.ctx.createGain();g.gain.value=0;
+    src.connect(f);f.connect(g);g.connect(this._bus('ambient'));
+    src.start();
+    this._rainGain=g;
+  }
+  _rumble(){
+    const o=this.ctx.createOscillator();o.type='sine';o.frequency.value=36;
+    const o2=this.ctx.createOscillator();o2.type='sine';o2.frequency.value=23;
+    const g=this.ctx.createGain();g.gain.value=0;
+    const lfo=this.ctx.createOscillator();lfo.frequency.value=.13;
+    const lg=this.ctx.createGain();lg.gain.value=6;
+    lfo.connect(lg);lg.connect(o.frequency);
+    o.connect(g);o2.connect(g);g.connect(this._bus('ambient'));
+    o.start();o2.start();lfo.start();
+    this._rumbleGain=g;
+  }
+  setAmbient(env){ // 'menu' or a MAPS key; deduped so the frame loop can call it freely
+    if(this._ambEnv===env)return;
+    this._ambEnv=env;
+    this.setWind({menu:.08,desert:.05,snow:.07,snowtown:.03,ember:.055}[env]||.05);
+    const t=this.ctx&&this.ctx.currentTime;
+    if(!t)return;
+    this._rainGain.gain.setTargetAtTime(env==='snowtown'?.05:0,t,.4);
+    this._rumbleGain.gain.setTargetAtTime(env==='ember'?.09:0,t,.6);
+  }
 
   _droneHum(){
     const g=this.ctx.createGain();g.gain.value=0;

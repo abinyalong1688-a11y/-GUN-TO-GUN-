@@ -37,7 +37,7 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
 #dm-score .teamB{color:#ff8a6a}
 
 /* killfeed */
-#killfeed{position:absolute;top:150px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:5px;align-items:center}
+#killfeed{position:absolute;top:calc(14% + 130px);left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:5px;align-items:center}
 /* M2-A3 kill card */
 #killcard{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);z-index:8;display:flex;gap:18px;align-items:center;
   padding:10px 20px;background:rgba(8,12,20,.84);border:1px solid rgba(127,212,255,.45);border-radius:12px;
@@ -88,7 +88,7 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
 #dmg-dir i{position:absolute;left:-26px;top:-150px;width:52px;height:14px;
   background:linear-gradient(90deg,transparent,#ff4a3a,transparent);
   clip-path:polygon(0 50%,100% 0,100% 100%);filter:drop-shadow(0 0 6px rgba(255,60,40,.8))}
-#combo-callout{position:absolute;left:50%;top:28%;transform:translate(-50%,-50%) scale(.8);
+#combo-callout{position:absolute;left:50%;top:34%;transform:translate(-50%,-50%) scale(.8);
   font-size:34px;font-weight:800;letter-spacing:.16em;color:#ffd9a0;
   text-shadow:0 0 24px rgba(255,120,50,.8),0 3px 10px #000;
   opacity:0;transition:opacity .15s,transform .15s;pointer-events:none}
@@ -113,9 +113,10 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
 #scope-overlay .dot{left:50%;top:50%;width:6px;height:6px;border-radius:50%;
   background:rgba(255,120,90,.95);transform:translate(-50%,-50%);box-shadow:0 0 6px rgba(255,60,40,.8)}
 
-/* weapon bar */
+/* weapon bar (bottom-right cluster, content left-aligned) */
 #weapon-slots{position:absolute;right:26px;bottom:118px;display:flex;flex-direction:column;gap:5px;align-items:flex-end}
-.wslot{background:rgba(8,11,20,.5);border:1px solid rgba(155,167,192,.2);border-radius:7px;padding:4px 12px;font-size:12px;color:var(--muted);display:flex;gap:8px;align-items:center;min-width:130px;justify-content:flex-end}
+.wslot{background:rgba(8,11,20,.5);border:1px solid rgba(155,167,192,.2);border-radius:7px;padding:4px 12px;font-size:12px;color:var(--muted);display:flex;gap:8px;align-items:center;width:176px;justify-content:flex-start}
+.wslot span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wslot b{font-family:var(--mono);font-size:11px;color:#73809c;border:1px solid rgba(155,167,192,.3);border-radius:4px;padding:0 5px}
 .wslot.active{border-color:rgba(240,168,96,.6);color:#ffe2ae;background:rgba(240,168,96,.12)}
 .wslot.active b{color:var(--amber);border-color:rgba(240,168,96,.5)}
@@ -128,7 +129,7 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
 #ability.cooling{opacity:.55}
 
 /* ammo */
-#ammo{position:absolute;right:26px;bottom:22px;text-align:right;background:var(--hudbg);border:1px solid rgba(155,167,192,.22);border-radius:10px;padding:10px 16px;backdrop-filter:blur(4px)}
+#ammo{position:absolute;right:26px;bottom:22px;text-align:left;background:var(--hudbg);border:1px solid rgba(155,167,192,.22);border-radius:10px;padding:10px 16px;backdrop-filter:blur(4px)}
 #ui-ammo{font-family:var(--mono);font-size:34px;font-weight:700;line-height:1;color:#fff}
 #ui-ammo.low{color:var(--red)}
 #ui-reserve{font-family:var(--mono);font-size:14px;color:var(--muted);margin-top:2px}
@@ -169,14 +170,15 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
 #radar.hidden{display:none}
 
 /* M4-P4 KOTH capture bar */
-#koth-bar{position:absolute;top:164px;left:50%;transform:translateX(-50%);width:min(520px,74vw);z-index:8;text-align:center}
-/* top:164px — the banner area (14% + two text lines) ends within ~160px, so the capture bar never crosses the banner text */
+#koth-bar{position:absolute;top:calc(14% + 78px);left:50%;transform:translateX(-50%);width:min(520px,74vw);z-index:8;text-align:center}
+/* top:calc(14% + 78px) — the banner strip spans 14%..14%+72px at any viewport height, so a calc offset keeps
+   the capture bar (and boss bar / killfeed below it) permanently clear of the transient banner text */
 #koth-bar>span{display:block;font-size:12px;letter-spacing:.2em;color:#7fd4ff;text-shadow:0 2px 6px #000;margin-bottom:5px}
 #koth-score{font:12px var(--mono);color:#e8eef8;margin-top:4px}
 #koth-bar.hidden{display:none}
 
 /* M3-G4 boss health bar */
-#bossbar{position:absolute;top:104px;left:50%;transform:translateX(-50%);width:min(520px,74vw);z-index:8;text-align:center}
+#bossbar{position:absolute;top:calc(14% + 78px);left:50%;transform:translateX(-50%);width:min(520px,74vw);z-index:8;text-align:center}
 #bossbar>span{display:block;font-size:12px;letter-spacing:.2em;color:#ff9a7a;text-shadow:0 2px 6px #000;margin-bottom:5px}
 .bb-track{height:9px;border-radius:6px;background:rgba(8,11,20,.72);border:1px solid rgba(255,138,106,.4);overflow:hidden}
 .bb-track i{display:block;height:100%;width:100%;background:linear-gradient(90deg,#ff5a4a,#ffc060);

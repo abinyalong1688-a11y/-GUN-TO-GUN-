@@ -1,7 +1,7 @@
 // sw.js — GUN TO GUN offline cache (service worker, uploaded alongside dist when deployed)
 // Strategy: navigations are network-first with cache fallback (online always gets the latest); cross-origin requests (IP language probe etc.) bypass the cache
 // Note: this file is not bundled by esbuild; build.mjs copies it into dist/ and syncs the version with the game VERSION
-const CACHE='gtg-v1.7.1'; // build.mjs injects the package.json version at build time so it cannot drift from the game VERSION
+const CACHE='gtg-v1.8.1'; // build.mjs injects the package.json version at build time so it cannot drift from the game VERSION
 const ASSETS=['./','./gun-to-gun.html','./manifest.webmanifest'];
 
 self.addEventListener('install',e=>{

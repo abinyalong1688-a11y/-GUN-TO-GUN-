@@ -15,7 +15,7 @@ Or **double-click [`dist/gun-to-gun.html`](dist/gun-to-gun.html)** (~0.8 MB, zer
 | W A S D | Move (Shift to sprint) |
 | Space | Jump (gravity / landing physics — hop onto crates, stack-climb to container tops) |
 | Ctrl | Crouch (lower profile, slower movement, tighter spread) |
-| Mouse | Aim (left click to fire) · full 360° free look (unlimited pitch) |
+| Mouse | Aim (left click to fire) · cursor hidden while aiming (pointer lock), restored whenever a click is needed (menus / pause) · ±89° pitch |
 | Right click | Aim down sights (ADS) · high-magnification scope on AUG / Longbow / SG 553 (scope overlay + zoom-compensated sensitivity) · heavy knife stab |
 | R | Reload |
 | 1 / 2 / 3 | Switch weapons: **tap 1 repeatedly to cycle all 4 primaries** / Desert Eagle / combat knife (mouse wheel cycles all 6) |
@@ -48,12 +48,12 @@ Or **double-click [`dist/gun-to-gun.html`](dist/gun-to-gun.html)** (~0.8 MB, zer
 
 ## Maps
 
-Four hand-built arenas, each with its own sky, lighting and atmosphere:
+Four hand-built arenas, each a distinct scene with its own layout, sky, lighting and atmosphere:
 
-- **Desert Outpost** — sunset
-- **Snowhold Fortress** — arctic night
-- **Snowtown** — bright daylight snow village: crate formations, long street walls, cooling-tower silhouettes
-- **Lava Ruins** — scorched city
+- **Desert Outpost** — sunset sand outpost (the original layout, preserved)
+- **Glacier Lake** — aurora night: a diagonal glacial ice ridge, a fractured ice maze, a half-sunken wreck and an open iceberg plain
+- **Neon Docklands** — rain night: two container walls forming a canyon street with staggered crossings, neon signage, floodlight masts, a gantry crane and a dark skyline
+- **Volcano Caldera** — ember: a snaking lava river forded by two rock bridges (one under a basalt arch), basalt column fields and the glowing volcano cone on the horizon
 
 ## Movement Physics
 
@@ -75,8 +75,8 @@ Three self-illuminated **double-sided** billboards (brand face / large URL face 
 
 ```
 src/
-  assets.js   Materials — 1024px procedural Canvas PBR textures (sand / snow / basalt) + normal maps + weapon wood / faction fabrics + billboard art; zero image files
-  world.js    Scene — parametric sky shaders (sunset / moonlit stars / snow-town day / lava) + four maps + lighting / fog / ambient particles
+  assets.js   Materials — 1024px procedural Canvas PBR textures (sand / snow / basalt / ice / wet asphalt) + normal maps + weapon wood / faction fabrics + neon signage + billboard art; zero image files
+  world.js    Scene — parametric sky shaders (sunset / aurora night / rain night / ember) + four distinct per-map layouts + lighting / fog / ambient particles
   weapon.js   Weapons — three-slot loadout viewmodels + first-person arms (tactical gloves) + semi-auto trigger + slash animations + recoil / ADS / reload / shell ejection
   heroes.js   Characters — realistic 3D faction operatives (lathe-surface torsos, facial features, hair physics, faction outfits) and 3v3 AI
   enemies.js  Enemies — three drone classes (sensor windows / guard rings / detail parts) + AI + projectiles + occlusion checks

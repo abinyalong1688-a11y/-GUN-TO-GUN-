@@ -1,47 +1,56 @@
-// world.js — four maps: Desert Outpost / Snow Keep / Snow Town / Lava Ruins (parameterised worlds, swappable as a whole)
+// world.js — four distinct arenas sharing one parametric shell:
+//   desert   = Desert Outpost · Sunset   (v1.7 layout, kept verbatim)
+//   snow     = Glacier Lake · Aurora     (icy night, animated aurora)
+//   snowtown = Neon Docklands · Rain     (wet container port, neon signage, rain)
+//   ember    = Volcano Caldera           (lava pools, basalt columns, obsidian)
+// Keys are stable (menu chips / save / i18n depend on them); only layouts and dressing differ per map.
 import * as THREE from 'three';
 
 export const MAPS={
   desert:{
-    name:'Desert Outpost · Sunset',
+    name:'Desert Outpost · Sunset',layout:'desert',
     sky:{top:[.10,.14,.30],mid:[.55,.34,.40],hor:[1.06,.68,.38],low:[.28,.20,.17],glow:[1.0,.86,.62],stars:0},
     sunDir:[-.82,.30,-.28],sunColor:0xffb36b,sunI:7.5,
     hemi:[0x51608f,0x8a5c38,1.35],fill:[0x6a7ab8,.5],
     fog:[0xcf9460,.0068],
     ground:'sand',rock:'rock',
     containers:['olive','rust'],
+    lamp:{bulb:0xffd9a0,light:0xffc890,i:26},
     amb:'dust',
   },
   snow:{
-    name:'Snow Keep · Night',
-    sky:{top:[.05,.07,.16],mid:[.16,.22,.36],hor:[.55,.66,.82],low:[.30,.34,.42],glow:[.9,.95,1.05],stars:1},
-    sunDir:[.55,.42,.35],sunColor:0xbfd4ff,sunI:5.8,  // moonlight
-    hemi:[0x7288b0,0x4a5868,1.4],fill:[0x8aa0c8,.45],
-    fog:[0xaebfd4,.0082],
-    ground:'snow',rock:'rock',
+    name:'Glacier Lake · Aurora',layout:'glacier',
+    // Aurora bands add ≈.5 luminance near the zenith — everything else stays well under the Bloom threshold (.82)
+    sky:{top:[.02,.03,.09],mid:[.05,.08,.17],hor:[.13,.20,.32],low:[.05,.07,.11],glow:[.85,.92,1.05],stars:1,aurora:1},
+    sunDir:[-.45,.52,.25],sunColor:0xa8c4e8,sunI:5.0,  // cold moonlight
+    hemi:[0x3c5a80,0x1a2634,1.15],fill:[0x5a7aa8,.4],
+    fog:[0x0d1723,.0072],
+    ground:'ice',rock:'rockDark',
     containers:['arctic','charcoal'],
-    amb:'snow',
+    lamp:{bulb:0xbfe4ff,light:0x8fc4ea,i:22},
+    amb:'snow',wind:.07,
   },
   snowtown:{
-    name:'Snow Town · Daylight',
-    // Brightness must match the bloom threshold (.82): hor/glow once sat near pure white and blew out the whole screen (the map looked "inverted")
-    sky:{top:[.20,.30,.46],mid:[.42,.53,.67],hor:[.60,.66,.74],low:[.40,.45,.52],glow:[.92,.95,1.0],stars:0},
-    sunDir:[.42,.58,.25],sunColor:0xf4f7ff,sunI:3.4,  // high-angle winter daylight
-    hemi:[0xbcc9da,0x8b93a0,.95],fill:[0xd8e2ee,.3],
-    fog:[0xa2b3c3,.0080],
-    ground:'snow',rock:'rock',
-    containers:['arctic','rust'],
-    amb:'snow',classic:true,
+    name:'Neon Docklands · Rain',layout:'docks',
+    sky:{top:[.02,.03,.06],mid:[.05,.07,.11],hor:[.12,.15,.20],low:[.04,.05,.07],glow:[.35,.42,.55],stars:0},
+    sunDir:[-.3,.62,-.42],sunColor:0x93a8c8,sunI:2.3,  // moon behind rainclouds
+    hemi:[0x36424f,0x12141a,.95],fill:[0x44536a,.3],
+    fog:[0x0a0d12,.0115],
+    ground:'asphalt',rock:null,mounds:false,           // urban: skyline replaces hills, no scattered boulders
+    containers:['seaBlue','rust','mustard','charcoal'],
+    lamp:{bulb:0xd8ecff,light:0xa8c8ee,i:30},
+    amb:'rain',wind:.04,
   },
   ember:{
-    name:'Lava Ruins · Ember',
-    sky:{top:[.02,.015,.03],mid:[.10,.04,.04],hor:[.75,.22,.08],low:[.16,.07,.05],glow:[1.0,.5,.25],stars:1},
-    sunDir:[.2,.5,.6],sunColor:0xff7a40,sunI:2.6,
-    hemi:[0x3a2028,0x5a1c0c,1.0],fill:[0xff8a50,.35],
-    fog:[0x2c1510,.0105],
-    ground:'basalt',rock:'rockDark',
+    name:'Volcano Caldera',layout:'caldera',
+    sky:{top:[.012,.01,.02],mid:[.07,.03,.03],hor:[.55,.15,.05],low:[.10,.04,.03],glow:[.95,.40,.16],stars:1},
+    sunDir:[.18,.44,.5],sunColor:0xff7a40,sunI:2.3,
+    hemi:[0x38191f,0x451307,.95],fill:[0xff8a50,.3],
+    fog:[0x170a08,.0098],
+    ground:'basalt',rock:'obsidian',
     containers:['emberTrim','charcoal'],
-    amb:'ember',lava:true,
+    lamp:{bulb:0xff8a40,light:0xff6a30,i:26},
+    amb:'ember',lava:true,wind:.09,
   },
 };
 
@@ -67,8 +76,9 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
   const colliders=[],shootStatics=[],worldAnim=[];
   const ownMats=[]; // materials created by this build (freed with the geometry on map switch; shared asset materials excluded)
   const M=assets.mats;
+  const ctx={world,colliders,shootStatics,worldAnim,ownMats,M,assets,quality,map,mapKey};
 
-  /* ------- Sky (parameterised) ------- */
+  /* ------- Sky (parameterised; aurora bands for the glacier night) ------- */
   const sunDir=new THREE.Vector3(...map.sunDir).normalize();
   const skyMat=new THREE.ShaderMaterial({
     side:THREE.BackSide,depthWrite:false,fog:false,
@@ -80,11 +90,12 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
       cLow:{value:new THREE.Vector3(...map.sky.low)},
       cGlow:{value:new THREE.Vector3(...map.sky.glow)},
       uStars:{value:map.sky.stars},
+      uAurora:{value:map.sky.aurora||0},
       uTime:{value:0},
     },
     vertexShader:`varying vec3 vDir;void main(){vDir=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
     fragmentShader:`
-      uniform vec3 sunDir,cTop,cMid,cHor,cLow,cGlow;uniform float uStars,uTime;varying vec3 vDir;
+      uniform vec3 sunDir,cTop,cMid,cHor,cLow,cGlow;uniform float uStars,uAurora,uTime;varying vec3 vDir;
       float hash(vec3 p){return fract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453);}
       void main(){
         vec3 d=normalize(vDir);
@@ -101,6 +112,17 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
           float s=hash(sp);
           float tw=0.75+0.25*sin(uTime*2.0+s*40.0);
           c+=vec3(.9,.95,1.05)*smoothstep(0.996,1.0,s)*tw*smoothstep(0.08,0.3,d.y);
+        }
+        // Aurora: two sinuous curtains drifting around the sky, green core fading to violet
+        if(uAurora>0.5&&d.y>0.12){
+          float az=atan(d.x,d.z);
+          float w1=0.5+0.5*sin(az*3.0+uTime*.35+sin(az*5.0-uTime*.5)*1.2);
+          float band1=exp(-pow((d.y-0.34-0.10*w1)/0.13,2.0));
+          float w2=0.5+0.5*sin(az*2.0-uTime*.22+2.6);
+          float band2=exp(-pow((d.y-0.55-0.12*w2)/0.16,2.0));
+          vec3 ac=mix(vec3(.10,.85,.42),vec3(.35,.45,.85),0.5+0.5*sin(az*1.3+uTime*.15));
+          float flick=0.72+0.28*sin(uTime*1.1+az*7.0);
+          c+=ac*(band1*0.62+band2*0.38)*flick*smoothstep(0.12,0.3,d.y);
         }
         float s2=max(dot(d,sunDir),0.0);
         c+=cGlow*(pow(s2,700.0)*4.0+pow(s2,48.0)*.7+pow(s2,7.0)*.3);
@@ -129,7 +151,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
   fill.position.set(60,40,80);
   world.add(fill);
 
-  /* ------- Ground ------- */
+  /* ------- Ground (geometry identical on every map so movement physics stays uniform) ------- */
   const groundGeo=new THREE.PlaneGeometry(360,360,110,110);
   groundGeo.rotateX(-Math.PI/2);
   {
@@ -145,137 +167,33 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
     groundGeo.computeVertexNormals();
   }
   const ground=new THREE.Mesh(groundGeo,assets.ground[map.ground]);
-  ground.receiveShadow=true;ground.userData.surface=map.ground==='basalt'?'concrete':'sand';
+  ground.receiveShadow=true;ground.userData.surface=map.ground==='sand'?'sand':'concrete';
   world.add(ground);shootStatics.push(ground);
 
-  // Distant terrain mounds
-  for(let i=0;i<7;i++){
-    const a=i/7*Math.PI*2+.4,r=86+((i*53)%30);
-    const mound=new THREE.Mesh(new THREE.SphereGeometry(20+(i%3)*9,16,12),assets.ground[map.ground]);
-    mound.position.set(Math.cos(a)*r,-2,Math.sin(a)*r);
-    mound.scale.y=.28;
-    world.add(mound);
-  }
-
-  /* ------- Rocks ------- */
-  const rockGeo=new THREE.DodecahedronGeometry(1,0);
-  for(let i=0;i<14;i++){
-    const a=(i*137.5)*Math.PI/180,r=22+((i*67)%24);
-    const rock=new THREE.Mesh(rockGeo,M[map.rock]);
-    rock.position.set(Math.cos(a)*r,.1+(i%3)*.15,Math.sin(a)*r);
-    rock.scale.set(.7+(i%4)*.5,.5+(i%3)*.4,.7+(i%2)*.6);
-    rock.rotation.y=i;rock.castShadow=true;rock.receiveShadow=true;
-    rock.userData.surface='concrete';
-    world.add(rock);shootStatics.push(rock);
-    if(i%3===0)colliders.push({minX:rock.position.x-1,maxX:rock.position.x+1,minZ:rock.position.z-1,maxZ:rock.position.z+1,top:1});
-  }
-
-  /* ------- Outpost cover ------- */
-  const contMats=map.containers.map(k=>assets.containers[k]);
-  addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:contMats[0],x:-8.5,y:1.3,z:-4,ry:.22,surface:'metal'});
-  addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:contMats[0],x:-8.3,y:3.9,z:-3.7,ry:.26,surface:'metal'});
-  addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:contMats[1],x:6.5,y:1.3,z:-9,ry:-.18,surface:'metal'});
-  addBox(world,shootStatics,colliders,{w:2.44,h:2.6,d:6.1,mat:contMats[1],x:12,y:1.3,z:5,ry:.1,surface:'metal'});
-
-  const hescoDef=[[-7,-15],[-4.6,-15],[-2.2,-15],[2.2,-15],[4.6,-15],[7,-15],[9.4,-15],[-7,15],[7,15],[-9.4,13],[-9.4,10.6],[9.4,12],[9.4,9.6]];
-  for(const [x,z] of hescoDef)
-    addBox(world,shootStatics,colliders,{w:2.2,h:1.35,d:1.35,mat:M.hesco,x,y:.675,z,ry:(x%3)*.06,surface:'concrete'});
-
-  addBox(world,shootStatics,colliders,{w:2.2,h:1.1,d:1.1,mat:M.concrete,x:3.5,y:.55,z:8.5,ry:.5,surface:'concrete'});
-  addBox(world,shootStatics,colliders,{w:2.2,h:1.1,d:1.1,mat:M.concrete,x:-4.5,y:.55,z:9.5,ry:-.3,surface:'concrete'});
-  addBox(world,shootStatics,colliders,{w:1.4,h:.8,d:1.4,mat:M.concrete,x:0,y:.4,z:-7,ry:.1,surface:'concrete'});
-
-  for(let i=0;i<7;i++){
-    const a=Math.PI*.72+i*Math.PI*.09;
-    addBox(world,shootStatics,colliders,{w:1.1,h:.55,d:.8,mat:M.hesco,x:Math.cos(a)*7.4,y:.275,z:Math.sin(a)*7.4-1,ry:-a+Math.PI/2,surface:'concrete',collide:false});
-    addBox(world,shootStatics,colliders,{w:1.1,h:.55,d:.8,mat:M.hesco,x:Math.cos(a)*7.4+.4,y:.82,z:Math.sin(a)*7.4-.8,ry:-a+Math.PI/2+.2,surface:'concrete',collide:false});
-  }
-
-  addBox(world,shootStatics,colliders,{w:1.1,h:1.1,d:1.1,mat:M.wood,x:1.8,y:.55,z:4.2,ry:.4,surface:'wood'});
-  addBox(world,shootStatics,colliders,{w:1.1,h:1.1,d:1.1,mat:M.wood,x:2.9,y:.55,z:3.6,ry:.1,surface:'wood'});
-  addBox(world,shootStatics,colliders,{w:1.1,h:1.1,d:1.1,mat:M.wood,x:2.3,y:1.65,z:3.9,ry:.7,surface:'wood',collide:false});
-
-  const barrelGeo=new THREE.CylinderGeometry(.42,.42,1.1,14);
-  for(const [x,z,mi] of [[10.6,2.4,0],[11.5,2.9,1],[11,-.6,1]]){
-    const b=new THREE.Mesh(barrelGeo,contMats[mi]);
-    b.position.set(x,.55,z);b.castShadow=b.receiveShadow=true;
-    b.userData.surface='metal';
-    world.add(b);shootStatics.push(b);
-  }
-  colliders.push({minX:10.2,maxX:12,minZ:-1,maxZ:3.4,top:1.1});
-
-  /* ------- Watchtower ------- */
-  {
-    const tx=17,tz=-13;
-    const legGeo=new THREE.CylinderGeometry(.09,.12,5.2,8);
-    for(const [dx,dz] of [[-1.1,-1.1],[1.1,-1.1],[-1.1,1.1],[1.1,1.1]]){
-      const leg=new THREE.Mesh(legGeo,M.metal);
-      leg.position.set(tx+dx,2.6,tz+dz);leg.castShadow=true;
-      leg.userData.surface='metal';
-      world.add(leg);shootStatics.push(leg);
+  /* ------- Distant terrain: mounds, or a city skyline on the docks ------- */
+  if(map.mounds!==false){
+    for(let i=0;i<7;i++){
+      const a=i/7*Math.PI*2+.4,r=86+((i*53)%30);
+      const mound=new THREE.Mesh(new THREE.SphereGeometry(20+(i%3)*9,16,12),assets.ground[map.ground]);
+      mound.position.set(Math.cos(a)*r,-2,Math.sin(a)*r);
+      mound.scale.y=.28;
+      world.add(mound);
     }
-    const plat=new THREE.Mesh(new THREE.BoxGeometry(3,.18,3),M.wood);
-    plat.position.set(tx,5.2,tz);plat.castShadow=plat.receiveShadow=true;
-    world.add(plat);
-    const cab=new THREE.Mesh(new THREE.BoxGeometry(2.6,1,2.6),contMats[0]);
-    cab.position.set(tx,5.8,tz);cab.castShadow=true;
-    world.add(cab);
-    const roof=new THREE.Mesh(new THREE.ConeGeometry(2.3,1.2,4),contMats[1]);
-    roof.position.set(tx,7,tz);roof.rotation.y=Math.PI/4;roof.castShadow=true;
-    world.add(roof);
-    const ant=new THREE.Mesh(new THREE.CylinderGeometry(.02,.02,2.4,6),M.metal);
-    ant.position.set(tx+1,8.2,tz);world.add(ant);
-    const beacon=new THREE.Mesh(new THREE.SphereGeometry(.09,8,8),new THREE.MeshBasicMaterial({color:0xff3a2a}));
-    beacon.position.set(tx+1,9.4,tz);world.add(beacon);
-    ownMats.push(beacon.material);
-    colliders.push({minX:tx-1.3,maxX:tx+1.3,minZ:tz-1.3,maxZ:tz+1.3,top:5.2});
-    worldAnim.push(t=>{beacon.material.color.setHex(Math.sin(t*3)>0?0xff3a2a:0x571512);});
   }
 
-  /* ------- Radar dish ------- */
-  {
-    const px=-15,pz=-9;
-    const pole=new THREE.Mesh(new THREE.CylinderGeometry(.12,.16,3.4,8),M.metal);
-    pole.position.set(px,1.7,pz);pole.castShadow=true;world.add(pole);
-    const dish=new THREE.Mesh(new THREE.SphereGeometry(1.3,16,10,0,Math.PI*2,0,Math.PI*.36),M.metal);
-    dish.position.set(px,4,pz);dish.rotation.x=-.9;dish.castShadow=true;
-    dish.userData.surface='metal';
-    world.add(dish);shootStatics.push(dish);
-    worldAnim.push(t=>{dish.rotation.y=Math.sin(t*.6)*1.2;});
-    colliders.push({minX:px-.8,maxX:px+.8,minZ:pz-.8,maxZ:pz+.8,top:3.4});
-  }
-
-  /* ------- Lamp posts ------- */
-  function lamp(x,z,ry){
-    const pole=new THREE.Mesh(new THREE.CylinderGeometry(.06,.08,4.6,8),M.metal);
-    pole.position.set(x,2.3,z);pole.castShadow=true;
-    pole.userData.surface='metal';
-    world.add(pole);shootStatics.push(pole);
-    const head=new THREE.Mesh(new THREE.BoxGeometry(.5,.14,.3),M.metal);
-    head.position.set(x+Math.sin(ry)*.3,4.6,z+Math.cos(ry)*.3);head.rotation.y=ry;
-    world.add(head);
-    const bulb=new THREE.Mesh(new THREE.SphereGeometry(.09,8,8),new THREE.MeshBasicMaterial({color:mapKey==='ember'?0xff8a40:0xffd9a0}));
-    bulb.position.set(x+Math.sin(ry)*.5,4.5,z+Math.cos(ry)*.5);
-    world.add(bulb);
-    ownMats.push(bulb.material);
-    const light=new THREE.PointLight(mapKey==='ember'?0xff6a30:0xffc890,26,16,2);
-    light.position.copy(bulb.position);light.position.y-=.1;
-    world.add(light);
-  }
-  lamp(-6,7,.7);lamp(8,-2,2.4);
-
-  /* ------- Command tent ------- */
-  {
-    const tx=-2,tz=-10.5;
-    const g1=new THREE.Mesh(new THREE.BoxGeometry(5,.1,3.4),M.concrete);
-    g1.position.set(tx,.05,tz);g1.receiveShadow=true;world.add(g1);
-    const roof=new THREE.Mesh(new THREE.CylinderGeometry(1.7,1.7,5,3,1,false,0,Math.PI),M.hesco);
-    roof.rotation.z=Math.PI/2;roof.rotation.y=Math.PI/2;
-    roof.position.set(tx,1.1,tz);roof.scale.set(1,.72,1);
-    roof.castShadow=roof.receiveShadow=true;
-    roof.userData.surface='concrete';
-    world.add(roof);shootStatics.push(roof);
-    colliders.push({minX:tx-2.4,maxX:tx+2.4,minZ:tz-1.6,maxZ:tz+1.6,top:1.9});
+  /* ------- Scattered rocks / shards (mat per map; docks is urban and skips them) ------- */
+  if(map.rock){
+    const rockGeo=new THREE.DodecahedronGeometry(1,0);
+    for(let i=0;i<14;i++){
+      const a=(i*137.5)*Math.PI/180,r=22+((i*67)%24);
+      const rock=new THREE.Mesh(rockGeo,M[map.rock]);
+      rock.position.set(Math.cos(a)*r,.1+(i%3)*.15,Math.sin(a)*r);
+      rock.scale.set(.7+(i%4)*.5,.5+(i%3)*.4,.7+(i%2)*.6);
+      rock.rotation.y=i;rock.castShadow=true;rock.receiveShadow=true;
+      rock.userData.surface='concrete';
+      world.add(rock);shootStatics.push(rock);
+      if(i%3===0)colliders.push({minX:rock.position.x-1,maxX:rock.position.x+1,minZ:rock.position.z-1,maxZ:rock.position.z+1,top:1});
+    }
   }
 
   /* ------- AbinStudio sponsor billboards (all four maps: emissive art, shootable with bullet holes) ------- */
@@ -321,74 +239,22 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
     }
   }
 
-  /* ------- Classic snow-town set pieces (Snow Town only) ------- */
-  if(map.classic){
-    // Two-tier crate formations (stacked cover)
-    const stack=(x,z,ry,n=2)=>{
-      for(let i=0;i<n;i++)
-        addBox(world,shootStatics,colliders,{w:1.15,h:1.15,d:1.15,mat:M.wood,x,y:.575+i*1.15,z,ry:ry+i*.13,surface:'wood',collide:i===0});
-    };
-    stack(-2.5,6.5,.2,2);stack(-1.2,7.4,-.35,1);
-    stack(4.8,3.4,.5,2);stack(6.0,4.1,.1,1);
-    stack(-12,2.5,.4,2);stack(-10.9,3.2,.05,1);
-    stack(13.5,-4,.25,1);
-    // Long street walls
-    addBox(world,shootStatics,colliders,{w:9,h:2.6,d:.5,mat:M.concrete,x:-14,y:1.3,z:-2,ry:.28,surface:'concrete'});
-    addBox(world,shootStatics,colliders,{w:7,h:2.6,d:.5,mat:M.concrete,x:14,y:1.3,z:-6,ry:-.4,surface:'concrete'});
-    // Snow piles
-    for(let i=0;i<10;i++){
-      const a=(i*53.7)*Math.PI/180,r=12+((i*31)%26);
-      const pile=new THREE.Mesh(new THREE.SphereGeometry(1+(i%3)*.5,10,8),assets.ground.snow);
-      pile.position.set(Math.cos(a)*r,.1,Math.sin(a)*r);
-      pile.scale.y=.42;pile.receiveShadow=true;
-      world.add(pile);
-    }
-    // Distant cooling-tower silhouettes
-    const tower=new THREE.Mesh(new THREE.CylinderGeometry(6.5,9.5,34,20,1,true),
-      new THREE.MeshStandardMaterial({color:0xaab2b8,roughness:.95,side:THREE.DoubleSide}));
-    tower.position.set(-55,16,-55);
-    world.add(tower);
-    ownMats.push(tower.material);
-  }
-
-  /* ------- Lava fissures (Ember map only) ------- */
-  if(map.lava){
-    const crackMat=new THREE.MeshBasicMaterial({color:0xff5a18});
-    ownMats.push(crackMat);
-    const crackGeo=new THREE.PlaneGeometry(1,1);
-    for(let i=0;i<10;i++){
-      const a=i*73.4*Math.PI/180,r=10+((i*37)%30);
-      const len=3+(i%4)*3;
-      const cr=new THREE.Mesh(crackGeo,crackMat);
-      cr.rotation.x=-Math.PI/2;cr.rotation.z=(i*1.7)%Math.PI;
-      cr.position.set(Math.cos(a)*r,.03,Math.sin(a)*r);
-      cr.scale.set(len,.8+(i%3)*.4,1);
-      world.add(cr);
-      if(i%3===0){
-        const l=new THREE.PointLight(0xff6a20,14,10,2);
-        l.position.set(cr.position.x,1,cr.position.z);
-        world.add(l);
-        worldAnim.push(t=>{l.intensity=12+Math.sin(t*2.4+i)*5;});
-      }
-    }
-  }
-
-  /* ------- Ambient particles ------- */
-  const ambN=quality==='high'?160:80;
+  /* ------- Ambient particles: dust / snowfall / rain / embers ------- */
+  const ambN=(quality==='high'?160:80)*(map.amb==='rain'?2:1);
   const ambGeo=new THREE.BufferGeometry();
   const apos=new Float32Array(ambN*3),avel=new Float32Array(ambN);
   for(let i=0;i<ambN;i++){
     const a=Math.random()*Math.PI*2,r=4+Math.random()*56;
     apos[i*3]=Math.cos(a)*r;
-    apos[i*3+1]=map.amb==='ember'?.2+Math.random()*6:.3+Math.random()*5;
+    if(map.amb==='rain'){apos[i*3+1]=Math.random()*12;avel[i]=6+Math.random()*5;}
+    else{apos[i*3+1]=map.amb==='ember'?.2+Math.random()*6:.3+Math.random()*5;avel[i]=.4+Math.random()*.8;}
     apos[i*3+2]=Math.sin(a)*r;
-    avel[i]=.4+Math.random()*.8;
   }
   ambGeo.setAttribute('position',new THREE.BufferAttribute(apos,3));
-  const ambColor=map.amb==='snow'?0xf0f6ff:map.amb==='ember'?0xff9a50:0xffd9a8;
-  const ambSize=map.amb==='snow'?.09:map.amb==='ember'?.06:.055;
+  const ambColor=map.amb==='snow'?0xf0f6ff:map.amb==='ember'?0xff9a50:map.amb==='rain'?0x9fc0e8:0xffd9a8;
+  const ambSize=map.amb==='snow'?.09:map.amb==='ember'?.06:map.amb==='rain'?.05:.055;
   const ambPts=new THREE.Points(ambGeo,new THREE.PointsMaterial({
-    color:ambColor,size:ambSize,transparent:true,opacity:map.amb==='ember'?.85:.55,
+    color:ambColor,size:ambSize,transparent:true,opacity:map.amb==='ember'?.85:map.amb==='rain'?.4:.55,
     blending:THREE.AdditiveBlending,depthWrite:false}));
   ambPts.frustumCulled=false;
   world.add(ambPts);
@@ -399,6 +265,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
       let y=p.getY(i),x=p.getX(i),z=p.getZ(i);
       if(map.amb==='snow'){y-=avel[i]*.016;x+=Math.sin(t*.8+i)*.01;}
       else if(map.amb==='ember'){y+=avel[i]*.012;x+=Math.sin(t*1.2+i)*.006;}
+      else if(map.amb==='rain'){y-=avel[i]*.016;x+=(.6+Math.sin(t*.4+i)*.3)*.016;if(y<0)y=10+Math.random()*4;}
       else{x+=.9*.016*(1+Math.sin(t*.5+i)*.4);}
       if(map.amb==='snow'&&y<0){y=6+Math.random()*2;}
       if(map.amb==='ember'&&y>7){y=.1;}
@@ -408,6 +275,9 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
     }
     p.needsUpdate=true;
   });
+
+  /* ------- Per-map layout ------- */
+  (LAYOUTS[map.layout]||LAYOUTS.desert)(ctx);
 
   /* ------- Spawn points ------- */
   const spawnPoints=[
@@ -421,6 +291,486 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
   const losStatics=shootStatics.filter(o=>o!==ground);
   return {group:world,colliders,shootStatics,losStatics,spawnPoints,sunDir,mapKey,map,worldAnim,ownMats};
 }
+
+/* Street lamp (shared shape, per-map palette from MAPS[mapKey].lamp) */
+function lamp(ctx,x,z,ry){
+  const {world,shootStatics,ownMats,M,map}=ctx;
+  const pole=new THREE.Mesh(new THREE.CylinderGeometry(.06,.08,4.6,8),M.metal);
+  pole.position.set(x,2.3,z);pole.castShadow=true;
+  pole.userData.surface='metal';
+  world.add(pole);shootStatics.push(pole);
+  const head=new THREE.Mesh(new THREE.BoxGeometry(.5,.14,.3),M.metal);
+  head.position.set(x+Math.sin(ry)*.3,4.6,z+Math.cos(ry)*.3);head.rotation.y=ry;
+  world.add(head);
+  const bulb=new THREE.Mesh(new THREE.SphereGeometry(.09,8,8),new THREE.MeshBasicMaterial({color:map.lamp.bulb}));
+  bulb.position.set(x+Math.sin(ry)*.5,4.5,z+Math.cos(ry)*.5);
+  world.add(bulb);
+  ownMats.push(bulb.material);
+  const light=new THREE.PointLight(map.lamp.light,map.lamp.i,16,2);
+  light.position.copy(bulb.position);light.position.y-=.1;
+  world.add(light);
+}
+
+/* ================= Per-map layouts ================= */
+const LAYOUTS={
+
+  /* Desert Outpost — the v1.7 cover layout, kept verbatim (map 1 is preserved by design) */
+  desert(ctx){
+    const {world,shootStatics,colliders,worldAnim,ownMats,M,mapKey}=ctx;
+    const contMats=ctx.map.containers.map(k=>ctx.assets.containers[k]);
+
+    /* Outpost cover */
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:contMats[0],x:-8.5,y:1.3,z:-4,ry:.22,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:contMats[0],x:-8.3,y:3.9,z:-3.7,ry:.26,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:contMats[1],x:6.5,y:1.3,z:-9,ry:-.18,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:2.44,h:2.6,d:6.1,mat:contMats[1],x:12,y:1.3,z:5,ry:.1,surface:'metal'});
+
+    const hescoDef=[[-7,-15],[-4.6,-15],[-2.2,-15],[2.2,-15],[4.6,-15],[7,-15],[9.4,-15],[-7,15],[7,15],[-9.4,13],[-9.4,10.6],[9.4,12],[9.4,9.6]];
+    for(const [x,z] of hescoDef)
+      addBox(world,shootStatics,colliders,{w:2.2,h:1.35,d:1.35,mat:M.hesco,x,y:.675,z,ry:(x%3)*.06,surface:'concrete'});
+
+    addBox(world,shootStatics,colliders,{w:2.2,h:1.1,d:1.1,mat:M.concrete,x:3.5,y:.55,z:8.5,ry:.5,surface:'concrete'});
+    addBox(world,shootStatics,colliders,{w:2.2,h:1.1,d:1.1,mat:M.concrete,x:-4.5,y:.55,z:9.5,ry:-.3,surface:'concrete'});
+    addBox(world,shootStatics,colliders,{w:1.4,h:.8,d:1.4,mat:M.concrete,x:0,y:.4,z:-7,ry:.1,surface:'concrete'});
+
+    for(let i=0;i<7;i++){
+      const a=Math.PI*.72+i*Math.PI*.09;
+      addBox(world,shootStatics,colliders,{w:1.1,h:.55,d:.8,mat:M.hesco,x:Math.cos(a)*7.4,y:.275,z:Math.sin(a)*7.4-1,ry:-a+Math.PI/2,surface:'concrete',collide:false});
+      addBox(world,shootStatics,colliders,{w:1.1,h:.55,d:.8,mat:M.hesco,x:Math.cos(a)*7.4+.4,y:.82,z:Math.sin(a)*7.4-.8,ry:-a+Math.PI/2+.2,surface:'concrete',collide:false});
+    }
+
+    addBox(world,shootStatics,colliders,{w:1.1,h:1.1,d:1.1,mat:M.wood,x:1.8,y:.55,z:4.2,ry:.4,surface:'wood'});
+    addBox(world,shootStatics,colliders,{w:1.1,h:1.1,d:1.1,mat:M.wood,x:2.9,y:.55,z:3.6,ry:.1,surface:'wood'});
+    addBox(world,shootStatics,colliders,{w:1.1,h:1.1,d:1.1,mat:M.wood,x:2.3,y:1.65,z:3.9,ry:.7,surface:'wood',collide:false});
+
+    const barrelGeo=new THREE.CylinderGeometry(.42,.42,1.1,14);
+    for(const [x,z,mi] of [[10.6,2.4,0],[11.5,2.9,1],[11,-.6,1]]){
+      const b=new THREE.Mesh(barrelGeo,contMats[mi]);
+      b.position.set(x,.55,z);b.castShadow=b.receiveShadow=true;
+      b.userData.surface='metal';
+      world.add(b);shootStatics.push(b);
+    }
+    colliders.push({minX:10.2,maxX:12,minZ:-1,maxZ:3.4,top:1.1});
+
+    /* Watchtower */
+    {
+      const tx=17,tz=-13;
+      const legGeo=new THREE.CylinderGeometry(.09,.12,5.2,8);
+      for(const [dx,dz] of [[-1.1,-1.1],[1.1,-1.1],[-1.1,1.1],[1.1,1.1]]){
+        const leg=new THREE.Mesh(legGeo,M.metal);
+        leg.position.set(tx+dx,2.6,tz+dz);leg.castShadow=true;
+        leg.userData.surface='metal';
+        world.add(leg);shootStatics.push(leg);
+      }
+      const plat=new THREE.Mesh(new THREE.BoxGeometry(3,.18,3),M.wood);
+      plat.position.set(tx,5.2,tz);plat.castShadow=plat.receiveShadow=true;
+      world.add(plat);
+      const cab=new THREE.Mesh(new THREE.BoxGeometry(2.6,1,2.6),contMats[0]);
+      cab.position.set(tx,5.8,tz);cab.castShadow=true;
+      world.add(cab);
+      const roof=new THREE.Mesh(new THREE.ConeGeometry(2.3,1.2,4),contMats[1]);
+      roof.position.set(tx,7,tz);roof.rotation.y=Math.PI/4;roof.castShadow=true;
+      world.add(roof);
+      const ant=new THREE.Mesh(new THREE.CylinderGeometry(.02,.02,2.4,6),M.metal);
+      ant.position.set(tx+1,8.2,tz);world.add(ant);
+      const beacon=new THREE.Mesh(new THREE.SphereGeometry(.09,8,8),new THREE.MeshBasicMaterial({color:0xff3a2a}));
+      beacon.position.set(tx+1,9.4,tz);world.add(beacon);
+      ownMats.push(beacon.material);
+      colliders.push({minX:tx-1.3,maxX:tx+1.3,minZ:tz-1.3,maxZ:tz+1.3,top:5.2});
+      worldAnim.push(t=>{beacon.material.color.setHex(Math.sin(t*3)>0?0xff3a2a:0x571512);});
+    }
+
+    /* Radar dish */
+    {
+      const px=-15,pz=-9;
+      const pole=new THREE.Mesh(new THREE.CylinderGeometry(.12,.16,3.4,8),M.metal);
+      pole.position.set(px,1.7,pz);pole.castShadow=true;world.add(pole);
+      const dish=new THREE.Mesh(new THREE.SphereGeometry(1.3,16,10,0,Math.PI*2,0,Math.PI*.36),M.metal);
+      dish.position.set(px,4,pz);dish.rotation.x=-.9;dish.castShadow=true;
+      dish.userData.surface='metal';
+      world.add(dish);shootStatics.push(dish);
+      worldAnim.push(t=>{dish.rotation.y=Math.sin(t*.6)*1.2;});
+      colliders.push({minX:px-.8,maxX:px+.8,minZ:pz-.8,maxZ:pz+.8,top:3.4});
+    }
+
+    lamp(ctx,-6,7,.7);lamp(ctx,8,-2,2.4);
+
+    /* Command tent */
+    {
+      const tx=-2,tz=-10.5;
+      const g1=new THREE.Mesh(new THREE.BoxGeometry(5,.1,3.4),M.concrete);
+      g1.position.set(tx,.05,tz);g1.receiveShadow=true;world.add(g1);
+      const roof=new THREE.Mesh(new THREE.CylinderGeometry(1.7,1.7,5,3,1,false,0,Math.PI),M.hesco);
+      roof.rotation.z=Math.PI/2;roof.rotation.y=Math.PI/2;
+      roof.position.set(tx,1.1,tz);roof.scale.set(1,.72,1);
+      roof.castShadow=roof.receiveShadow=true;
+      roof.userData.surface='concrete';
+      world.add(roof);shootStatics.push(roof);
+      colliders.push({minX:tx-2.4,maxX:tx+2.4,minZ:tz-1.6,maxZ:tz+1.6,top:1.9});
+    }
+  },
+
+  /* Glacier Lake — "crevasse ridge": a diagonal wall of glacial ice ridges west of centre, a fractured
+     ice maze to the north, a half-sunken wreck in the north-west and an open iceberg plain to the east */
+  glacier(ctx){
+    const {world,shootStatics,colliders,worldAnim,ownMats,M,assets}=ctx;
+    const contMats=ctx.map.containers.map(k=>assets.containers[k]);
+
+    /* Diagonal ice ridge (three long walls stepping NW→SE, west of the arena centre) */
+    for(const [x,z] of [[-11,-4.5],[-7.5,-1],[-5,3]])
+      addBox(world,shootStatics,colliders,{w:7,h:2.2,d:1.4,mat:M.ice,x,y:1.1,z,ry:.45,surface:'ice'});
+
+    /* Fractured ice maze to the north */
+    addBox(world,shootStatics,colliders,{w:2.6,h:1.7,d:2,mat:M.ice,x:-3,y:.85,z:-12,ry:.3,surface:'ice'});
+    addBox(world,shootStatics,colliders,{w:2,h:2.6,d:2,mat:M.ice,x:2,y:1.3,z:-14,ry:-.2,surface:'ice'});
+    addBox(world,shootStatics,colliders,{w:2.4,h:1.5,d:2.2,mat:M.ice,x:6,y:.75,z:-11,ry:.55,surface:'ice'});
+    addBox(world,shootStatics,colliders,{w:2.2,h:1.8,d:1.8,mat:M.ice,x:-8,y:.9,z:-15,ry:.1,surface:'ice'});
+
+    /* Half-sunken supply wreck, NW corner */
+    addBox(world,shootStatics,colliders,{w:7,h:1.6,d:3,mat:contMats[1],x:-18,y:.7,z:-7,ry:.9,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:3,h:1.8,d:2.4,mat:contMats[0],x:-18.6,y:2.3,z:-7.8,ry:1.05,surface:'metal'});
+
+    /* Open iceberg plain to the east */
+    addBox(world,shootStatics,colliders,{w:3.2,h:2.2,d:2.6,mat:M.ice,x:10,y:1.1,z:-4,ry:.15,surface:'ice'});
+    addBox(world,shootStatics,colliders,{w:2.4,h:1.6,d:2,mat:M.ice,x:9,y:.8,z:8,ry:-.35,surface:'ice'});
+    addBox(world,shootStatics,colliders,{w:2,h:2.8,d:2,mat:M.ice,x:13,y:1.4,z:2,ry:.05,surface:'ice'});
+
+    /* Frozen supply crates (the ~1.1 m climbable tier) */
+    const stack=(x,z,ry,n=2)=>{
+      for(let i=0;i<n;i++)
+        addBox(world,shootStatics,colliders,{w:1.15,h:1.15,d:1.15,mat:M.wood,x,y:.575+i*1.15,z,ry:ry+i*.13,surface:'wood',collide:i===0});
+    };
+    stack(5,6,.3,2);stack(11,-8,-.2,2);
+    stack(-3,8,.1,1);stack(-1.8,9,-.4,1);
+    stack(3.5,-13,.4,1);
+
+    /* Frozen trapper hut, north-east */
+    {
+      const hx=14,hz=-12;
+      addBox(world,shootStatics,colliders,{w:3,h:2.3,d:2.6,mat:M.wood,x:hx,y:1.15,z:hz,ry:-.3,surface:'wood'});
+      const roof=new THREE.Mesh(new THREE.ConeGeometry(2.3,1.3,4),contMats[0]);
+      roof.position.set(hx,2.95,hz);roof.rotation.y=Math.PI/4;roof.castShadow=true;
+      world.add(roof);
+    }
+
+    /* Signal mast, west edge, cold blinking beacon */
+    {
+      const px=-20,pz=7;
+      const pole=new THREE.Mesh(new THREE.CylinderGeometry(.08,.11,5.4,8),M.metal);
+      pole.position.set(px,2.7,pz);pole.castShadow=true;world.add(pole);
+      const beacon=new THREE.Mesh(new THREE.SphereGeometry(.1,8,8),new THREE.MeshBasicMaterial({color:0x7fd4ff}));
+      beacon.position.set(px,5.7,pz);world.add(beacon);
+      ownMats.push(beacon.material);
+      colliders.push({minX:px-.5,maxX:px+.5,minZ:pz-.5,maxZ:pz+.5,top:5.4});
+      worldAnim.push(t=>{beacon.material.color.setHex(Math.sin(t*2.2)>0?0x7fd4ff:0x16324a);});
+    }
+
+    /* Snow drifts */
+    for(let i=0;i<10;i++){
+      const a=(i*53.7)*Math.PI/180,r=12+((i*31)%26);
+      const pile=new THREE.Mesh(new THREE.SphereGeometry(1+(i%3)*.5,10,8),assets.ground.snow);
+      pile.position.set(Math.cos(a)*r,.1,Math.sin(a)*r);
+      pile.scale.y=.42;pile.receiveShadow=true;
+      world.add(pile);
+    }
+
+    /* Distant icebergs */
+    for(const [x,z,s] of [[-52,-40,13],[48,-52,11],[-38,58,15],[58,42,12]]){
+      const berg=new THREE.Mesh(new THREE.DodecahedronGeometry(1,0),M.ice);
+      berg.position.set(x,2,z);
+      berg.scale.set(s,s*.68,s*.8);
+      berg.rotation.y=x;
+      world.add(berg);
+    }
+
+    lamp(ctx,-13,6,.7);lamp(ctx,7,10,2.4);
+  },
+
+  /* Neon Docklands — "container canyon": two parallel container walls form a rain-slick street through the
+     middle of the yard with staggered crossings, a stacking yard to the north, a loading-dock platform to the
+     south, neon signage mounted inside the canyon, and the gantry crane parked to the east */
+  docks(ctx){
+    const {world,shootStatics,colliders,worldAnim,ownMats,M,assets}=ctx;
+    const [seaBlue,rust,mustard,charcoal]=ctx.map.containers.map(k=>assets.containers[k]);
+
+    /* Canyon west wall (lengthwise containers, one staggered crossing gap) */
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:seaBlue,x:-3,y:1.3,z:-13,ry:Math.PI/2,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:rust,x:-3,y:1.3,z:-7.4,ry:Math.PI/2,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:seaBlue,x:-3,y:3.9,z:-7.4,ry:Math.PI/2,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:mustard,x:-3,y:1.3,z:-.2,ry:Math.PI/2,surface:'metal'});
+    /* Canyon east wall (3-high tower north of the wide east crossing, single layers south of it) */
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:charcoal,x:5,y:1.3,z:-12,ry:Math.PI/2,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:seaBlue,x:5,y:3.9,z:-12,ry:Math.PI/2,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:rust,x:5,y:6.5,z:-12,ry:Math.PI/2,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:mustard,x:5,y:1.3,z:1.8,ry:Math.PI/2,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:seaBlue,x:5,y:1.3,z:8.5,ry:Math.PI/2,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:rust,x:5,y:3.9,z:8.5,ry:Math.PI/2,surface:'metal'});
+
+    /* North stacking yard */
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:rust,x:-12,y:1.3,z:-12,ry:.15,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:mustard,x:-11.7,y:3.9,z:-11.8,ry:.2,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:seaBlue,x:10,y:1.3,z:-15,ry:-.1,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:charcoal,x:10.3,y:3.9,z:-14.7,ry:-.06,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:mustard,x:-16,y:1.3,z:-3,ry:1.35,surface:'metal'});
+
+    /* South loading-dock platform (climbable, ~1.1 m) + yard crates */
+    addBox(world,shootStatics,colliders,{w:10,h:1.1,d:3,mat:M.concrete,x:-2,y:.55,z:10.5,ry:.06,surface:'concrete'});
+    const stack=(x,z,ry,n=2)=>{
+      for(let i=0;i<n;i++)
+        addBox(world,shootStatics,colliders,{w:1.15,h:1.15,d:1.15,mat:M.wood,x,y:.575+i*1.15,z,ry:ry+i*.13,surface:'wood',collide:i===0});
+    };
+    stack(8,8.5,.3,2);stack(9.3,9.1,-.2,1);
+    stack(-8,6,.1,1);stack(13,-1,.4,2);
+
+    /* Jersey barriers in the street and yards */
+    for(const [x,z,ry] of [[1,-6,.4],[-6,1,-.2],[8,6.5,.1],[1,-13,-.3],[-11,3,.9]])
+      addBox(world,shootStatics,colliders,{w:2.2,h:1.1,d:1.1,mat:M.concrete,x,y:.55,z,ry,surface:'concrete'});
+
+    /* Neon signage mounted inside the canyon (panel + emissive face, shootable) */
+    const sign=(mat,x,z,ry,{w=2.6,h=1.3,y=1.5,collide=true}={})=>{
+      const back=new THREE.Mesh(new THREE.BoxGeometry(w+.14,h+.14,.12),charcoal);
+      back.position.set(x,y,z);back.rotation.y=ry;
+      back.castShadow=true;back.userData.surface='metal';
+      world.add(back);
+      const face=new THREE.Mesh(new THREE.PlaneGeometry(w,h),mat);
+      face.position.set(x+Math.sin(ry)*.07,y,z+Math.cos(ry)*.07);
+      face.rotation.y=ry;
+      face.userData.surface='metal';
+      world.add(face);shootStatics.push(face);
+      if(collide){
+        const hx=Math.abs(Math.cos(ry))*w*.5+.1,hz=Math.abs(Math.sin(ry))*w*.5+.1;
+        colliders.push({minX:x-hx,maxX:x+hx,minZ:z-hz,maxZ:z+hz,top:y+h*.5+.2});
+      }
+    };
+    sign(M.neonDock,-1.45,-13,Math.PI/2-.25);   // west wall, tilted into the street
+    sign(M.neonCargo,3.5,1.8,-Math.PI/2+.25);   // east wall, tilted into the street
+    sign(M.neonDock,10,-13.3,-.04,{y:1.5});     // north yard stack, facing down the street
+    {
+      const px=-6,pz=-16.5,ry=Math.atan2(6,16.5);
+      const pole=new THREE.Mesh(new THREE.CylinderGeometry(.09,.12,4.4,8),M.metal);
+      pole.position.set(px,2.2,pz);pole.castShadow=true;world.add(pole);
+      sign(M.neonFerry,px+Math.sin(ry)*.1,pz+Math.cos(ry)*.1,ry,{y:3.6,collide:false}); // pole-mounted, walk under it
+    }
+
+    /* Floodlight masts */
+    const mast=(x,z,flicker)=>{
+      const pole=new THREE.Mesh(new THREE.CylinderGeometry(.14,.2,7.2,8),M.metal);
+      pole.position.set(x,3.6,z);pole.castShadow=true;
+      pole.userData.surface='metal';
+      world.add(pole);shootStatics.push(pole);
+      const head=new THREE.Mesh(new THREE.BoxGeometry(1.6,.3,.5),M.metal);
+      head.position.set(x,7,z);world.add(head);
+      for(const sd of[-1,1]){
+        const bulb=new THREE.Mesh(new THREE.SphereGeometry(.13,8,8),new THREE.MeshBasicMaterial({color:0xdcecff}));
+        bulb.position.set(x+sd*.55,6.82,z+.1);
+        world.add(bulb);ownMats.push(bulb.material);
+      }
+      const light=new THREE.PointLight(0xbfd4ff,34,20,2);
+      light.position.set(x,6.7,z);
+      world.add(light);
+      colliders.push({minX:x-.4,maxX:x+.4,minZ:z-.4,maxZ:z+.4,top:7.2});
+      if(flicker)worldAnim.push(t=>{light.intensity=30+(Math.sin(t*13)>.86?-16:0)+Math.sin(t*2.1)*3;});
+    };
+    mast(-14,8,true);mast(12,-2,false);
+
+    /* Gantry crane silhouette parked east of the yard */
+    {
+      const cx=28,cz=-16;
+      const legGeo=new THREE.BoxGeometry(1.2,16,1.2);
+      for(const [dx,dz] of [[-9,-3],[9,-3],[-9,3],[9,3]]){
+        const leg=new THREE.Mesh(legGeo,M.metal);
+        leg.position.set(cx+dx,8,cz+dz);leg.castShadow=true;
+        world.add(leg);
+        colliders.push({minX:cx+dx-.8,maxX:cx+dx+.8,minZ:cz+dz-.8,maxZ:cz+dz+.8,top:16});
+      }
+      const beam=new THREE.Mesh(new THREE.BoxGeometry(26,1.6,2.4),M.metal);
+      beam.position.set(cx,16.4,cz);beam.castShadow=true;
+      world.add(beam);
+      const trolley=new THREE.Mesh(new THREE.BoxGeometry(2,1.2,1.6),M.droneDark);
+      trolley.position.set(cx+4,15.2,cz);world.add(trolley);
+    }
+
+    /* Dark skyline with blinking rooftop beacons */
+    {
+      const facade=new THREE.MeshStandardMaterial({color:0x1a1f28,roughness:.9,metalness:.05});
+      ownMats.push(facade);
+      const spots=[[-58,26,16,15,22],[62,-34,20,13,26],[52,48,14,12,18],[-64,-52,18,11,24],[38,66,16,10,20],[-40,64,13,9,16],[70,10,15,12,23]];
+      let bi=0;
+      for(const [x,z,w,h,d] of spots){
+        const bld=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),facade);
+        bld.position.set(x,h/2-2,z);
+        world.add(bld);
+        if(bi%2===0){
+          const bc=new THREE.Mesh(new THREE.SphereGeometry(.35,6,6),new THREE.MeshBasicMaterial({color:0xff3355}));
+          bc.position.set(x,h+.4,z);
+          world.add(bc);ownMats.push(bc.material);
+          const phase=bi*1.3;
+          worldAnim.push(t=>{bc.material.color.setHex(Math.sin(t*1.6+phase)>0?0xff3355:0x3a0e18);});
+        }
+        bi++;
+      }
+    }
+
+    /* Reflective rain puddles (y follows the ground noise so they never sink under the undulation) */
+    {
+      const ns=(x,z)=>Math.sin(x*.045)*Math.cos(z*.038)+Math.sin(x*.11+z*.07)*.5;
+      const puddleMat=new THREE.MeshStandardMaterial({color:0x0d1016,roughness:.14,metalness:.35});
+      ownMats.push(puddleMat);
+      for(const [x,z,r] of [[-1,-6,1.9],[4,-1,1.5],[-5,3,1.8],[5,10.5,2],[-6,-8,1.6],[8,-6,1.7],[0,14,1.8]]){
+        const pd=new THREE.Mesh(new THREE.CircleGeometry(r,18),puddleMat);
+        pd.rotation.x=-Math.PI/2;
+        pd.position.set(x,ns(x,z)*.5+.03,z);
+        world.add(pd);
+      }
+    }
+
+    lamp(ctx,-10,13,.7);lamp(ctx,9,3,2.4);
+  },
+
+  /* Volcano Caldera — "lava river crossing": a molten river snakes down the west side of the crater floor,
+     forded by two rock-slab bridges (the southern one under a basalt arch); basalt column fields hold the
+     east side and gate pillars mark the northern approach */
+  caldera(ctx){
+    const {world,shootStatics,colliders,worldAnim,ownMats,M,assets,map}=ctx;
+    const contMats=ctx.map.containers.map(k=>assets.containers[k]);
+
+    /* Lava river: a chain of rimmed pools snaking north→south west of the arena centre */
+    const ns=(x,z)=>Math.sin(x*.045)*Math.cos(z*.038)+Math.sin(x*.11+z*.07)*.5;
+    const lavaMat=new THREE.MeshStandardMaterial({
+      map:assets.tex.lavaPool,emissiveMap:assets.tex.lavaPool,
+      emissive:0xffffff,emissiveIntensity:1.15,roughness:1,metalness:0});
+    ownMats.push(lavaMat);
+    const river=[[-6,-18,3],[-7,-11,3.4],[-6,-3,3.2],[-8,4,3.2],[-6,11,3.4],[-4,18,3]];
+    let lightI=0;
+    for(const [px,pz,r] of river){
+      const pool=new THREE.Mesh(new THREE.CircleGeometry(r,26),lavaMat);
+      pool.rotation.x=-Math.PI/2;
+      pool.position.set(px,ns(px,pz)*.5-.05,pz);
+      world.add(pool);
+      const rimN=Math.round(r*2);
+      for(let i=0;i<rimN;i++){
+        const a=i/rimN*Math.PI*2,rx=px+Math.cos(a)*(r+.8),rz=pz+Math.sin(a)*(r+.8);
+        addBox(world,shootStatics,colliders,{w:2.6,h:1,d:1.6,mat:M.column,x:rx,y:ns(rx,rz)*.5+.35,z:rz,ry:a+Math.PI/2,surface:'concrete'});
+      }
+      if(lightI%2===0){ // keep the light budget sane: every other pool glows
+        const l=new THREE.PointLight(0xff6a20,20,16,2);
+        l.position.set(px,1.4,pz);
+        world.add(l);
+        worldAnim.push(t=>{l.intensity=17+Math.sin(t*2.2+px)*6;});
+      }
+      lightI++;
+    }
+    worldAnim.push(t=>{ // slow crust drift (shared texture; all pools scroll together)
+      lavaMat.map.offset.set(t*.014%1,t*.009%1);
+    });
+
+    /* Rock-slab bridges across the river (jumpable ledges) */
+    for(const [bx,bz,ry] of [[-6.5,-11,0],[-6.5,11,Math.PI/2]])
+      addBox(world,shootStatics,colliders,{w:4.5,h:.9,d:3.4,mat:M.column,x:bx,y:.45,z:bz,ry,surface:'concrete'});
+
+    /* Basalt arch spanning the south bridge */
+    {
+      for(const sd of[-1,1]){
+        const col=new THREE.Mesh(new THREE.CylinderGeometry(.8,1,3.8,7),M.column);
+        col.position.set(-6.5+sd*3.6,1.9,11);
+        col.castShadow=col.receiveShadow=true;
+        col.userData.surface='concrete';
+        world.add(col);shootStatics.push(col);
+      }
+      const lintel=new THREE.Mesh(new THREE.BoxGeometry(8.6,1,1.7),M.column);
+      lintel.position.set(-6.5,4.2,11);lintel.castShadow=true;
+      lintel.userData.surface='concrete';
+      world.add(lintel);shootStatics.push(lintel);
+      colliders.push({minX:-10.9,maxX:-2.1,minZ:10.1,maxZ:11.9,top:3.8});
+    }
+
+    /* East basalt column fields (hex prisms) */
+    const colGeo=new THREE.CylinderGeometry(.85,1,1,6);
+    const cluster=(cx,cz,list)=>{
+      let top=0;
+      for(const [dx,dz,h] of list){
+        const col=new THREE.Mesh(colGeo,M.column);
+        col.scale.y=h;
+        col.position.set(cx+dx,h/2,cz+dz);
+        col.rotation.y=dx*1.7;
+        col.castShadow=col.receiveShadow=true;
+        col.userData.surface='concrete';
+        world.add(col);shootStatics.push(col);
+        top=Math.max(top,h);
+      }
+      colliders.push({minX:cx-1.6,maxX:cx+1.6,minZ:cz-1.6,maxZ:cz+1.6,top:top});
+    };
+    cluster(10,-8,[[0,0,4.2],[1.3,.5,3.1],[-.9,1.2,2.4],[.5,-1.1,3.6]]);
+    cluster(14,2,[[0,0,3.4],[1.2,.7,2.3],[-.8,-.9,2.9]]);
+    cluster(8,10,[[0,0,4.5],[1.1,-.8,2.8],[-.9,.9,3.2]]);
+    cluster(18,-3,[[0,0,2.6],[.9,.9,1.9]]);
+
+    /* Northern gate pillars */
+    for(const [x,z] of [[-2,-22],[7,-20]]){
+      const col=new THREE.Mesh(new THREE.CylinderGeometry(1,1.2,4.5,6),M.column);
+      col.position.set(x,2.25,z);
+      col.castShadow=col.receiveShadow=true;
+      col.userData.surface='concrete';
+      world.add(col);shootStatics.push(col);
+      colliders.push({minX:x-1.2,maxX:x+1.2,minZ:z-1.2,maxZ:z+1.2,top:4.5});
+    }
+
+    /* Scorched supply cache south-east + crates (the ~1.1 m climbable tier) */
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:contMats[0],x:4,y:1.3,z:16,ry:.2,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:contMats[1],x:-11,y:1.3,z:19,ry:-.15,surface:'metal'});
+    for(const [x,z,ry] of [[-1,-6,.4],[12,-3,.1],[-13,-2,-.3],[10,14,.5]]){
+      addBox(world,shootStatics,colliders,{w:1.15,h:1.15,d:1.15,mat:M.wood,x,y:.575,z,ry,surface:'wood'});
+    }
+
+    /* Obsidian slabs */
+    for(const [x,z,s,ry] of [[5,-13,2.2,.4],[16,7,2.4,-.3],[-14,8,2,.9],[0,20,2,-.6]]){
+      const slab=new THREE.Mesh(new THREE.DodecahedronGeometry(1,0),M.obsidian);
+      slab.position.set(x,.6,z);
+      slab.scale.set(s,s*.5,s*.7);
+      slab.rotation.y=ry;slab.castShadow=slab.receiveShadow=true;
+      slab.userData.surface='concrete';
+      world.add(slab);shootStatics.push(slab);
+      colliders.push({minX:x-s*.6,maxX:x+s*.6,minZ:z-s*.6,maxZ:z+s*.6,top:1.4});
+    }
+
+    /* Lava fissures (thin glowing cracks + flickering light) */
+    if(map.lava){
+      const crackMat=new THREE.MeshBasicMaterial({color:0xff5a18});
+      ownMats.push(crackMat);
+      const crackGeo=new THREE.PlaneGeometry(1,1);
+      for(let i=0;i<10;i++){
+        const a=i*73.4*Math.PI/180,r=10+((i*37)%30);
+        const len=3+(i%4)*3;
+        const cr=new THREE.Mesh(crackGeo,crackMat);
+        cr.rotation.x=-Math.PI/2;cr.rotation.z=(i*1.7)%Math.PI;
+        cr.position.set(Math.cos(a)*r,.03,Math.sin(a)*r);
+        cr.scale.set(len,.8+(i%3)*.4,1);
+        world.add(cr);
+        if(i%4===0){
+          const l=new THREE.PointLight(0xff6a20,14,10,2);
+          l.position.set(cr.position.x,1,cr.position.z);
+          world.add(l);
+          worldAnim.push(t=>{l.intensity=12+Math.sin(t*2.4+i)*5;});
+        }
+      }
+    }
+
+    /* The volcano cone on the horizon, crater glowing */
+    {
+      const cone=new THREE.Mesh(new THREE.ConeGeometry(26,30,24),M.column);
+      cone.position.set(0,13,-88);
+      world.add(cone);
+      const rim=new THREE.Mesh(new THREE.CircleGeometry(7,20),new THREE.MeshBasicMaterial({color:0xff5a18}));
+      rim.rotation.x=Math.PI/2; // face up out of the crater
+      rim.position.set(0,27.4,-88);
+      world.add(rim);
+      ownMats.push(rim.material);
+      worldAnim.push(t=>{rim.material.color.setHSL(.05,1,.45+.12*Math.sin(t*1.3));});
+    }
+
+    lamp(ctx,11,-11,.7);lamp(ctx,-13,14,2.4);
+  },
+};
 
 /* Map switch: destroy the old world (geometry + materials created for this map; ambient Points geometry is freed too) */
 export function disposeWorld(scene,world){
