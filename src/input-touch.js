@@ -1,6 +1,7 @@
 // input-touch.js — M4-P1 touch support:
 //   left virtual stick writes WASD, right-side drag writes look;
 //   right cluster = big hold-to-fire button with aux buttons on an arc around it (fire / aim / reload / jump / crouch / switch / grenade);
+//   holding FIRE and dragging steers the view (look only, not ADS), so one thumb can fire and aim;
 //   light aim assist within 6° can be disabled in settings; ?touch=1 forces it on desktop for testing.
 import * as THREE from 'three';
 
@@ -9,7 +10,7 @@ const DIRS=['KeyW','KeyA','KeyS','KeyD'];
 export class TouchAdapter{
   constructor(game){
     this.game=game;
-    this.stickId=null;this.lookId=null;
+    this.stickId=null;this.lookId=null;this.fireId=null;
     this.dx=0;this.dy=0;
     this._handlers=[];
     this._assistDir=new THREE.Vector3();
@@ -92,16 +93,28 @@ export class TouchAdapter{
       this._on(btn,'pointerdown',e=>{
         e.preventDefault();
         if(g.state!=='playing')return;
-        if(act==='fire'){g.input.firing=true;g._mouseFire=true;btn.classList.add('held');} // merged with gamepad polling so it is not overwritten
+        if(act==='fire'){
+          g.input.firing=true;g._mouseFire=true;btn.classList.add('held'); // merged with gamepad polling so it is not overwritten
+          // Track this finger so pointermove can steer the view; capture keeps events coming after it slides off the button
+          this.fireId=e.pointerId;this.fireX=e.clientX;this.fireY=e.clientY;
+          try{btn.setPointerCapture(e.pointerId);}catch(err){}
+        }
         else if(act==='ads'){g._mouseAds=!g._mouseAds;g.input.ads=g._mouseAds;btn.classList.toggle('on',g._mouseAds);}
         else if(act==='reload')g.weapon.startReload();
         else if(act==='jump'||act==='crouch')g.keys.add(act==='jump'?'Space':'ControlLeft');
         else if(act==='switch')g.weapon.switchTo((g.weapon.cur+1)%g.weapon.primaryCount);
         else if(act==='grenade')g.grenades&&g.grenades.throw('frag');
       });
+      this._on(btn,'pointermove',e=>{
+        if(act!=='fire'||e.pointerId!==this.fireId)return;
+        e.preventDefault();
+        const dx=e.clientX-this.fireX,dy=e.clientY-this.fireY;
+        this.fireX=e.clientX;this.fireY=e.clientY;
+        g.applyLook(dx*1.6,dy*1.6); // same sensitivity as the look area
+      });
       const end=e=>{
         e.preventDefault();
-        if(act==='fire'){g.input.firing=false;g._mouseFire=false;btn.classList.remove('held');}
+        if(act==='fire'){g.input.firing=false;g._mouseFire=false;this.fireId=null;btn.classList.remove('held');}
         else if(act==='jump'||act==='crouch')g.keys.delete(act==='jump'?'Space':'ControlLeft');
       };
       this._on(btn,'pointerup',end);
