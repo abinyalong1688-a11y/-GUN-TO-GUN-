@@ -47,6 +47,7 @@ export const modelAssets={
     if(!m)throw new Error(`[modelAssets] model not loaded: ${gender}`);
     return cloneInstance(m);
   },
+  template(gender){return state.models[gender==='f'?'female':'male']||null;}, // dev: inspect the pre-clone template
   debug(){ // console helper: dump bone mapping (?model=gltf + this in devtools)
     for(const g of Object.keys(state.models)){
       const m=state.models[g];
@@ -130,7 +131,7 @@ const SLOT_RULES=[
   {slot:'thigh', re:/thigh|upleg|upperleg|leg|femur/},
   {slot:'foot', re:/foot|ankle|toe|ball/},
   {slot:'spine', re:/spine|chest|torso|body/},
-  {slot:'hips', re:/hips|pelvis|root/},
+  {slot:'hips', re:/hips|pelvis|hip|root/},
 ];
 function classify(name){
   const n=norm(name);
@@ -143,31 +144,44 @@ function boneSide(name){
   const n=norm(name);
   if(/left/.test(n))return -1;
   if(/right/.test(n))return 1;
+  // suffix tokens first (lowerarm_r must not be caught by the /^l/ prefix below)
   if(/(^|[^a-z])l($|[0-9])/.test(n)||/l$/.test(n))return -1;
   if(/(^|[^a-z])r($|[0-9])/.test(n)||/r$/.test(n))return 1;
+  // Tripo game-rig prefixes: L_Thigh → lthigh
+  if(/^l/.test(n))return -1;
+  if(/^r/.test(n))return 1;
   return 0;
 }
 
-/* ---- per-gender rig profile: hold pose / attachment anchors (tuned against ?portraits) ---- */
+/* ---- per-gender rig profile: orientation fix / hold pose / attachment anchors ----
+   Tripo rigs face +Z natively (glTF convention) — yawFix=0 keeps the auto heuristic from
+   misfiring on staggered shooting stances (both thighs share the same X).
+   hold=null keeps the BIND POSE as the rifle-hold baseline (the stance IS a gun-hold); only the
+   dummy rigs need the procedural hold override. Tune rifle/head anchors against ?portraits. */
 const PROFILES={
   male:{
-    height:1.80,headDY:.115,headR:.108,
-    hold:{armR:{x:-1.05,y:-.1,z:-.25},foreR:{x:-.75,y:0,z:0},armL:{x:-1.05,y:.55,z:1.0},foreL:{x:-.9,y:0,z:0}},
-    rifle:{pos:[0,-.11,.06],rot:[1.7,0,0],scale:1},
+    height:1.80,headDY:.115,headR:.105,yawFix:-Math.PI/2,
+    hold:{armR:{x:-1.1,y:0,z:1.05},foreR:{x:-.75,z:-.5},armL:{x:-1.1,y:0,z:-1.05},foreL:{x:-.75,z:.5}},
+    rifle:{scale:1},
   },
   female:{
-    height:1.75,headDY:.11,headR:.1,
-    hold:{armR:{x:-1.0,y:-.1,z:-.25},foreR:{x:-.7,y:0,z:0},armL:{x:-1.0,y:.55,z:.95},foreL:{x:-.85,y:0,z:0}},
-    rifle:{pos:[0,-.1,.05],rot:[1.65,0,0],scale:.94},
+    height:1.75,headDY:.11,headR:.10,yawFix:-Math.PI/2,
+    hold:{armR:{x:-1.1,y:0,z:1.05},foreR:{x:-.75,z:-.5},armL:{x:-1.1,y:0,z:-1.05},foreL:{x:-.75,z:.5}},
+    rifle:{scale:.94},
   },
 };
 
-/* Load-time normalisation: orientation → scale → ground → bone map → rest pose → hold pose */
+/* Load-time normalisation: orientation → scale → ground → bone map → rest pose → hold pose.
+   THREE-node structure: wrapper (= the bot group, rotation/position owned by the game) →
+   orienter (carries yawFix / scale / ground offset — the game never touches it) → model. */
 function normalizeTemplate(gender,scene){
   const profile=PROFILES[gender]||PROFILES.male;
   const wrapper=new THREE.Group();
   wrapper.name=`char_${gender}`;
-  wrapper.add(scene);
+  const orienter=new THREE.Group();
+  orienter.name='orienter';
+  wrapper.add(orienter);
+  orienter.add(scene);
 
   // 1. Orientation: derive facing from the two thigh bones (never assume the exporter's convention)
   scene.updateMatrixWorld(true);
@@ -190,32 +204,36 @@ function normalizeTemplate(gender,scene){
     const right=pR.sub(pL);right.y=0;
     if(right.lengthSq()>1e-6){
       const fwd=new THREE.Vector3().crossVectors(right,new THREE.Vector3(0,1,0)).normalize();
-      wrapper.rotation.y=-Math.atan2(fwd.x,fwd.z);
+      orienter.rotation.y=-Math.atan2(fwd.x,fwd.z);
     }
   }
+  // Explicit per-model override wins: staggered / shooting stances defeat the thigh heuristic
+  if(profile.yawFix!=null)orienter.rotation.y=profile.yawFix;
   scene.updateMatrixWorld(true);
 
-  // 2. Scale to operator height, 3. feet on the ground
+  // 2. Scale to operator height, 3. feet on the ground — on the ORIENTER (the game owns the wrapper)
   const box=new THREE.Box3().setFromObject(wrapper);
   const h=box.max.y-box.min.y;
   if(h>1e-3){
     const s=profile.height/h;
-    wrapper.scale.setScalar(s);
+    orienter.scale.setScalar(s);
     wrapper.updateMatrixWorld(true);
     const box2=new THREE.Box3().setFromObject(wrapper);
-    wrapper.position.y=-box2.min.y;
+    orienter.position.y=-box2.min.y;
   }
   wrapper.updateMatrixWorld(true);
 
   // 4. Bone map for the animation contract (spine chain: first = spine, last = chest)
   const pick=(slot,side)=>{
-    let best=null;
+    let best=null,bestScore=-1;
     for(const b of bones){
       if(classify(b.name)!==slot)continue;
       const s=boneSide(b.name);
       if(side!==0&&s!==0&&s!==side)continue;
-      if(side!==0&&s===0&&best)continue; // keep the first side-annotated candidate
-      if(!best)best=b;
+      // annotated matching side > unannotated > opposite; rig ROOT loses to Hip/Pelvis for hips
+      let score=(side===0)?1:(s===side?2:1);
+      if(slot==='hips'&&/root/.test(norm(b.name)))score-=1;
+      if(score>bestScore){bestScore=score;best=b;}
     }
     return best;
   };
@@ -244,10 +262,16 @@ function normalizeTemplate(gender,scene){
     }
   }
 
-  // 6. Rifle-hold base pose (baseArmR/L in HeroBot capture these; recoil/reload layer on top)
+  // 6. Rifle-hold base pose: DELTAS stacked on the bind-pose euler (the T-pose rig needs the
+  //    arms bent down/forward; the shooting-stance bind of the dummy needed none → hold=null)
   const H=profile.hold;
-  for(const [key,bone] of [['armR',map.armR],['foreR',map.foreR],['armL',map.armL],['foreL',map.foreL]]){
-    if(bone&&H[key])bone.rotation.set(H[key].x,H[key].y,H[key].z);
+  if(H){
+    for(const [key,bone] of [['armR',map.armR],['foreR',map.foreR],['armL',map.armL],['foreL',map.foreL]]){
+      if(bone&&H[key]){
+        const r=bone.userData.restE;
+        bone.rotation.set(r.x+H[key].x,r.y+H[key].y,r.z+H[key].z);
+      }
+    }
   }
 
   // 7. Head centre anchor (headgear / face attachments pivot around the skull centre)
@@ -263,7 +287,10 @@ function normalizeTemplate(gender,scene){
   }
 
   wrapper.updateMatrixWorld(true);
-  const inst={root:wrapper,bones:map,headY,profile};
+  // Character-space quaternion (yawFix baked): rifle barrels and other attachments align to it
+  const charQuat=new THREE.Quaternion();
+  orienter.getWorldQuaternion(charQuat);
+  const inst={root:wrapper,bones:map,headY,profile,charQuat};
   inst.clone=()=>cloneInstance(inst);
   return inst;
 }
@@ -284,6 +311,7 @@ function cloneInstance(inst){
   const seen=new Map();
   root.traverse(o=>{
     if(!o.isMesh&&!o.isSkinnedMesh)return;
+    o.frustumCulled=false; // skinned bounds go stale after posing — the bots are always near the action anyway
     const assign=m=>{
       let c=seen.get(m);
       if(!c){c=m.clone();seen.set(m,c);materials.push(c);}
@@ -291,5 +319,5 @@ function cloneInstance(inst){
     };
     Array.isArray(o.material)?o.material.forEach(assign):assign(o.material);
   });
-  return {root,bones,materials,headY:inst.headY,profile:inst.profile};
+  return {root,bones,materials,headY:inst.headY,profile:inst.profile,charQuat:inst.charQuat};
 }

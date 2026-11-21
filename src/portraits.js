@@ -40,9 +40,8 @@ export class PortraitRenderer{
       this.camera=cam;
 
       // C4: bust camera (menu cards: a full-body shot is unreadable in a 92px card)
+      // Reframed per-render from the built model's headY — works for both rig heights
       const bust=new THREE.PerspectiveCamera(36,1,.1,10);
-      bust.position.set(0,1.52,1.55);
-      bust.lookAt(0,1.32,0);
       this.bustCam=bust;
     }catch(e){
       this._failed=true;
@@ -62,6 +61,12 @@ export class PortraitRenderer{
     try{
       this.renderer.setSize(size,size,false);
       built=buildOperatorMeshAuto(this.assets,def,{camo});
+      if(frame==='bust'){
+        // Frame the skull: head centre ≈ headY - .06, camera slightly above eye line
+        const hy=(built.parts.headY||1.6)-.06;
+        cam.position.set(0,hy+.1,1.5);
+        cam.lookAt(0,hy-.06,0);
+      }
       built.group.rotation.y=-.35;
       this.scene.add(built.group);
       this.renderer.render(this.scene,cam);
@@ -89,6 +94,11 @@ export class PortraitRenderer{
     try{
       this.renderer.setSize(size,size,false);
       built=buildOperatorMeshAuto(this.assets,def,{camo});
+      if(frame==='bust'){
+        const hy=(built.parts.headY||1.6)-.06;
+        cam.position.set(0,hy+.1,1.5);
+        cam.lookAt(0,hy-.06,0);
+      }
       built.group.rotation.y=-.35;
       this.scene.add(built.group);
       this.renderer.render(this.scene,cam);

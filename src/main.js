@@ -43,7 +43,7 @@ const TUTORIAL=[
   {zh:'按 1 循环主武器,2 手枪,3 军刀',en:'Press 1 to cycle primaries, 2 sidearm, 3 knife'},
   {zh:'按 G / F / V 投掷破片 / 闪光 / 烟雾',en:'Press G / F / V for frag / flash / smoke'},
 ];
-const VERSION='1.9.0';
+const VERSION='1.9.1';
 const _rsO=new THREE.Vector3(); // reused ray-sphere test vector (zero allocation on the hot path)
 
 class Game{
@@ -269,9 +269,9 @@ class Game{
     const ver=$('m-ver');
     if(ver)ver.textContent=`v${VERSION}`;
     console.log(`%cGUN TO GUN v${VERSION}`,'color:#f0a860;font-weight:bold','· single file, playable offline');
-    // Dev capture hook (?shot=/* pages): expose the game instance so browser automation can grab
-    // frames (captureFrame) and dump the rig bone map — the visual-acceptance path for stages 2-4
-    if(this.shotMode){
+    // Dev capture hook (?shot=/* and ?portraits pages): expose the game instance so browser
+    // automation can grab frames (captureFrame) and dump the rig bone map
+    if(this.shotMode||this.portraitsMode){
       window.__GTG_DEBUG__=this;
       window.__modelAssets=modelAssets;
     }

@@ -1,0 +1,45 @@
+<!doctype html><html><head><meta charset="utf-8"><title>GLB dev viewer</title>
+<style>body{margin:0;background:#20242a}#bar{position:fixed;top:8px;left:8px;color:#cde;font:14px monospace}</style>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/examples/jsm/":"/node_modules/three/examples/jsm/"}}</script>
+<script>window.addEventListener('error',e=>{document.getElementById('bar').textContent='ERR: '+(e.message||e.type)+' @'+(e.filename||'').split('/').pop()+':'+e.lineno;});</script>
+</head><body><div id="bar"></div>
+<script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/examples/jsm/loaders/GLTFLoader.js';
+import {MeshoptDecoder} from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+const url=new URLSearchParams(location.search).get('m')||'';
+const info=document.getElementById('bar');
+const r=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
+r.setSize(820,820);document.body.appendChild(r.domElement);
+const s=new THREE.Scene();s.background=new THREE.Color(0x30343c);
+s.add(new THREE.HemisphereLight(0xbfd8ff,0x40342a,1.2));
+const key=new THREE.DirectionalLight(0xfff2e0,2.2);key.position.set(2,3,3);s.add(key);
+const rim=new THREE.DirectionalLight(0x8fb8ff,1.2);rim.position.set(-2,2,-3);s.add(rim);
+const grid=new THREE.GridHelper(4,16,0x5a6a8a,0x39404e);s.add(grid);
+const axes=new THREE.AxesHelper(1);axes.position.y=.01;s.add(axes); // red=+X, green=+Y(up), blue=+Z
+const c=new THREE.PerspectiveCamera(40,1,.01,50);
+let hasModel=false;
+const loader=new GLTFLoader();
+MeshoptDecoder.ready.then(()=>loader.setMeshoptDecoder(MeshoptDecoder));
+loader.load(url,gltf=>{
+  const scene=gltf.scene;s.add(scene);
+  const box=new THREE.Box3().setFromObject(scene);
+  const size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());
+  info.textContent=`${url}  size ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}  (axes: red +X / green +Y up / blue +Z)`;
+  c.position.set(center.x+size.x*1.6,center.y+size.y*.55,center.z+size.z*2.0);
+  c.lookAt(center);
+  hasModel=true;window.__model=gltf.scene;
+},undefined,err=>{info.textContent='load failed: '+err;});
+window.__boneDump=()=>{const out=[];window.__model&&window.__model.traverse(o=>{if(o.isBone){const v=o.getWorldPosition(new THREE.Vector3());out.push(o.name+": "+v.x.toFixed(2)+","+v.y.toFixed(2)+","+v.z.toFixed(2));}});return out.slice(0,40);};
+window.__shotFront=()=>{if(!hasModel)return null;
+  const box=new THREE.Box3();s.traverse(o=>{if(o.isMesh&&!o.geometry.attributes.normal?.__grid)0;});
+  const sc=s.children.find(o=>o.type==='Group');const center=new THREE.Vector3(),size=new THREE.Vector3();
+  if(sc){const b=new THREE.Box3().setFromObject(sc);b.getCenter(center);b.getSize(size);}
+  c.position.set(center.x,center.y+size.y*.15,center.z+size.z*2.6);c.lookAt(center);
+  r.render(s,c);return r.domElement.toDataURL('image/png');};
+window.__shotSide=()=>{if(!hasModel)return null;
+  const sc=s.children.find(o=>o.type==='Group');const center=new THREE.Vector3(),size=new THREE.Vector3();
+  if(sc){const b=new THREE.Box3().setFromObject(sc);b.getCenter(center);b.getSize(size);}
+  c.position.set(center.x+size.x*2.8,center.y+size.y*.15,center.z);c.lookAt(center);
+  r.render(s,c);return r.domElement.toDataURL('image/png');};
+</script></body></html>

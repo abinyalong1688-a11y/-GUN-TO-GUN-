@@ -407,10 +407,28 @@ function buildMale(ctx){
    The skinned body (bones ARE Object3Ds) plugs straight into the parts contract — HeroBot
    animates bones exactly like the procedural Groups; rifle / headgear / extras stay procedural
    (C1 silhouette coding + rifle drop physics), attached to the mapped bones. */
-function mountRifleTo(group,parts,bones,M,def,profile){
+/* Rifle mounted on the hand bone, but PLACED by auto-calibration from the rest-pose hands:
+   grip = midpoint between the hands biased toward the trigger hand, barrel = character forward.
+   Works for any bind pose (shooting stance / A-pose) without hand-tuned offsets. */
+function mountRifleTo(group,parts,bones,M,def,profile,charQuat){
   const rifle=makeRifle(def.rifle,M);
   const hand=bones.handR;
-  if(hand){
+  if(hand&&bones.handL){
+    group.updateMatrixWorld(true);
+    const pR=new THREE.Vector3();hand.getWorldPosition(pR);
+    const pL=new THREE.Vector3();bones.handL.getWorldPosition(pL);
+    const mid=new THREE.Vector3().addVectors(pR,pL).multiplyScalar(.5);
+    const grip=new THREE.Vector3().lerpVectors(mid,pR,.35);
+    // Barrel (+Z of the rifle mesh) must point along the model's NATIVE forward (+X in
+    // orienter-local space): compose orienter's world quat with a +90° yaw
+    const qBarrel=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),Math.PI/2);
+    const qWorld=charQuat.clone().multiply(qBarrel);
+    const mWorld=new THREE.Matrix4().compose(grip,qWorld,new THREE.Vector3(1,1,1));
+    const local=new THREE.Matrix4().copy(hand.matrixWorld).invert().multiply(mWorld);
+    local.decompose(rifle.group.position,rifle.group.quaternion,new THREE.Vector3());
+    rifle.group.scale.setScalar(profile.rifle.scale);
+    hand.add(rifle.group);
+  }else if(hand){
     rifle.group.position.set(...profile.rifle.pos);
     rifle.group.rotation.set(...profile.rifle.rot);
     rifle.group.scale.setScalar(profile.rifle.scale);
@@ -425,24 +443,42 @@ function mountRifleTo(group,parts,bones,M,def,profile){
   gunTip.position.set(0,.02,rifle.tipZ);
   rifle.group.add(gunTip);parts.gunTip=gunTip;
 }
-/* Silhouette extras in bone-local space (offsets differ from the procedural limb Groups) */
-function addExtrasGLTF(parts,M,def,bones){
+/* Silhouette extras in bone-local space (offsets differ from the procedural limb Groups).
+   Tripo twist bones run elbow→wrist with +Y toward the wrist, so the armband sits at +y mid-forearm */
+/* Silhouette extras placed in CHARACTER space: rig bones carry rotated rest frames (the
+   Armature node), so raw bone-local offsets land anywhere. boneAttach computes the bone-local
+   transform that yields the desired model-space position/orientation. */
+function boneAttach(bone,charQuat,offset){
+  bone.updateWorldMatrix(true,false);
+  const target=offset.clone().applyQuaternion(charQuat).add(bone.getWorldPosition(new THREE.Vector3()));
+  const local=new THREE.Matrix4().copy(bone.matrixWorld).invert()
+    .multiply(new THREE.Matrix4().compose(target,charQuat.clone(),new THREE.Vector3(1,1,1)));
+  return local;
+}
+function addExtrasGLTF(parts,M,def,bones,charQuat){
   const ex=def.extras||[];
+  const V3=(x,y,z)=>new THREE.Vector3(x,y,z);
+  const fix=(bone,offset,mesh)=>{
+    if(!bone)return;
+    const p=new THREE.Vector3(),q=new THREE.Quaternion(),s=new THREE.Vector3();
+    boneAttach(bone,charQuat,offset).decompose(p,q,s);
+    mesh.position.copy(p);mesh.quaternion.copy(q);mesh.scale.copy(s);
+  };
   if(ex.includes('armband')){
     for(const arm of [bones.foreR,bones.foreL])
-      if(arm)detail(arm,cyl(.05,.05,.034,12),M.accent,0,-.06,0);
+      fix(arm,V3(0,-.02,.01),detail(arm,cyl(.045,.045,.03,12),M.accent,0,0,0));
   }
   if(ex.includes('kneepads')){
     for(const calf of [bones.calfL,bones.calfR])
-      if(calf)detail(calf,box(.1,.1,.06),M.armor,0,-.02,.055);
+      fix(calf,V3(0,.02,.055),detail(calf,box(.1,.1,.06),M.armor,0,0,0));
   }
   if(ex.includes('holster')&&bones.legR){
-    detail(bones.legR,box(.06,.15,.05),M.glove,.066,-.17,.02);
-    detail(bones.legR,box(.05,.03,.05),M.gunDark,.066,-.10,.02);
+    fix(bones.legR,V3(.066,-.17,.02),detail(bones.legR,box(.06,.15,.05),M.glove,0,0,0));
+    fix(bones.legR,V3(.066,-.10,.02),detail(bones.legR,box(.05,.03,.05),M.gunDark,0,0,0));
   }
   if(ex.includes('backpack')&&bones.chest){
-    detail(bones.chest,box(.25,.3,.12),M.armor,0,-.07,-.16);
-    detail(bones.chest,box(.2,.08,.13),M.clothDark,0,-.23,-.16);
+    fix(bones.chest,V3(0,-.07,-.16),detail(bones.chest,box(.25,.3,.12),M.armor,0,0,0));
+    fix(bones.chest,V3(0,-.23,-.16),detail(bones.chest,box(.2,.08,.13),M.clothDark,0,0,0));
   }
 }
 export function buildOperatorMeshGLTF(assets,def,{camo='default'}={}){
@@ -461,16 +497,16 @@ export function buildOperatorMeshGLTF(assets,def,{camo='default'}={}){
   parts.legL=bones.legL;parts.legR=bones.legR;
   parts.shinL=bones.calfL;parts.shinR=bones.calfR;
   parts.pony=bones.pony||null;
-  mountRifleTo(group,parts,bones,M,def,inst.profile);
+  mountRifleTo(group,parts,bones,M,def,inst.profile,inst.charQuat);
   if(bones.headAnchor){
-    // Headgear pieces are sized for the procedural skull (~.105 m); scale to the rig's actual head
+    // Headgear pieces are sized for the procedural skull (~.105 m); scale to the rig's actual head.
+    // The real models' hair is baked into the mesh — no procedural hair fallback here.
     const H=new THREE.Group();
     H.scale.setScalar(inst.profile.headR?inst.profile.headR/.105:1);
     bones.headAnchor.add(H);
     makeHeadgear(H,M,def,def.gender==='f');
-    if(def.hair==='ponytail'&&!bones.pony)makePony(H,M,parts); // no hair bone in the rig → procedural fallback
   }
-  addExtrasGLTF(parts,M,def,bones);
+  addExtrasGLTF(parts,M,def,bones,inst.charQuat);
   const anchor=new THREE.Object3D();
   anchor.position.y=2.0;
   group.add(anchor);parts.nameTagAnchor=anchor;
@@ -486,7 +522,10 @@ export function buildOperatorMeshGLTF(assets,def,{camo='default'}={}){
 export function buildOperatorMeshAuto(assets,def,{camo='default'}={}){
   if(modelAssets.mode()==='gltf'){
     try{return buildOperatorMeshGLTF(assets,def,{camo});}
-    catch(e){console.warn('[character] GLB build failed — procedural fallback:',e);}
+    catch(e){
+      console.warn('[character] GLB build failed — procedural fallback:',e);
+      modelAssets.lastBuildError=(e&&e.stack||String(e)).split('\n').slice(0,4).join(' | ');
+    }
   }
   return buildOperatorMesh(assets,def,{camo});
 }
