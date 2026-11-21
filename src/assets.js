@@ -513,15 +513,19 @@ function drawSkin(g,h,r,S){
    One brush paints three maps at once → map + normalMap (relief) + roughnessMap (worn spots are smoother);
    roughness canvas brightness ≈ roughness×255, multiplied by the material roughness to get the target feel */
 const gv=v=>`rgb(${v},${v},${v})`;
-function weaponMat(size,draw,{metal,rough,envInt=1,nStr=1.2}){
+function weaponMat(size,draw,{metal,rough,envInt=1,nStr=1.2,color=null}={}){
   const mk=()=>{const c=document.createElement('canvas');c.width=c.height=size;return c;};
   const c=mk(),h=mk(),r=mk();
   draw(c.getContext('2d'),h.getContext('2d'),r.getContext('2d'),size);
   const tex=c2=>{const t=new THREE.CanvasTexture(c2);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.anisotropy=8;return t;};
   const map=tex(c);map.colorSpace=THREE.SRGBColorSpace;
-  return new THREE.MeshStandardMaterial({map,normalMap:heightToNormal(h,nStr),
+  const m=new THREE.MeshStandardMaterial({map,normalMap:heightToNormal(h,nStr),
     normalScale:new THREE.Vector2(1,1),roughnessMap:tex(r),roughness:rough,
     metalness:metal,envMapIntensity:envInt});
+  // Neutral canvases (character outfits) rely on material.color for their base tint —
+  // weapon canvases paint their own colours and leave color at white
+  if(color!=null)m.color.setHex(color);
+  return m;
 }
 
 function drawGunMetal(g,h,r,S){
@@ -800,19 +804,19 @@ export function initAssets(){
     vestGray:new THREE.MeshStandardMaterial({color:0x3a4250,roughness:.75,metalness:.2}),
     shades:new THREE.MeshStandardMaterial({color:0x0c0e12,roughness:.2,metalness:.8}),
     // Faction characters — outfits use neutral three-channel maps (cloth weave / armour panels),
-    // palette tinting multiplies on top; roughnessMap averages ≈.78 × the roughness below
-    ctFatigue:weaponMat(256,drawCloth,{metal:.08,rough:.95,envInt:.25,nStr:.55}),
-    ctArmor:weaponMat(256,drawArmorPanel,{metal:.3,rough:.8,envInt:.5,nStr:1.1}),
+    // palette tinting multiplies on top; the color param keeps the original base hue pre-tint
+    ctFatigue:weaponMat(256,drawCloth,{metal:.08,rough:.95,envInt:.25,nStr:.55,color:0x46536b}),
+    ctArmor:weaponMat(256,drawArmorPanel,{metal:.3,rough:.8,envInt:.5,nStr:1.1,color:0x2b3140}),
     ctHelmet:new THREE.MeshStandardMaterial({color:0x454f61,roughness:.6,metalness:.3}),
-    tJacket:weaponMat(256,drawCloth,{metal:.04,rough:.95,envInt:.2,nStr:.55}),
-    tPants:weaponMat(256,drawCloth,{metal:.04,rough:.95,envInt:.2,nStr:.55}),
-    tRig:weaponMat(256,drawArmorPanel,{metal:.2,rough:.85,envInt:.4,nStr:1.1}),
+    tJacket:weaponMat(256,drawCloth,{metal:.04,rough:.95,envInt:.2,nStr:.55,color:0x7e2620}),
+    tPants:weaponMat(256,drawCloth,{metal:.04,rough:.95,envInt:.2,nStr:.55,color:0x2f2c2c}),
+    tRig:weaponMat(256,drawArmorPanel,{metal:.2,rough:.85,envInt:.4,nStr:1.1,color:0x1e1c1c}),
     balaclava:new THREE.MeshStandardMaterial({color:0x17171c,roughness:.85,metalness:0}),
     beanie:new THREE.MeshStandardMaterial({color:0x565a60,roughness:.9,metalness:0}),
     // Realistic 3D characters: skin pore map / hair / facial features / leather boots+gloves
-    skinF:weaponMat(256,drawSkin,{metal:0,rough:.62,envInt:.3,nStr:.35}),
-    skinM:weaponMat(256,drawSkin,{metal:0,rough:.7,envInt:.3,nStr:.35}),
-    skinN:weaponMat(256,drawSkin,{metal:0,rough:.62,envInt:.3,nStr:.35}),
+    skinF:weaponMat(256,drawSkin,{metal:0,rough:.62,envInt:.3,nStr:.35,color:0xf3d0b8}),
+    skinM:weaponMat(256,drawSkin,{metal:0,rough:.7,envInt:.3,nStr:.35,color:0xdfab8c}),
+    skinN:weaponMat(256,drawSkin,{metal:0,rough:.62,envInt:.3,nStr:.35,color:0xd8a687}),
     sclera:new THREE.MeshStandardMaterial({color:0xf6f3f0,roughness:.25}),
     iris:new THREE.MeshStandardMaterial({color:0x33241c,roughness:.3}),
     brow:new THREE.MeshStandardMaterial({color:0x2a1a12,roughness:.8}),
@@ -820,20 +824,20 @@ export function initAssets(){
     hairM:new THREE.MeshStandardMaterial({color:0x1a130e,roughness:.85}),
     lipsF:new THREE.MeshStandardMaterial({color:0xc25a4c,roughness:.4}),
     lipsM:new THREE.MeshStandardMaterial({color:0xb4826a,roughness:.6}),
-    clothDark:weaponMat(256,drawCloth,{metal:.02,rough:.95,envInt:.15,nStr:.5}),
-    gloveDark:weaponMat(256,drawLeather,{metal:.04,rough:.92,envInt:.25,nStr:.75}),
-    bootDark:weaponMat(256,drawLeather,{metal:.06,rough:.95,envInt:.3,nStr:.75}),
-    armSleeve:weaponMat(256,drawCloth,{metal:.05,rough:.9,envInt:.3,nStr:.55}),
+    clothDark:weaponMat(256,drawCloth,{metal:.02,rough:.95,envInt:.15,nStr:.5,color:0x191719}),
+    gloveDark:weaponMat(256,drawLeather,{metal:.04,rough:.92,envInt:.25,nStr:.75,color:0x3a3733}),
+    bootDark:weaponMat(256,drawLeather,{metal:.06,rough:.95,envInt:.3,nStr:.75,color:0x1a1815}),
+    armSleeve:weaponMat(256,drawCloth,{metal:.05,rough:.9,envInt:.3,nStr:.55,color:0x2a2e36}),
     // C1/C3: faction identifiers (glowing armband / helmet / shemagh / lenses / first-person sleeves and gloves)
     ctAccent:new THREE.MeshStandardMaterial({color:0x2b3140,emissive:0x7fd4ff,emissiveIntensity:.9,roughness:.6}),
     tAccent:new THREE.MeshStandardMaterial({color:0x3a201a,emissive:0xff8a6a,emissiveIntensity:.9,roughness:.6}),
     helmet:new THREE.MeshStandardMaterial({color:0x454f61,roughness:.58,metalness:.3}),
     shemagh:new THREE.MeshStandardMaterial({color:0x5a2a24,roughness:.92,metalness:0}),
     goggleGlass:new THREE.MeshStandardMaterial({color:0x101820,emissive:0x7fd4ff,emissiveIntensity:1.2,roughness:.2,metalness:.6}),
-    armSleeveCT:weaponMat(256,drawCloth,{metal:.05,rough:.9,envInt:.3,nStr:.55}),
-    armSleeveT:weaponMat(256,drawCloth,{metal:.05,rough:.92,envInt:.3,nStr:.55}),
-    gloveCT:weaponMat(256,drawLeather,{metal:.04,rough:.92,envInt:.25,nStr:.75}),
-    gloveT:weaponMat(256,drawLeather,{metal:.04,rough:.92,envInt:.25,nStr:.75}),
+    armSleeveCT:weaponMat(256,drawCloth,{metal:.05,rough:.9,envInt:.3,nStr:.55,color:0x3d4a5e}),
+    armSleeveT:weaponMat(256,drawCloth,{metal:.05,rough:.92,envInt:.3,nStr:.55,color:0x5a2420}),
+    gloveCT:weaponMat(256,drawLeather,{metal:.04,rough:.92,envInt:.25,nStr:.75,color:0x2c3138}),
+    gloveT:weaponMat(256,drawLeather,{metal:.04,rough:.92,envInt:.25,nStr:.75,color:0x3a2e26}),
     // Gun wood / stainless / olive drab paint (three-channel textures)
     gunWood:weaponMat(512,drawGunWood,{metal:.05,rough:.68,envInt:.4,nStr:.8}),
     gunSteel:weaponMat(512,drawSteel,{metal:.85,rough:.35,envInt:1.3,nStr:.5}),

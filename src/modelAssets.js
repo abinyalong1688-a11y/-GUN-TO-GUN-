@@ -17,6 +17,7 @@
 // deltas on top of it, so rigs with non-identity rest rotations still animate correctly.
 import * as THREE from 'three';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {MeshoptDecoder} from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
 /* ---- mode switch (?model=proc|gltf; default auto: gltf when ready, proc as fallback) ---- */
@@ -39,6 +40,7 @@ export const modelAssets={
     return state.ready?'gltf':'proc';
   },
   isReady(){return state.ready;},
+  error(){return state.error||null;},
   onReady(cb){state.ready?cb():state.onReadyCbs.push(cb);},
   cloneCharacter(gender){
     const m=state.models[gender==='f'?'female':'male'];
@@ -72,16 +74,35 @@ function toArrayBuffer(src){
     return r.arrayBuffer();
   });
 }
+/* One loader, meshopt-capable: compressed GLBs (EXT_meshopt_compression) need the decoder.
+   Cache the SETUP PROMISE, not the instance — male/female load concurrently and the second
+   caller must not get an instance whose setMeshoptDecoder() hasn't run yet. */
+let _loaderP=null;
+function loader(){
+  if(!_loaderP){
+    _loaderP=(async()=>{
+      const l=new GLTFLoader();
+      try{
+        await MeshoptDecoder.ready;
+        l.setMeshoptDecoder(MeshoptDecoder);
+      }catch(e){
+        state.error='meshopt decoder init failed: '+String((e&&e.message)||e);
+      }
+      return l;
+    })();
+  }
+  return _loaderP;
+}
 
 export function preloadCharacters(){
   if(state.loading||state.ready)return;
   state.loading=true;
-  const load=gender=>glbSource(gender)
-    .then(src=>toArrayBuffer(src))
-    .then(buf=>new Promise((res,rej)=>{
-      new GLTFLoader().parse(buf,'',gltf=>res(gltf),rej);
-    }))
-    .then(gltf=>{state.models[gender]=normalizeTemplate(gender,gltf.scene);});
+  const load=async gender=>{
+    const buf=await toArrayBuffer(await glbSource(gender));
+    const l=await loader();
+    const gltf=await new Promise((res,rej)=>l.parse(buf,'',gltf=>res(gltf),rej));
+    state.models[gender]=normalizeTemplate(gender,gltf.scene);
+  };
   Promise.all([load('male'),load('female')])
     .then(()=>{
       state.ready=true;state.loading=false;
@@ -91,6 +112,7 @@ export function preloadCharacters(){
     })
     .catch(err=>{
       state.failed=true;state.loading=false;state.ready=false;
+      state.error=String((err&&err.message)||err);
       console.warn('[modelAssets] GLB load failed — staying on procedural characters:',err);
     });
 }

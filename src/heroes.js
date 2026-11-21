@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import {t,isEN} from './i18n.js';
 import {byId,byFaction,DEFAULT_OP} from './operators.js';
 import {buildOperatorMeshAuto,fadeMaterials} from './character.js';
+import {modelAssets} from './modelAssets.js';
 
 /* Compatibility layer: legacy code reads base stats per faction; the data lives in operators.js */
 const _opCT=byId('frost'),_opT=byId('raven');
@@ -101,9 +102,12 @@ export class HeroBot{
     scene.add(this.group);
   }
 
-  /* Character mesh built by character.js (GLB rigged body or procedural, identical contract) */
+  /* Character mesh built by character.js (GLB rigged body or procedural, identical contract).
+     builtWith records which builder ran — the GLB preload races match start (?shot= / e2e
+     boot straight into a game), and HeroTeam swaps proc-built bots once the GLB arrives. */
   buildBody(){
     const built=buildOperatorMeshAuto(this.assets,this.def,{camo:this.def.camo||'default'});
+    this.builtWith=modelAssets.mode();
     this.group=built.group;
     this.parts=built.parts;
     this.materials=built.materials;
@@ -624,6 +628,15 @@ export class HeroTeam{
   constructor(game){
     this.game=game;
     this.list=[];
+    // GLB preload races match start (?shot= / e2e): once the rigged models arrive,
+    // rebuild any bot that fell back to the procedural builder so looks stay consistent
+    modelAssets.onReady(()=>this.refreshModels());
+  }
+  refreshModels(){
+    if(modelAssets.mode()!=='gltf')return;
+    for(const h of this.list){
+      if(h.builtWith!=='gltf'&&h.alive)h.setOperator(h.def);
+    }
   }
   setup(playerFaction='ct',playerName='',playerOpId=DEFAULT_OP){
     this.clear();

@@ -31,6 +31,14 @@ Or **double-click [`dist/gun-to-gun.html`](dist/gun-to-gun.html)** (~0.8 MB, zer
 - **Raven · Rogue Mercenary** (male): rugged and sharp · V-shaped broad shoulders / narrow waist · rolled-sleeve red jacket · clean short hair, +12% move speed / +25% reload speed
 - Both factions are mixed-gender squads (Nova: Frost / Snowwolf / Swift / Thunder; Rogue: Raven / Fox / Vulture / Viper); first-person view shows gun-holding arms with tactical gloves
 
+### v1.9 — rigged-model character pipeline (AI-ready bodies, procedural fallback)
+
+- **GLB character pipeline**: rigged humanoid models (male 1.80 m / female 1.75 m) load from data URLs embedded in the single file — orientation / scale / ground contact normalised at load, bone names resolved by keyword aliasing (Tripo / Mixamo / custom rigs all work), `SkeletonUtils` instancing with per-instance material clones (hit flash and corpse fade stay independent). The original procedural builder remains the permanent fallback (`?model=proc` forces it; any load failure auto-falls back with zero regression)
+- **Procedural rig animation**: walk cycle with knee bend + ankle compensation stacked on each rig's bind-pose baseline (restE), idle weight shift, locomotion forward lean, rifle turn inertia, two-stage death (stagger → collapse)
+- **Material quality**: neutral three-channel canvas maps (cloth weave / armour panels / leather / skin pores) tinted per operator palette; headgear auto-scales to the rig head radius
+- **Per-map IBL**: the live sky shader is baked to a PMREM on every map switch — metals and outfits reflect real scene colours (sunset orange / aurora green / dock neon / lava glow); each map adds a rim backlight (cool blue / aurora green / neon cyan / lava orange) that lifts character silhouettes
+- **Asset pipeline**: `assets_raw/` (originals) → `scripts/compress_characters.mjs` (dedup + weld + vertex reorder + EXT_meshopt_compression, **no quantization on skinned meshes**) → `assets/characters/` (embedded); ~57 % smaller with lossless bone transforms and vertex colours
+
 ## Weapons
 
 7 weapons with real ballistic physics; all 4 faction primaries are carried at once and switchable in-game.
