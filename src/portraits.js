@@ -3,7 +3,8 @@
 //   · results cached as dataURLs keyed by def.id|camo|size, no external images;
 //   · without WebGL / on init failure render() returns null and the UI falls back to a CSS gradient.
 import * as THREE from 'three';
-import {buildOperatorMesh} from './character.js';
+import {buildOperatorMeshAuto} from './character.js';
+import {modelAssets} from './modelAssets.js';
 
 export class PortraitRenderer{
   constructor(assets){
@@ -48,9 +49,10 @@ export class PortraitRenderer{
     }
   }
 
-  /* Returns a dataURL, or null on failure; frame: 'full' body / 'bust' */
+  /* Returns a dataURL, or null on failure; frame: 'full' body / 'bust'.
+     Cache is keyed by model mode: a GLB/procedural flip (async preload finishing) invalidates it. */
   render(def,camo='default',size=512,{frame='full'}={}){
-    const key=`${def.id}|${camo}|${size}|${frame}`;
+    const key=`${modelAssets.mode()}|${def.id}|${camo}|${size}|${frame}`;
     if(this.cache.has(key))return this.cache.get(key);
     this._init();
     const cam=frame==='bust'?this.bustCam:this.camera;
@@ -59,7 +61,7 @@ export class PortraitRenderer{
     let built=null;
     try{
       this.renderer.setSize(size,size,false);
-      built=buildOperatorMesh(this.assets,def,{camo});
+      built=buildOperatorMeshAuto(this.assets,def,{camo});
       built.group.rotation.y=-.35;
       this.scene.add(built.group);
       this.renderer.render(this.scene,cam);
@@ -86,7 +88,7 @@ export class PortraitRenderer{
     let built=null;
     try{
       this.renderer.setSize(size,size,false);
-      built=buildOperatorMesh(this.assets,def,{camo});
+      built=buildOperatorMeshAuto(this.assets,def,{camo});
       built.group.rotation.y=-.35;
       this.scene.add(built.group);
       this.renderer.render(this.scene,cam);

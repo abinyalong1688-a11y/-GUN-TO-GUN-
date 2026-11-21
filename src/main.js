@@ -21,6 +21,7 @@ import {SaveSystem} from './save.js';
 import {Leaderboard} from './leaderboard.js';
 import {GameMode,KothMode} from './modes.js';
 import {PortraitRenderer} from './portraits.js';
+import {preloadCharacters,modelAssets} from './modelAssets.js';
 import {settings} from './settings.js';
 import {InputManager,KeyboardMouseAdapter} from './input.js';
 import {TouchAdapter} from './input-touch.js';
@@ -142,6 +143,10 @@ class Game{
     this.assets=initAssets();
     this.portraits=new PortraitRenderer(this.assets);
     this.ui.portraits=this.portraits; // C4: menu operator card portraits
+    // GLB characters load in the background (?model=proc|gltf overrides); when they arrive the
+    // portrait cache is stale — clear it and rebuild the roster so cards switch to the new look
+    preloadCharacters();
+    modelAssets.onReady(()=>{this.portraits.cache.clear();this.ui.buildOperators();});
     this.audio=new AudioFX();
     if(this.mapOverride&&MAPS[this.mapOverride])this.ui.sel.map=this.mapOverride; // per-map screenshot / verification hook
     this.buildWorldFor(this.ui.sel.map);
@@ -264,6 +269,12 @@ class Game{
     const ver=$('m-ver');
     if(ver)ver.textContent=`v${VERSION}`;
     console.log(`%cGUN TO GUN v${VERSION}`,'color:#f0a860;font-weight:bold','· single file, playable offline');
+    // Dev capture hook (?shot=/* pages): expose the game instance so browser automation can grab
+    // frames (captureFrame) and dump the rig bone map — the visual-acceptance path for stages 2-4
+    if(this.shotMode){
+      window.__GTG_DEBUG__=this;
+      window.__modelAssets=modelAssets;
+    }
 
     this.clock=new THREE.Clock();
     // Main loop circuit breaker: an exception in one frame no longer silently kills the rAF chain; show the error and halt
@@ -1173,6 +1184,12 @@ class Game{
     console.table(rows);
     console.log(`[PORTRAITS] ${rows.filter(r=>r.ok).length}/${rows.length} in ${ms.toFixed(0)}ms`);
     return {ms,rows};
+  }
+
+  /* Dev: grab the composed frame as a PNG data URL (same-task readback — call from automation) */
+  captureFrame(){
+    this.composer.render();
+    return this.renderer.domElement.toDataURL('image/png');
   }
 
   /* C1: switch bot #1's looks from the console (check silhouettes / palettes) */

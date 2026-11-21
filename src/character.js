@@ -10,6 +10,7 @@
 //   · only large body parts cast shadows — face and small trim pieces are detail meshes (shadow-pass budget).
 import * as THREE from 'three';
 import {paletteFor} from './operators.js';
+import {modelAssets} from './modelAssets.js';
 
 /* ============ Geometry cache ============ */
 const GEO=new Map();
@@ -401,7 +402,88 @@ function buildMale(ctx){
   parts.armL.rotation.set(-.82,.35,.5);
 }
 
+/* ============ GLB path: AI-generated rigged body + procedural attachments ============ */
+/* Same contract as buildOperatorMesh: {group,parts,materials,dispose}.
+   The skinned body (bones ARE Object3Ds) plugs straight into the parts contract — HeroBot
+   animates bones exactly like the procedural Groups; rifle / headgear / extras stay procedural
+   (C1 silhouette coding + rifle drop physics), attached to the mapped bones. */
+function mountRifleTo(group,parts,bones,M,def,profile){
+  const rifle=makeRifle(def.rifle,M);
+  const hand=bones.handR;
+  if(hand){
+    rifle.group.position.set(...profile.rifle.pos);
+    rifle.group.rotation.set(...profile.rifle.rot);
+    rifle.group.scale.setScalar(profile.rifle.scale);
+    hand.add(rifle.group);
+  }else{
+    rifle.group.position.set(.10,1.20,.16);
+    rifle.group.scale.setScalar(profile.rifle.scale);
+    group.add(rifle.group);
+  }
+  parts.rifle=rifle.group;
+  const gunTip=new THREE.Object3D();
+  gunTip.position.set(0,.02,rifle.tipZ);
+  rifle.group.add(gunTip);parts.gunTip=gunTip;
+}
+/* Silhouette extras in bone-local space (offsets differ from the procedural limb Groups) */
+function addExtrasGLTF(parts,M,def,bones){
+  const ex=def.extras||[];
+  if(ex.includes('armband')){
+    for(const arm of [bones.foreR,bones.foreL])
+      if(arm)detail(arm,cyl(.05,.05,.034,12),M.accent,0,-.06,0);
+  }
+  if(ex.includes('kneepads')){
+    for(const calf of [bones.calfL,bones.calfR])
+      if(calf)detail(calf,box(.1,.1,.06),M.armor,0,-.02,.055);
+  }
+  if(ex.includes('holster')&&bones.legR){
+    detail(bones.legR,box(.06,.15,.05),M.glove,.066,-.17,.02);
+    detail(bones.legR,box(.05,.03,.05),M.gunDark,.066,-.10,.02);
+  }
+  if(ex.includes('backpack')&&bones.chest){
+    detail(bones.chest,box(.25,.3,.12),M.armor,0,-.07,-.16);
+    detail(bones.chest,box(.2,.08,.13),M.clothDark,0,-.23,-.16);
+  }
+}
+export function buildOperatorMeshGLTF(assets,def,{camo='default'}={}){
+  const inst=modelAssets.cloneCharacter(def.gender);
+  const {M}=makeMaterials(assets.mats,def,camo);
+  const group=inst.root,bones=inst.bones;
+  const parts={
+    head:null,torso:null,armL:null,armR:null,legL:null,legR:null,
+    shinL:null,shinR:null,pony:null,rifle:null,gunTip:null,
+    headY:inst.headY,nameTagAnchor:null,
+  };
+  parts.head=bones.head;parts.torso=bones.chest||bones.spine;
+  parts.armL=bones.armL;parts.armR=bones.armR;
+  parts.legL=bones.legL;parts.legR=bones.legR;
+  parts.shinL=bones.calfL;parts.shinR=bones.calfR;
+  parts.pony=bones.pony||null;
+  mountRifleTo(group,parts,bones,M,def,inst.profile);
+  if(bones.headAnchor){
+    makeHeadgear(bones.headAnchor,M,def,def.gender==='f');
+    if(def.hair==='ponytail'&&!bones.pony)makePony(bones.headAnchor,M,parts); // no hair bone in the rig → procedural fallback
+  }
+  addExtrasGLTF(parts,M,def,bones);
+  const anchor=new THREE.Object3D();
+  anchor.position.y=2.0;
+  group.add(anchor);parts.nameTagAnchor=anchor;
+  // inst.materials are already per-instance clones (textures stay shared across characters)
+  const materials=inst.materials;
+  const dispose=()=>{for(const m of materials)m.dispose();};
+  return {group,parts,materials,dispose};
+}
+
 /* ============ Public API ============ */
+/* Dispatcher used by bots / portraits: GLB when loaded (?model=gltf), procedural otherwise
+   (?model=proc or load failure) — the procedural path is the permanent fallback. */
+export function buildOperatorMeshAuto(assets,def,{camo='default'}={}){
+  if(modelAssets.mode()==='gltf'){
+    try{return buildOperatorMeshGLTF(assets,def,{camo});}
+    catch(e){console.warn('[character] GLB build failed — procedural fallback:',e);}
+  }
+  return buildOperatorMesh(assets,def,{camo});
+}
 export function buildOperatorMesh(assets,def,{camo='default'}={}){
   const group=new THREE.Group();
   const {M,materials}=makeMaterials(assets.mats,def,camo);

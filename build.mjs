@@ -17,9 +17,23 @@ const result = await esbuild.build({
 let js = result.outputFiles[0].text
   .replace(/<\/script/gi, '<\\/script'); // keep the bundle from closing the script tag early
 
+// Character GLBs (AI-generated rigged bodies): embedded as data URLs so the single file
+// stays self-contained. modelAssets.js prefers window.__GTG_GLB__ and falls back to fetch.
+const glbs = {};
+for (const g of ['male', 'female']) {
+  try {
+    const b = readFileSync(`assets/characters/${g}.glb`);
+    glbs[g] = `data:model/gltf-binary;base64,${b.toString('base64')}`;
+  } catch (e) { /* missing file → runtime fetch fallback → procedural characters */ }
+}
+const glbScript = glbs.male || glbs.female
+  ? `window.__GTG_GLB__=${JSON.stringify(glbs)};`
+  : '';
+
 const css = readFileSync('src/style.css', 'utf-8');
 const template = readFileSync('src/template.html', 'utf-8');
 const html = template
+  .replace('/*__GLB__*/', () => glbScript)
   .replace('/*__CSS__*/', () => css)
   .replace('//__JS__', () => js);
 

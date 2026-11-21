@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import {t,isEN} from './i18n.js';
 import {byId,byFaction,DEFAULT_OP} from './operators.js';
-import {buildOperatorMesh,fadeMaterials} from './character.js';
+import {buildOperatorMeshAuto,fadeMaterials} from './character.js';
 
 /* Compatibility layer: legacy code reads base stats per faction; the data lives in operators.js */
 const _opCT=byId('frost'),_opT=byId('raven');
@@ -21,6 +21,8 @@ const BOT_PROFILE={
 };
 
 let BID=0;
+/* Zero rest pose: procedural parts have no bind-pose euler, GLB rigs do */
+const ZEROT={x:0,y:0,z:0};
 
 /* M2-A5: name tag health bar — both geometries shared at module level, materials per bot */
 const TAG_BG_GEO=new THREE.PlaneGeometry(.62,.075);
@@ -97,9 +99,9 @@ export class HeroBot{
     scene.add(this.group);
   }
 
-  /* Character mesh built by character.js (shared geometry / one material set per character) */
+  /* Character mesh built by character.js (GLB rigged body or procedural, identical contract) */
   buildBody(){
-    const built=buildOperatorMesh(this.assets,this.def,{camo:this.def.camo||'default'});
+    const built=buildOperatorMeshAuto(this.assets,this.def,{camo:this.def.camo||'default'});
     this.group=built.group;
     this.parts=built.parts;
     this.materials=built.materials;
@@ -107,6 +109,7 @@ export class HeroBot{
     this.torso=built.parts.torso;
     this.armL=built.parts.armL;this.armR=built.parts.armR;
     this.legL=built.parts.legL;this.legR=built.parts.legR;
+    this.shinL=built.parts.shinL||null;this.shinR=built.parts.shinR||null; // GLB rigs: knee-bend layer (stage 2)
     this.pony=built.parts.pony;
     this.gunTip=built.parts.gunTip;
     // Record the initial rifle-hold pose: animation offsets from this baseline, avoiding a T-pose
@@ -238,7 +241,7 @@ export class HeroBot{
     this.coverTarget=null;this.coverT=0;
     if(this.nameTag&&this.nameTag.bar)this.nameTag.bar.scale.x=1;
     if(this.torso)this.torso.position.y=this.baseTorsoY;
-    if(this.parts.head)this.parts.head.rotation.x=0;
+    if(this.parts.head)this.parts.head.rotation.x=(this.parts.head.userData.restE||ZEROT).x;
     this.group.rotation.x=0;
     const base=this.team==='A'?new THREE.Vector3(0,0,24):new THREE.Vector3(0,0,-24);
     this.place(base.clone().add(new THREE.Vector3((Math.random()-.5)*8,0,(Math.random()-.5)*8)),
@@ -491,7 +494,11 @@ export class HeroBot{
     const moving=spd>.5;
     if(moving)this.walkT+=dt*spd*2.1;
     const swing=moving?Math.sin(this.walkT)*.6:0;
-    if(this.legL){this.legL.rotation.x=swing;this.legR.rotation.x=-swing;}
+    // Leg swing stacks on the rig's bind-pose euler (restE) — GLB rigs often rest non-identity
+    if(this.legL){
+      const rl=this.legL.userData.restE||ZEROT,rr=this.legR.userData.restE||ZEROT;
+      this.legL.rotation.x=rl.x+swing;this.legR.rotation.x=rr.x-swing;
+    }
     // Walk bob + female hip sway (heavier steps at low health)
     let bob=moving?Math.abs(Math.cos(this.walkT))*.035:0;
     if(this.hp/this.maxHp<.35)bob*=1.4;
@@ -505,14 +512,16 @@ export class HeroBot{
 
     // Breathing: subtle torso rise and fall (baseline from buildBody, avoids accumulated drift)
     if(this.torso)this.torso.position.y=this.baseTorsoY+Math.sin(time*1.8)*.003;
-    // Aiming: head pitch + torso follows (smoothed)
+    // Aiming: head pitch + torso follows (smoothed; restE keeps the rig's bind-pose baseline)
     const k=Math.min(1,8*dt);
     if(this.parts.head){
-      const want=-this.aimPitch*.5;
+      const rh=this.parts.head.userData.restE||ZEROT;
+      const want=rh.x-this.aimPitch*.5;
       this.parts.head.rotation.x+=(want-this.parts.head.rotation.x)*k;
     }
     if(this.torso){
-      const want=this.aimYaw*.3;
+      const rt=this.torso.userData.restE||ZEROT;
+      const want=rt.y+this.aimYaw*.3;
       this.torso.rotation.y+=(want-this.torso.rotation.y)*k;
     }
     // Rifle-hold base pose + recoil / reload layers
@@ -526,8 +535,9 @@ export class HeroBot{
     }
     // Ponytail follow-through (approximate hair physics)
     if(this.pony){
-      this.pony.rotation.x=-.15+Math.sin(time*1.7)*.05+(moving?swing*.18:0);
-      this.pony.rotation.z=Math.sin(time*1.3)*.06;
+      const rp=this.pony.userData.restE||ZEROT;
+      this.pony.rotation.x=rp.x-.15+Math.sin(time*1.7)*.05+(moving?swing*.18:0);
+      this.pony.rotation.z=rp.z+Math.sin(time*1.3)*.06;
     }
     this.group.rotation.y=this.yaw;
   }
