@@ -74,6 +74,8 @@ export class HeroBot{
     this.fireT=1+Math.random();this.burst=0;
     this.flashT=0;this.strafeDir=Math.random()>.5?1:-1;this.strafeT=2+Math.random()*2;
     this.walkT=0;
+    this.moveK=0;          // smoothed moving flag (blends idle / locomotion layers)
+    this._lastYaw=0;this._rifleLag=0; // rifle inertia on turns
     /* M2-A1 animation state machine */
     this.animState='idle';this.animT=0;
     this.aimPitch=0;this.aimYaw=0;
@@ -109,7 +111,9 @@ export class HeroBot{
     this.torso=built.parts.torso;
     this.armL=built.parts.armL;this.armR=built.parts.armR;
     this.legL=built.parts.legL;this.legR=built.parts.legR;
-    this.shinL=built.parts.shinL||null;this.shinR=built.parts.shinR||null; // GLB rigs: knee-bend layer (stage 2)
+    this.shinL=built.parts.shinL||null;this.shinR=built.parts.shinR||null; // GLB rigs: knee-bend layer
+    this.footL=built.parts.footL||null;this.footR=built.parts.footR||null;
+    this.hips=built.parts.hips||null; // GLB rigs: idle weight shift + death buckle
     this.pony=built.parts.pony;
     this.gunTip=built.parts.gunTip;
     // Record the initial rifle-hold pose: animation offsets from this baseline, avoiding a T-pose
@@ -242,6 +246,19 @@ export class HeroBot{
     if(this.nameTag&&this.nameTag.bar)this.nameTag.bar.scale.x=1;
     if(this.torso)this.torso.position.y=this.baseTorsoY;
     if(this.parts.head)this.parts.head.rotation.x=(this.parts.head.userData.restE||ZEROT).x;
+    // Restore the layers the death buckle deformed (idle/walk rewrite x/z every frame, y only here)
+    if(this.hips){
+      const rp=this.hips.userData.restP;if(rp)this.hips.position.y=rp.y;
+      this.hips.rotation.y=(this.hips.userData.restE||ZEROT).y;
+    }
+    if(this.shinL){
+      const sl=this.shinL.userData.restE||ZEROT;
+      this.shinL.rotation.x=sl.x;this.shinR.rotation.x=sl.x;
+      if(this.footL){
+        const fl=this.footL.userData.restE||ZEROT;
+        this.footL.rotation.x=fl.x;this.footR.rotation.x=fl.x;
+      }
+    }
     this.group.rotation.x=0;
     const base=this.team==='A'?new THREE.Vector3(0,0,24):new THREE.Vector3(0,0,-24);
     this.place(base.clone().add(new THREE.Vector3((Math.random()-.5)*8,0,(Math.random()-.5)*8)),
@@ -277,10 +294,24 @@ export class HeroBot{
     if(this.state!=='active'){
       this.deathT+=dt;
       if(this.state==='dying'){
-        const k=Math.min(1,this.deathT/.7);
-        this.group.rotation.x=-Math.PI/2.2*k;
-        this.group.position.y=this.pos.y+.3*k;
-        if(k>=1)this.state='dead';
+        // Two-stage death on rigs: stagger (hips buckle, knees fold, spine twists) → collapse
+        const k1=Math.min(1,this.deathT/.28);
+        const k2raw=Math.max(0,Math.min(1,(this.deathT-.28)/.42));
+        const k2=k2raw*k2raw*(3-2*k2raw); // smoothstep
+        this.group.rotation.x=-Math.PI/2.2*k2;
+        this.group.position.y=this.pos.y+.3*k2;
+        if(this.hips){
+          const rp=this.hips.userData.restP||this.hips.position;
+          this.hips.position.y=rp.y-.22*k1;
+          const rh=this.hips.userData.restE||ZEROT;
+          this.hips.rotation.y=rh.y+this.hitDir*.5*k1*(1-k2*.7);
+          if(this.shinL){
+            const sl=this.shinL.userData.restE||ZEROT;
+            const fold=.95*k1*(1-k2*.55);
+            this.shinL.rotation.x=sl.x+fold;this.shinR.rotation.x=sl.x+fold*.8;
+          }
+        }
+        if(k2raw>=1)this.state='dead';
       }else{
         fadeMaterials(this.materials,Math.max(0,1-(this.deathT-.7)/4));
       }
@@ -494,10 +525,29 @@ export class HeroBot{
     const moving=spd>.5;
     if(moving)this.walkT+=dt*spd*2.1;
     const swing=moving?Math.sin(this.walkT)*.6:0;
+    this.moveK+=((moving?1:0)-this.moveK)*Math.min(1,6*dt); // idle ↔ locomotion blend
+    const idleK=1-this.moveK;
     // Leg swing stacks on the rig's bind-pose euler (restE) — GLB rigs often rest non-identity
     if(this.legL){
       const rl=this.legL.userData.restE||ZEROT,rr=this.legR.userData.restE||ZEROT;
       this.legL.rotation.x=rl.x+swing;this.legR.rotation.x=rr.x-swing;
+      // Knee bend pulses through the swing window (heel-off → strike), ankle keeps the sole level
+      if(this.shinL){
+        const sl=this.shinL.userData.restE||ZEROT,sr=this.shinR.userData.restE||ZEROT;
+        const kneeL=this.moveK*Math.max(0,-Math.sin(this.walkT))*.85;
+        const kneeR=this.moveK*Math.max(0,Math.sin(this.walkT))*.85;
+        this.shinL.rotation.x=sl.x+kneeL;this.shinR.rotation.x=sr.x+kneeR;
+        if(this.footL){
+          const fl=this.footL.userData.restE||ZEROT,fr=this.footR.userData.restE||ZEROT;
+          this.footL.rotation.x=fl.x-kneeL*.55;this.footR.rotation.x=fr.x-kneeR*.55;
+        }
+      }
+    }
+    // Idle weight shift: hips drift hip-to-hip, torso counter-leans over the support foot
+    if(this.hips){
+      const rp=this.hips.userData.restP||this.hips.position;
+      this.hips.position.x=rp.x+idleK*Math.sin(time*.55)*.014;
+      this.hips.position.z=rp.z+idleK*Math.sin(time*.34)*.006;
     }
     // Walk bob + female hip sway (heavier steps at low health)
     let bob=moving?Math.abs(Math.cos(this.walkT))*.035:0;
@@ -511,7 +561,13 @@ export class HeroBot{
     this.group.rotation.z=rz;
 
     // Breathing: subtle torso rise and fall (baseline from buildBody, avoids accumulated drift)
-    if(this.torso)this.torso.position.y=this.baseTorsoY+Math.sin(time*1.8)*.003;
+    if(this.torso){
+      this.torso.position.y=this.baseTorsoY+Math.sin(time*1.8)*.003;
+      // Locomotion forward lean + idle sway (restE keeps the rig baseline)
+      const rt=this.torso.userData.restE||ZEROT;
+      const lean=this.moveK*Math.min(.09,Math.max(0,(spd-1.2)*.014));
+      this.torso.rotation.x=rt.x+lean+idleK*Math.sin(time*.55+1.1)*.02;
+    }
     // Aiming: head pitch + torso follows (smoothed; restE keeps the rig's bind-pose baseline)
     const k=Math.min(1,8*dt);
     if(this.parts.head){
@@ -533,6 +589,12 @@ export class HeroBot{
       if(this.armL)this.armL.rotation.x=this.baseArmL[0]-a;
       if(this.armR)this.armR.rotation.x=this.baseArmR[0]-a*.35;
     }
+    // Rifle inertia: the weapon trails a touch when the bot turns (held rifle only)
+    const yawV=(this.yaw-this._lastYaw)/Math.max(dt,1e-3);
+    this._lastYaw=this.yaw;
+    this._rifleLag+=(Math.max(-4,Math.min(4,yawV))*.05-this._rifleLag)*Math.min(1,10*dt);
+    if(this.parts.rifle&&!this.rifleFalling&&this.parts.rifle.parent!==this.scene)
+      this.parts.rifle.rotation.y=this._rifleLag;
     // Ponytail follow-through (approximate hair physics)
     if(this.pony){
       const rp=this.pony.userData.restE||ZEROT;

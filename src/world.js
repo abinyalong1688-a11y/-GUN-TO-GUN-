@@ -12,6 +12,7 @@ export const MAPS={
     sky:{top:[.10,.14,.30],mid:[.55,.34,.40],hor:[1.06,.68,.38],low:[.28,.20,.17],glow:[1.0,.86,.62],stars:0},
     sunDir:[-.82,.30,-.28],sunColor:0xffb36b,sunI:7.5,
     hemi:[0x51608f,0x8a5c38,1.35],fill:[0x6a7ab8,.5],
+    rim:[0x7a90c8,1.3],ibl:.55,
     fog:[0xcf9460,.0068],
     ground:'sand',rock:'rock',
     containers:['olive','rust'],
@@ -24,6 +25,7 @@ export const MAPS={
     sky:{top:[.02,.03,.09],mid:[.05,.08,.17],hor:[.13,.20,.32],low:[.05,.07,.11],glow:[.85,.92,1.05],stars:1,aurora:1},
     sunDir:[-.45,.52,.25],sunColor:0xa8c4e8,sunI:5.0,  // cold moonlight
     hemi:[0x3c5a80,0x1a2634,1.15],fill:[0x5a7aa8,.4],
+    rim:[0x4fd4a0,1.2],ibl:.45,
     fog:[0x0d1723,.0072],
     ground:'ice',rock:'rockDark',
     containers:['arctic','charcoal'],
@@ -35,6 +37,7 @@ export const MAPS={
     sky:{top:[.02,.03,.06],mid:[.05,.07,.11],hor:[.12,.15,.20],low:[.04,.05,.07],glow:[.35,.42,.55],stars:0},
     sunDir:[-.3,.62,-.42],sunColor:0x93a8c8,sunI:2.3,  // moon behind rainclouds
     hemi:[0x36424f,0x12141a,.95],fill:[0x44536a,.3],
+    rim:[0x4fe3ff,1.5],ibl:.4,
     fog:[0x0a0d12,.0115],
     ground:'asphalt',rock:null,mounds:false,           // urban: skyline replaces hills, no scattered boulders
     containers:['seaBlue','rust','mustard','charcoal'],
@@ -46,6 +49,7 @@ export const MAPS={
     sky:{top:[.012,.01,.02],mid:[.07,.03,.03],hor:[.55,.15,.05],low:[.10,.04,.03],glow:[.95,.40,.16],stars:1},
     sunDir:[.18,.44,.5],sunColor:0xff7a40,sunI:2.3,
     hemi:[0x38191f,0x451307,.95],fill:[0xff8a50,.3],
+    rim:[0xff5a2a,1.4],ibl:.5,
     fog:[0x170a08,.0098],
     ground:'basalt',rock:'obsidian',
     containers:['emberTrim','charcoal'],
@@ -130,6 +134,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
       }`
   });
   const sky=new THREE.Mesh(new THREE.SphereGeometry(480,32,20),skyMat);
+  sky.name='sky'; // exposed for the PMREM environment bake (main.js _refreshEnvironment)
   sky.renderOrder=-10;sky.frustumCulled=false;
   world.add(sky);
   ownMats.push(skyMat);
@@ -150,6 +155,16 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
   const fill=new THREE.DirectionalLight(...map.fill);
   fill.position.set(60,40,80);
   world.add(fill);
+  // Backlight rim: opposite the sun azimuth, no shadow — lifts character silhouettes off the
+  // background (cinematic edge light; also grazes container edges, which reads as atmosphere)
+  if(map.rim){
+    const [rc,ri]=map.rim;
+    const rim=new THREE.DirectionalLight(rc,ri);
+    rim.position.copy(sunDir).multiplyScalar(-90);
+    rim.position.y=Math.abs(rim.position.y)+40;
+    rim.castShadow=false;
+    world.add(rim);
+  }
 
   /* ------- Ground (geometry identical on every map so movement physics stays uniform) ------- */
   const groundGeo=new THREE.PlaneGeometry(360,360,110,110);
@@ -289,7 +304,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
 
   // Ray list for line-of-sight / projectiles: drops the 24k-triangle ground mesh (the ray origin is always inside its bounds, so nothing early-outs and every triangle is tested each frame)
   const losStatics=shootStatics.filter(o=>o!==ground);
-  return {group:world,colliders,shootStatics,losStatics,spawnPoints,sunDir,mapKey,map,worldAnim,ownMats};
+  return {group:world,colliders,shootStatics,losStatics,spawnPoints,sunDir,mapKey,map,worldAnim,ownMats,sky};
 }
 
 /* Street lamp (shared shape, per-map palette from MAPS[mapKey].lamp) */

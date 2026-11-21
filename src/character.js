@@ -451,10 +451,12 @@ export function buildOperatorMeshGLTF(assets,def,{camo='default'}={}){
   const group=inst.root,bones=inst.bones;
   const parts={
     head:null,torso:null,armL:null,armR:null,legL:null,legR:null,
-    shinL:null,shinR:null,pony:null,rifle:null,gunTip:null,
+    shinL:null,shinR:null,footL:null,footR:null,hips:null,pony:null,rifle:null,gunTip:null,
     headY:inst.headY,nameTagAnchor:null,
   };
   parts.head=bones.head;parts.torso=bones.chest||bones.spine;
+  parts.hips=bones.hips||null;
+  parts.footL=bones.footL||null;parts.footR=bones.footR||null;
   parts.armL=bones.armL;parts.armR=bones.armR;
   parts.legL=bones.legL;parts.legR=bones.legR;
   parts.shinL=bones.calfL;parts.shinR=bones.calfR;

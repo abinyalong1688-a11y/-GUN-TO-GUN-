@@ -374,6 +374,141 @@ function drawWood(g,S){
   }
 }
 
+/* ---------- Character outfit maps: NEUTRAL grey canvases so the per-operator palette tint
+   (material.color × map) keeps its hue; the relief / roughness variation adds the "not plastic".
+   Same one-brain-three-maps trick as the weapon factory above. ---------- */
+function drawCloth(g,h,r,S){
+  g.fillStyle='#e6e2da';g.fillRect(0,0,S,S);
+  h.fillStyle=gv(128);h.fillRect(0,0,S,S);
+  r.fillStyle=gv(198);r.fillRect(0,0,S,S);
+  // Thread weave: fine cross-hatch with height relief
+  const st=Math.max(2,Math.round(S/96));
+  for(let y=0;y<S;y+=st){
+    g.strokeStyle=`rgba(90,84,74,${.05+Math.random()*.07})`;g.lineWidth=1;
+    g.beginPath();g.moveTo(0,y+.5);g.lineTo(S,y+.5);g.stroke();
+    h.strokeStyle=gv(118);h.beginPath();h.moveTo(0,y+.5);h.lineTo(S,y+.5);h.stroke();
+  }
+  for(let x=0;x<S;x+=st){
+    g.strokeStyle=`rgba(255,252,244,${.04+Math.random()*.06})`;
+    g.beginPath();g.moveTo(x+.5,0);g.lineTo(x+.5,S);g.stroke();
+    h.strokeStyle=gv(138);h.beginPath();h.moveTo(x+.5,0);h.lineTo(x+.5,S);h.stroke();
+  }
+  // Fibre noise
+  for(let i=0;i<S*30;i++){
+    const x=Math.random()*S,y=Math.random()*S,hi=Math.random()>.5;
+    g.fillStyle=hi?`rgba(255,250,240,${.03+Math.random()*.05})`:`rgba(70,64,56,${.03+Math.random()*.05})`;
+    g.fillRect(x,y,1.4,1.4);
+  }
+  // Stress creases: soft diagonal ridges, smoother where the fabric rubs
+  for(let i=0;i<10;i++){
+    const x=Math.random()*S,y=Math.random()*S,len=S*(.15+Math.random()*.3),ang=(Math.random()-.5)*.9;
+    g.strokeStyle=`rgba(60,54,46,${.05+Math.random()*.06})`;g.lineWidth=2+Math.random()*3;
+    g.beginPath();g.moveTo(x,y);g.lineTo(x+Math.cos(ang)*len,y+Math.sin(ang)*len);g.stroke();
+    r.strokeStyle=gv(160);r.lineWidth=2.5;
+    r.beginPath();r.moveTo(x,y);r.lineTo(x+Math.cos(ang)*len,y+Math.sin(ang)*len);r.stroke();
+  }
+  // Grime blotches (rougher, darker)
+  for(let i=0;i<26;i++){
+    g.fillStyle=`rgba(52,44,34,${.04+Math.random()*.07})`;
+    g.beginPath();g.arc(Math.random()*S,Math.random()*S,2+Math.random()*9,0,7);g.fill();
+  }
+}
+
+function drawArmorPanel(g,h,r,S){
+  g.fillStyle='#cfd2d6';g.fillRect(0,0,S,S);
+  h.fillStyle=gv(128);h.fillRect(0,0,S,S);
+  r.fillStyle=gv(150);r.fillRect(0,0,S,S);
+  // Composite panel seams: recessed gap + bright worn edge
+  for(const fy of[.18,.5,.82]){
+    g.strokeStyle='rgba(20,22,26,.5)';g.lineWidth=2;
+    g.beginPath();g.moveTo(0,S*fy);g.lineTo(S,S*fy);g.stroke();
+    g.strokeStyle='rgba(255,255,255,.14)';g.lineWidth=1;
+    g.beginPath();g.moveTo(0,S*fy+2);g.lineTo(S,S*fy+2);g.stroke();
+    h.strokeStyle=gv(70);h.lineWidth=2.5;
+    h.beginPath();h.moveTo(0,S*fy);h.lineTo(S,S*fy);h.stroke();
+    r.strokeStyle=gv(170);r.lineWidth=2.5;
+    r.beginPath();r.moveTo(0,S*fy);r.lineTo(S,S*fy);r.stroke();
+  }
+  for(const fx of[.3,.72]){
+    g.strokeStyle='rgba(20,22,26,.4)';g.lineWidth=2;
+    g.beginPath();g.moveTo(S*fx,0);g.lineTo(S*fx,S);g.stroke();
+    h.strokeStyle=gv(80);h.lineWidth=2.5;
+    h.beginPath();h.moveTo(S*fx,0);h.lineTo(S*fx,S);h.stroke();
+  }
+  // Attachment bolts: raised and polished
+  for(let i=0;i<14;i++){
+    const x=6+Math.random()*(S-12),y=6+Math.random()*(S-12);
+    g.fillStyle='rgba(0,0,0,.4)';g.beginPath();g.arc(x,y,2.6,0,7);g.fill();
+    g.fillStyle='rgba(235,240,246,.5)';g.beginPath();g.arc(x-.8,y-.8,1.2,0,7);g.fill();
+    h.fillStyle=gv(190);h.beginPath();g.arc(x,y,2.6,0,7);h.fill();
+    r.fillStyle=gv(70);h.beginPath();h.arc(x,y,2.6,0,7);h.fill();
+  }
+  // Scrapes through the coating: brighter composite, smoother
+  for(let i=0;i<34;i++){
+    const x=Math.random()*S,y=Math.random()*S,len=3+Math.random()*14,ang=Math.random()*Math.PI;
+    g.strokeStyle=`rgba(240,243,248,${.06+Math.random()*.1})`;g.lineWidth=1+Math.random()*1.6;
+    g.beginPath();g.moveTo(x,y);g.lineTo(x+Math.cos(ang)*len,y+Math.sin(ang)*len);g.stroke();
+    r.strokeStyle=gv(90);r.lineWidth=1.5;
+    r.beginPath();r.moveTo(x,y);r.lineTo(x+Math.cos(ang)*len,y+Math.sin(ang)*len);r.stroke();
+  }
+}
+
+function drawLeather(g,h,r,S){
+  g.fillStyle='#cfc8c0';g.fillRect(0,0,S,S);
+  h.fillStyle=gv(128);h.fillRect(0,0,S,S);
+  r.fillStyle=gv(170);r.fillRect(0,0,S,S);
+  // Pebbled grain: dense random cells
+  for(let i=0;i<S*22;i++){
+    const x=Math.random()*S,y=Math.random()*S,rad=1+Math.random()*3,hi=Math.random()>.5;
+    g.strokeStyle=hi?`rgba(255,248,238,${.05+Math.random()*.08})`:`rgba(40,34,28,${.05+Math.random()*.09})`;
+    g.lineWidth=.8+Math.random();
+    g.beginPath();g.arc(x,y,rad,Math.random()*7,Math.random()*7+2);g.stroke();
+    h.strokeStyle=gv(hi?140:112);h.beginPath();h.arc(x,y,rad,0,7);h.stroke();
+  }
+  // Crease folds: recessed wavy lines, rougher edges
+  for(let i=0;i<16;i++){
+    const x=Math.random()*S,y=Math.random()*S,len=S*(.1+Math.random()*.25),ang=Math.random()*Math.PI;
+    g.strokeStyle=`rgba(30,24,20,${.08+Math.random()*.1})`;g.lineWidth=1.5+Math.random()*2;
+    g.beginPath();g.moveTo(x,y);g.quadraticCurveTo(x+len/2,y+(Math.random()-.5)*6,x+len,y);g.stroke();
+    h.strokeStyle=gv(70);h.lineWidth=2;
+    h.beginPath();h.moveTo(x,y);h.lineTo(x+len,y);h.stroke();
+    r.strokeStyle=gv(150);r.lineWidth=2;
+    r.beginPath();r.moveTo(x,y);r.lineTo(x+len,y);r.stroke();
+  }
+  // Handled polish spots: smoother, faint sheen
+  for(let i=0;i<10;i++){
+    const x=Math.random()*S,y=Math.random()*S;
+    g.fillStyle=`rgba(255,244,224,${.03+Math.random()*.05})`;
+    g.beginPath();g.arc(x,y,4+Math.random()*8,0,7);g.fill();
+    r.fillStyle=gv(85);r.beginPath();g.arc(x,y,5+Math.random()*7,0,7);r.fill();
+  }
+}
+
+function drawSkin(g,h,r,S){
+  g.fillStyle='#fff6ee';g.fillRect(0,0,S,S);
+  h.fillStyle=gv(128);h.fillRect(0,0,S,S);
+  r.fillStyle=gv(150);r.fillRect(0,0,S,S);
+  // Pore noise
+  for(let i=0;i<S*26;i++){
+    const x=Math.random()*S,y=Math.random()*S;
+    g.fillStyle=`rgba(190,130,100,${.02+Math.random()*.04})`;
+    g.fillRect(x,y,1,1);
+    r.fillStyle=gv(135+Math.random()*30);r.fillRect(x,y,1,1);
+  }
+  // Warm mottling (cheeks / nose feel without UV knowledge — blotches read as natural tone)
+  for(let i=0;i<14;i++){
+    g.fillStyle=`rgba(255,110,80,${.02+Math.random()*.035})`;
+    g.beginPath();g.arc(Math.random()*S,Math.random()*S,3+Math.random()*10,0,7);g.fill();
+  }
+  // Smoother sheen patches (T-zone / knuckles)
+  for(let i=0;i<8;i++){
+    r.fillStyle=gv(100+Math.random()*40);
+    r.beginPath();
+    r.arc(Math.random()*S,Math.random()*S,5+Math.random()*9,0,7);
+    r.fill();
+  }
+}
+
 /* ---------- Weapon material factory: colour / height / roughness drawn with the same strokes ----------
    One brush paints three maps at once → map + normalMap (relief) + roughnessMap (worn spots are smoother);
    roughness canvas brightness ≈ roughness×255, multiplied by the material roughness to get the target feel */
@@ -664,18 +799,19 @@ export function initAssets(){
     suitDark:new THREE.MeshStandardMaterial({color:0x232830,roughness:.7,metalness:.15}),
     vestGray:new THREE.MeshStandardMaterial({color:0x3a4250,roughness:.75,metalness:.2}),
     shades:new THREE.MeshStandardMaterial({color:0x0c0e12,roughness:.2,metalness:.8}),
-    // Faction characters
-    ctFatigue:new THREE.MeshStandardMaterial({color:0x46536b,roughness:.78,metalness:.1}),
-    ctArmor:new THREE.MeshStandardMaterial({color:0x2b3140,roughness:.72,metalness:.25}),
+    // Faction characters — outfits use neutral three-channel maps (cloth weave / armour panels),
+    // palette tinting multiplies on top; roughnessMap averages ≈.78 × the roughness below
+    ctFatigue:weaponMat(256,drawCloth,{metal:.08,rough:.95,envInt:.25,nStr:.55}),
+    ctArmor:weaponMat(256,drawArmorPanel,{metal:.3,rough:.8,envInt:.5,nStr:1.1}),
     ctHelmet:new THREE.MeshStandardMaterial({color:0x454f61,roughness:.6,metalness:.3}),
-    tJacket:new THREE.MeshStandardMaterial({color:0x7e2620,roughness:.8,metalness:.05}),
-    tPants:new THREE.MeshStandardMaterial({color:0x2f2c2c,roughness:.82,metalness:.05}),
-    tRig:new THREE.MeshStandardMaterial({color:0x1e1c1c,roughness:.8,metalness:.15}),
+    tJacket:weaponMat(256,drawCloth,{metal:.04,rough:.95,envInt:.2,nStr:.55}),
+    tPants:weaponMat(256,drawCloth,{metal:.04,rough:.95,envInt:.2,nStr:.55}),
+    tRig:weaponMat(256,drawArmorPanel,{metal:.2,rough:.85,envInt:.4,nStr:1.1}),
     balaclava:new THREE.MeshStandardMaterial({color:0x17171c,roughness:.85,metalness:0}),
     beanie:new THREE.MeshStandardMaterial({color:0x565a60,roughness:.9,metalness:0}),
-    // Realistic 3D characters: skin / hair / facial features / boots
-    skinF:new THREE.MeshStandardMaterial({color:0xf3d0b8,roughness:.45,metalness:0}),
-    skinM:new THREE.MeshStandardMaterial({color:0xdfab8c,roughness:.55,metalness:0}),
+    // Realistic 3D characters: skin pore map / hair / facial features / leather boots+gloves
+    skinF:weaponMat(256,drawSkin,{metal:0,rough:.62,envInt:.3,nStr:.35}),
+    skinM:weaponMat(256,drawSkin,{metal:0,rough:.7,envInt:.3,nStr:.35}),
     skinN:new THREE.MeshStandardMaterial({color:0xd8a687,roughness:.55,metalness:0}),
     sclera:new THREE.MeshStandardMaterial({color:0xf6f3f0,roughness:.25}),
     iris:new THREE.MeshStandardMaterial({color:0x33241c,roughness:.3}),
@@ -684,10 +820,10 @@ export function initAssets(){
     hairM:new THREE.MeshStandardMaterial({color:0x1a130e,roughness:.85}),
     lipsF:new THREE.MeshStandardMaterial({color:0xc25a4c,roughness:.4}),
     lipsM:new THREE.MeshStandardMaterial({color:0xb4826a,roughness:.6}),
-    clothDark:new THREE.MeshStandardMaterial({color:0x191719,roughness:.75}),
-    gloveDark:new THREE.MeshStandardMaterial({color:0x3a3733,roughness:.6,metalness:.05}),
-    bootDark:new THREE.MeshStandardMaterial({color:0x1a1815,roughness:.45,metalness:.08}),
-    armSleeve:new THREE.MeshStandardMaterial({color:0x2a2e36,roughness:.7}),
+    clothDark:weaponMat(256,drawCloth,{metal:.02,rough:.95,envInt:.15,nStr:.5}),
+    gloveDark:weaponMat(256,drawLeather,{metal:.04,rough:.92,envInt:.25,nStr:.75}),
+    bootDark:weaponMat(256,drawLeather,{metal:.06,rough:.95,envInt:.3,nStr:.75}),
+    armSleeve:weaponMat(256,drawCloth,{metal:.05,rough:.9,envInt:.3,nStr:.55}),
     // C1/C3: faction identifiers (glowing armband / helmet / shemagh / lenses / first-person sleeves and gloves)
     ctAccent:new THREE.MeshStandardMaterial({color:0x2b3140,emissive:0x7fd4ff,emissiveIntensity:.9,roughness:.6}),
     tAccent:new THREE.MeshStandardMaterial({color:0x3a201a,emissive:0xff8a6a,emissiveIntensity:.9,roughness:.6}),

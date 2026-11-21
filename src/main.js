@@ -306,6 +306,26 @@ class Game{
     disposeWorld(this.scene,this.world);
     this.world=buildWorld(this.scene,this.assets,this.quality,mapKey);
     if(this.player)this.player.colliders=this.world.colliders;
+    this._refreshEnvironment();
+  }
+
+  /* Per-map environment reflections: bake the live sky shader into a PMREM once per map switch.
+     Characters / metals then reflect real scene colours (sunset orange, aurora green, dock neon)
+     instead of a flat studio grey. Cheap: a single cube render at build time, disposed on rebuild. */
+  _refreshEnvironment(){
+    try{
+      const sky=this.world.sky;
+      if(!sky)return;
+      const pmrem=new THREE.PMREMGenerator(this.renderer);
+      const tmp=new THREE.Scene();
+      tmp.add(new THREE.Mesh(sky.geometry,sky.material));
+      const rt=pmrem.fromScene(tmp,.04,.1,600); // far must clear the 480 m sky sphere
+      pmrem.dispose();
+      if(this._envRT)this._envRT.dispose();
+      this._envRT=rt;
+      this.scene.environment=rt.texture;
+      this.scene.environmentIntensity=this.world.map.ibl??.5;
+    }catch(e){}
   }
 
   /* Refresh dynamic copy after a language switch (static parts are covered by applyStatic) */

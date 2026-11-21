@@ -214,9 +214,12 @@ function normalizeTemplate(gender,scene){
   };
   if(!map.head||!map.legR)console.warn('[modelAssets] bone mapping incomplete for',gender,map);
 
-  // 5. Rest pose: bind-pose euler per mapped bone (animation deltas stack on top of it)
+  // 5. Rest pose: bind-pose euler + local position per mapped bone (animation deltas stack on top)
   for(const b of Object.values(map)){
-    if(b)b.userData.restE={x:b.rotation.x,y:b.rotation.y,z:b.rotation.z};
+    if(b){
+      b.userData.restE={x:b.rotation.x,y:b.rotation.y,z:b.rotation.z};
+      b.userData.restP=b.position.clone();
+    }
   }
 
   // 6. Rifle-hold base pose (baseArmR/L in HeroBot capture these; recoil/reload layer on top)
