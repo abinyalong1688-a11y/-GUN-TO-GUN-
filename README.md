@@ -8,7 +8,7 @@ Designed and developed end-to-end as an original project: every system — rende
 
 **Play online: https://abinyalong1688-a11y.github.io/-GUN-TO-GUN-/**
 
-Or **double-click [`dist/gun-to-gun.html`](dist/gun-to-gun.html)** (~0.8 MB, zero external requests, fully playable offline).
+Or **double-click [`dist/gun-to-gun.html`](dist/gun-to-gun.html)** (~5.6 MB / 3.1 MB gzipped, zero external requests, fully playable offline).
 
 | Key | Action |
 |---|---|
@@ -118,9 +118,10 @@ Built-in verification hooks:
 
 When hosting in the cloud, **upload the `dist/` trio together**: `gun-to-gun.html` + `sw.js` + `manifest.webmanifest`.
 
-- **Offline mode (PWA)**: a built-in Service Worker caches the game on the first online visit, so it **reopens from cache with no network** (navigation is network-first for updates, falling back to cache when offline); also supports browser "install to desktop" for fullscreen play
+- **Offline mode (PWA)**: a built-in Service Worker caches the game on the first online visit, so it **reopens instantly from cache with no network** (navigation is stale-while-revalidate: the cached copy is served immediately and a fresh copy is fetched in the background for the next visit); also supports browser "install to desktop" for fullscreen play
+- **First-visit loading**: the HTML is ~5.6 MB (3.1 MB gzipped) and ~83 % of it is the eight rigged character GLBs. The main bundle is placed **before** that payload, so the menu becomes interactive after only ~270 KB of transfer; the models live in inert `<script type="application/octet-stream">` tags read on demand once parsing completes (procedural characters cover the gap). On slow links (e.g. GitHub Pages from mainland China) the remaining model bytes still stream in afterwards.
 - **Language detection**: the hosted version detects the UI language from the client IP (English overseas / Chinese in China). This is the only optional external call — it fails silently offline and never affects the game itself (the game body remains zero-external-request)
-- Cross-origin probe requests are never cached; the SW cache is purged automatically by version number on updates
+- Cross-origin probe requests are never cached; the SW cache is purged automatically by version number on updates. The SW pre-cache list must not contain `./` — `/dist/` has no index and returns 404 on GitHub Pages, which makes `caches.addAll()` reject the whole install
 
 ## Production Hardening
 
@@ -152,4 +153,4 @@ Security / stability / performance work done to a ship-ready standard:
 - [x] Bullet decals conform to surfaces; explosions include fireball + shockwave + debris
 - [x] Shaders precompiled — no freeze on first entry
 - [x] Production hardening: nickname XSS escaping, dirty-storage fallbacks, context-loss recovery, exception circuit breaker, zero-allocation hot paths, map-switch disposal
-- [x] Zero console errors; 0.63 MB ≤ 5 MB budget; zero external requests; playable offline
+- [x] Zero console errors; single-file build ~5.6 MB (3.1 MB gzipped, mostly 8 embedded rigged GLBs); zero external requests; playable offline
