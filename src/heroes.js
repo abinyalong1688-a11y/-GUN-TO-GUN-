@@ -662,5 +662,34 @@ export class HeroTeam{
   }
   update(dt,time,losCheck){
     for(const h of this.list)h.update(dt,time,losCheck);
+    this._separate();
+  }
+  /* Soft bot-vs-bot separation: dead bodies and spawn clusters otherwise pass through each
+     other (visible clipping in 4v4). Push overlapping alive pairs apart on XZ only. */
+  _separate(){
+    const L=this.list,R=.72;
+    for(let i=0;i<L.length;i++)for(let j=i+1;j<L.length;j++){
+      const a=L[i],b=L[j];
+      if(!a.alive||!b.alive)continue;
+      const dx=b.pos.x-a.pos.x,dz=b.pos.z-a.pos.z;
+      const d2=dx*dx+dz*dz;
+      if(d2>=R*R||d2<1e-6)continue;
+      const d=Math.sqrt(d2),push=(R-d)/d*.5;
+      a.pos.x-=dx*push;a.pos.z-=dz*push;
+      b.pos.x+=dx*push;b.pos.z+=dz*push;
+    }
+    // The player is solid too: bots get pushed out of the player's circle (the player keeps moving)
+    if(this.game.player&&this.game.player.alive){
+      const pp=this.game.player.pos;
+      for(const h of L){
+        if(!h.alive)continue;
+        const dx=h.pos.x-pp.x,dz=h.pos.z-pp.z;
+        const d2=dx*dx+dz*dz;
+        if(d2<R*R&&d2>1e-6){
+          const d=Math.sqrt(d2),push=(R-d)/d;
+          h.pos.x+=dx*push;h.pos.z+=dz*push;
+        }
+      }
+    }
   }
 }
