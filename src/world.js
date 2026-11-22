@@ -649,13 +649,15 @@ const LAYOUTS={
     const {world,shootStatics,colliders,worldAnim,ownMats,M,assets,map}=ctx;
     const contMats=ctx.map.containers.map(k=>assets.containers[k]);
 
-    /* Lava river: a chain of rimmed pools snaking north→south west of the arena centre */
+    /* Lava river: a chain of rimmed pools snaking north→south west of the arena centre.
+       The northmost pool stays south of z≈19.5 — the shared team bases/respawn jitter
+       (z=±24±4..10) must stay clear of map geometry on every layout. */
     const ns=(x,z)=>Math.sin(x*.045)*Math.cos(z*.038)+Math.sin(x*.11+z*.07)*.5;
+    const river=[[-6,-18,3],[-7,-11,3.4],[-6,-3,3.2],[-8,4,3.2],[-6,11,3.4],[-4,15.5,3]];
     const lavaMat=new THREE.MeshStandardMaterial({
       map:assets.tex.lavaPool,emissiveMap:assets.tex.lavaPool,
       emissive:0xffffff,emissiveIntensity:1.15,roughness:1,metalness:0});
     ownMats.push(lavaMat);
-    const river=[[-6,-18,3],[-7,-11,3.4],[-6,-3,3.2],[-8,4,3.2],[-6,11,3.4],[-4,18,3]];
     let lightI=0;
     for(const [px,pz,r] of river){
       const pool=new THREE.Mesh(new THREE.CircleGeometry(r,26),lavaMat);
