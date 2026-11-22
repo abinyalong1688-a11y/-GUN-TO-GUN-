@@ -20,13 +20,13 @@ let js = result.outputFiles[0].text
 // Character GLBs (AI-generated rigged bodies): embedded as data URLs so the single file
 // stays self-contained. modelAssets.js prefers window.__GTG_GLB__ and falls back to fetch.
 const glbs = {};
-for (const g of ['male', 'female', 'helmet_m', 'helmet_f']) {
+for (const g of ['male1', 'male2', 'male11', 'male22', 'female1', 'female2', 'female11', 'female22']) {
   try {
     const b = readFileSync(`assets/characters/${g}.glb`);
     glbs[g] = `data:model/gltf-binary;base64,${b.toString('base64')}`;
   } catch (e) { /* missing file → runtime fetch fallback → procedural characters */ }
 }
-const glbScript = glbs.male || glbs.female
+const glbScript = Object.keys(glbs).length
   ? `window.__GTG_GLB__=${JSON.stringify(glbs)};`
   : '';
 

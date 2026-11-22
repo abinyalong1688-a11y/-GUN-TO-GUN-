@@ -535,7 +535,7 @@ function applyFactionTint(mat,P){
 }
 
 export function buildOperatorMeshGLTF(assets,def,{camo='default'}={}){
-  const inst=modelAssets.cloneCharacter(def.gender);
+  const inst=modelAssets.cloneCharacter(modelAssets.modelFor(def.id));
   const {M,materials:attachMats}=makeMaterials(assets.mats,def,camo);
   const P=paletteFor(def,camo);
   for(const m of inst.materials)applyFactionTint(m,P);
@@ -547,27 +547,9 @@ export function buildOperatorMeshGLTF(assets,def,{camo='default'}={}){
     rifle:null,gunTip:null,headY:inst.headY,nameTagAnchor:null,
   };
   mountRifleTo(group,parts,bones,M,def,inst.profile);
-  if(bones.headAnchor){
-    // GLB helmet (pre-fitted to ANCHOR space by modelAssets.normalizeHelmet) goes straight on the
-    // anchor, NOT inside H: H carries the procedural skull's scale factor (headFit.scale ≈ .88) and
-    // would shrink the pre-fitted shell a second time. Its grey shell takes the faction armour tint
-    // like the body, so the C1 colour coding holds; materials join the lifecycle set below.
-    const helm=def.headgear==='helmet'?modelAssets.helmet(def.gender):null;
-    if(helm){
-      for(const m of helm.materials){applyFactionTint(m,P);inst.materials.push(m);}
-      helm.root.name='helmet';
-      bones.headAnchor.add(helm.root);
-    }else if(def.gender!=='f'){
-      // Procedural headgear is built for the procedural skull (radius .105); the anchor sits at the
-      // measured skull centre in character orientation, so one uniform scale fits it to the real head.
-      // Hair is baked into the rig mesh. Female rigs get NO head decorations — the band/beanie
-      // domes read as clutter on the realistic heads (user call); the baked hair is the look.
-      const H=new THREE.Group();
-      H.scale.setScalar(inst.headFit?inst.headFit.scale:1);
-      bones.headAnchor.add(H);
-      makeHeadgear(H,M,def,def.gender==='f');
-    }
-  }
+  // Headgear is baked into every generated rig (helmet / cap / mask) — no procedural
+  // headwear on the GLTF path: the baked look is authoritative, and C1 coding lives in the
+  // per-operator texture now.
   addExtrasGLTF(M,def,bones);
   const anchor=new THREE.Object3D();
   anchor.position.y=2.0;

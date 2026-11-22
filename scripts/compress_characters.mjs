@@ -16,9 +16,10 @@
 //      node scripts/compress_characters.mjs helmet_m    (selected)
 import {NodeIO} from '@gltf-transform/core';
 import {EXTMeshoptCompression} from '@gltf-transform/extensions';
-import {dedup,weld,reorder,textureCompress} from '@gltf-transform/functions';
+import {dedup,weld,reorder,simplify,textureCompress} from '@gltf-transform/functions';
 import {MeshoptEncoder} from 'meshoptimizer';
 import sharp from 'sharp';
+import {MeshoptSimplifier} from 'meshoptimizer';
 import {readFileSync,writeFileSync,mkdirSync} from 'fs';
 import {dirname,join} from 'path';
 import {fileURLToPath} from 'url';
@@ -26,11 +27,12 @@ import {fileURLToPath} from 'url';
 const ROOT=join(dirname(fileURLToPath(import.meta.url)),'..');
 const SRC=join(ROOT,'assets_raw','characters');
 const OUT=join(ROOT,'assets','characters');
-const NAMES=process.argv.slice(2).length?process.argv.slice(2):['male','female','helmet_m','helmet_f'];
+const NAMES=process.argv.slice(2).length?process.argv.slice(2)
+  :['male1','male2','male11','male22','female1','female2','female11','female22'];
 const isProp=name=>name.startsWith('helmet_');
 const PROP_TEX=512;
 
-await MeshoptEncoder.ready;
+await MeshoptEncoder.ready;await MeshoptSimplifier.ready;
 const io=new NodeIO()
   .registerExtensions([EXTMeshoptCompression])
   .registerDependencies({'meshopt.encoder':MeshoptEncoder});
@@ -42,6 +44,8 @@ for(const name of NAMES){
   await doc.transform(
     dedup(),                                   // duplicate accessors/materials → shared
     weld(),                                    // merge duplicate vertices → better compression
+    textureCompress({encoder:sharp,targetFormat:'jpeg',resize:[512,512],quality:78}), // 2K → 512 (budget)
+    simplify({simplifier:MeshoptSimplifier,error:.002,ratio:process.env.SIMP_RATIO?+process.env.SIMP_RATIO:.2}),
     reorder({encoder:MeshoptEncoder,target:'size'}), // vertex cache order, NO quantize() transform
   );
   // formats kept (jpeg stays jpeg, png stays png) → no new texture extensions for the loader

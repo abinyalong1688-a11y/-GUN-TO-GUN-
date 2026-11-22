@@ -43,30 +43,14 @@ export const modelAssets={
   isReady(){return state.ready;},
   error(){return state.error||null;},
   onReady(cb){state.ready?cb():state.onReadyCbs.push(cb);},
-  cloneCharacter(gender){
-    const m=state.models[gender==='f'?'female':'male'];
-    if(!m)throw new Error(`[modelAssets] model not loaded: ${gender}`);
+  cloneCharacter(key){
+    const m=state.models[key]||state.models[MODEL_MAP[key]]||state.models[MODEL_KEYS[0]];
+    if(!m)throw new Error(`[modelAssets] model not loaded: ${key}`);
     return cloneInstance(m);
   },
-  /* GLB helmet for the head anchor (procedural-skull space), or null → procedural helmet.
-     Gender-matched, falling back to the other gender's helmet. Geometry/textures shared,
-     materials cloned per instance (faction tint / hit flash / corpse fade). */
-  helmet(gender){
-    const t=state.props[gender==='f'?'helmet_f':'helmet_m']||state.props.helmet_m||state.props.helmet_f;
-    if(!t)return null;
-    const root=t.clone(true),materials=[],seen=new Map();
-    root.traverse(o=>{
-      if(!o.isMesh)return;
-      let c=seen.get(o.material);
-      if(!c){
-        c=o.material.clone();seen.set(o.material,c);materials.push(c);
-        if(c.emissive){c.userData.baseEH=c.emissive.getHex();c.userData.baseEI=c.emissiveIntensity;}
-      }
-      o.material=c;
-    });
-    return {root,materials};
-  },
-  template(gender){return state.models[gender==='f'?'female':'male']||null;}, // dev: inspect the pre-clone template
+  /* opId → that operator's own rig (one unique generated model per operator) */
+  modelFor(opId){return MODEL_MAP[opId]||MODEL_KEYS[0];},
+  template(key){return state.models[key]||null;}, // dev: inspect the pre-clone template
   debug(){ // console helper: dump bone mapping (?model=gltf + this in devtools)
     for(const g of Object.keys(state.models)){
       const m=state.models[g];
@@ -114,28 +98,21 @@ function loader(){
   return _loaderP;
 }
 
+/* Per-operator model files (one unique rig each; the baked texture/headgear IS the look) */
+const MODEL_KEYS=['male1','male2','male11','male22','female1','female2','female11','female22'];
+const MODEL_MAP={frost:'female1',swift:'female2',snowwolf:'male1',thunder:'male2',
+  raven:'male11',fox:'female11',vulture:'male22',viper:'female22'};
+
 export function preloadCharacters(){
   if(state.loading||state.ready)return;
   state.loading=true;
-  const load=async gender=>{
-    const buf=await toArrayBuffer(await glbSource(gender));
+  const load=async key=>{
+    const buf=await toArrayBuffer(await glbSource(key));
     const l=await loader();
     const gltf=await new Promise((res,rej)=>l.parse(buf,'',gltf=>res(gltf),rej));
-    state.models[gender]=normalizeTemplate(gender,gltf.scene);
+    state.models[key]=normalizeTemplate(key,gltf.scene);
   };
-  // Helmets are optional: a missing/broken file only costs the GLB helmet (procedural one stays).
-  // Loaded inside the same gate so operators built on 'ready' already get them.
-  const loadProp=async name=>{
-    try{
-      const buf=await toArrayBuffer(await glbSource(name));
-      const l=await loader();
-      const gltf=await new Promise((res,rej)=>l.parse(buf,'',gltf=>res(gltf),rej));
-      state.props[name]=normalizeHelmet(name,gltf.scene);
-    }catch(e){
-      console.warn(`[modelAssets] ${name} unavailable — procedural helmet:`,e);
-    }
-  };
-  Promise.all([load('male'),load('female'),loadProp('helmet_m'),loadProp('helmet_f')])
+  Promise.all(MODEL_KEYS.map(load))
     .then(()=>{
       state.ready=true;state.loading=false;
       console.log(`[modelAssets] GLB characters ready (${Object.keys(state.models).join(', ')})`);
@@ -317,10 +294,10 @@ function normalizeHelmet(name,scene){
   return root;
 }
 
-function normalizeTemplate(gender,scene){
-  const profile=PROFILES[gender]||PROFILES.male;
+function normalizeTemplate(key,scene){
+  const profile=key.startsWith('female')?PROFILES.female:PROFILES.male;
   const wrapper=new THREE.Group();
-  wrapper.name=`char_${gender}`;
+  wrapper.name=`char_${key}`;
   const orienter=new THREE.Group();
   orienter.name='orienter';
   wrapper.add(orienter);
@@ -338,7 +315,7 @@ function normalizeTemplate(gender,scene){
   });
   const bones=[];
   scene.traverse(o=>{if(inRig.has(o))bones.push(o);}); // parent-first order
-  if(!bones.length)console.warn('[modelAssets] no bones found in',gender);
+  if(!bones.length)console.warn('[modelAssets] no bones found in',key);
   const pick=(slot,side)=>{
     let best=null,bestScore=-Infinity;
     for(const b of bones){
@@ -395,7 +372,7 @@ function normalizeTemplate(gender,scene){
     calfR:pick('calf',1),calfL:pick('calf',-1),
     footR:pick('foot',1),footL:pick('foot',-1),
   };
-  if(!map.head||!map.legR)console.warn('[modelAssets] bone mapping incomplete for',gender,map);
+  if(!map.head||!map.legR)console.warn('[modelAssets] bone mapping incomplete for',key,map);
 
   // 5. Rifle-hold pose: two-bone IK to character-space hand targets (scaled to body height)
   const H=profile.hold;
