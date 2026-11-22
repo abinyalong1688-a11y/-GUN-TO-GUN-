@@ -96,8 +96,8 @@ class Particles{
 }
 
 export class Effects{
-  constructor(scene,assets,quality='high'){
-    this.scene=scene;this.A=assets;
+  constructor(scene,assets,quality='high',camera=null){
+    this.scene=scene;this.A=assets;this.camera=camera; // world camera: fades tracer heads near the lens
     const q=quality==='high'?1:.6;
     this.sparks=new Particles(scene,700*1,assets.tex.spark,THREE.AdditiveBlending,q);
     this.smoke=new Particles(scene,420,assets.tex.smoke,THREE.NormalBlending,q);
@@ -223,10 +223,13 @@ export class Effects{
   }
 
   /* Muzzle smoke: a wisp drifting up from the muzzle after a shot */
-  muzzleSmoke(pos){
+  muzzleSmoke(pos,{far=false}={}){
+    // far: scoped shots spawn the puff metres down the aim ray — a full-size puff half a
+    // metre from the camera would cover the entire scope lens
     this.smoke.spawn(pos,
       new THREE.Vector3((Math.random()-.5)*.5,.9+(Math.random()*.4),(Math.random()-.5)*.5),
-      {life:.45+Math.random()*.25,size:.16,size1:.55,color:[.82,.8,.78],gravity:.5,drag:1.6,alpha:.4});
+      far?{life:.4+Math.random()*.2,size:.12,size1:.34,color:[.82,.8,.78],gravity:.5,drag:1.6,alpha:.22}
+        :{life:.45+Math.random()*.25,size:.16,size1:.55,color:[.82,.8,.78],gravity:.5,drag:1.6,alpha:.4});
   }
 
   /* M3-G1: persistent smoke-grenade screen (long-lived particles spawned once, no per-frame allocation) */
@@ -333,7 +336,10 @@ export class Effects{
       const fade=Math.max(0,Math.min(1,t.left*10)); // overshoot must not produce negative opacity
       t.core.material.opacity=.95*fade;
       t.glow.material.opacity=.4*fade;
-      t.head.material.opacity=.9*fade;
+      /* The head is a bright billboard riding the bullet tip — while it is still metres
+         from the camera it covers the scope lens, so fade it in over the first few metres */
+      const dCam=this.camera?t.head.position.distanceTo(this.camera.position):10;
+      t.head.material.opacity=.9*fade*Math.min(1,Math.max(0,(dCam-1.8)/1.4));
       if(t.left<=0){t.active=false;t.group.visible=false;t.head.visible=false;}
     }
     // Impact flash: quick scale-up and fade, always facing the camera

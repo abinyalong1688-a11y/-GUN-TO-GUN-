@@ -315,8 +315,9 @@ export class Weapon{
   }
 
   /* ================= First-person arms =================
-     One arm = rolled-sleeve forearm (skin) + cuff (uniform) + hand; parented inside the weapon model group,
-     so it inherits recoil / ADS / reload / switch / knife animations. tip = grip point, entry = off-screen entry point. */
+     One arm = full sleeve (uniform) + gloved hand with only the fingertips showing; parented inside
+     the weapon model group, so it inherits recoil / ADS / reload / switch / knife animations.
+     tip = grip point, entry = off-screen entry point. */
   _arm(g,tip,entry,r=.034,opts={}){
     const M=this.assets.mats;
     // The support arm gets its own group (userData.armSupport) so the reload choreography can
@@ -333,13 +334,17 @@ export class Weapon{
     fore.position.copy(tip).addScaledVector(dir,.45);
     fore.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),dirN);
     add(fore);
+    /* The sleeve runs from the entry point down to the wrist and meets the fist's cuff — the
+       operator design shows gloved fingertips only. The old rolled sleeve left the whole
+       forearm bare, which read as a bright skin blob over the handguard. */
     const sleeveMat=M.armSleeve.clone();
     this._armSleeves.push(sleeveMat);
-    const slv=new THREE.Mesh(new THREE.CylinderGeometry(r*1.1,r*1.3,Math.min(.14,len*.45),12),sleeveMat);
-    slv.position.copy(tip).addScaledVector(dir,.82);
+    const slv=new THREE.Mesh(new THREE.CylinderGeometry(r*1.3,r*1.05,len*.92,12),sleeveMat);
+    slv.position.copy(tip).addScaledVector(dir,.5);
     slv.quaternion.copy(fore.quaternion);
     add(slv);
-    /* Tactical glove: palm + four wrapped fingers in a row + thumb (group space: knuckles toward -z around the front of the grip) */
+    /* Tactical glove: palm + four wrapped fingers in a row + thumb (group space: knuckles toward -z around the front of the grip).
+       Gloved like the operator outfits — only the fingertips break the guard's silhouette (no bare cuff-to-palm skin). */
     const glove=M.gloveDark.clone();
     this._armGloves.push(glove);
     const fist=new THREE.Group();
@@ -358,6 +363,13 @@ export class Weapon{
     cuff.position.y=r*1.15;fist.add(cuff);
     fist.position.copy(tip);
     fist.position.z+=r*.4; // move the fist back to show the knuckles instead of burying them in the grip
+    if(opts.support){
+      /* A centred support fist sits fully inside the guard (same size) and its fingers never
+         break the silhouette. Nudge it up-forward so just the fingertip boxes crest the
+         guard's top face — the character design shows gloved fingertips, not a bare fist. */
+      fist.position.y+=r*.55;
+      fist.position.z-=r*.45;
+    }
     fist.rotation.x=opts.tilt!=null?opts.tilt:.15;
     add(fist);
     if(sup)g.userData.armSupport=sup;
@@ -677,10 +689,11 @@ export class Weapon{
     }
 
     // Muzzle flash (aligned to the real muzzle point, group space)
+    const scopedHide=d.scope&&this.adsAmt>.5; // scoped: the gun body is hidden — the flash plane and its point light would only wash out the lens
     if(this.muzzleFlashT>0){
       this.muzzleFlashT-=dt;
       const tip=this.models[d.id].userData.muzzle;
-      if(tip){
+      if(tip&&!scopedHide){
         this.flash.visible=true;
         this.flash.position.copy(tip);
         this.flash.position.z-=.035; // nudged forward so the crosshair does not hide it
@@ -696,6 +709,7 @@ export class Weapon{
       this.flash.visible=false;
       this.flashLight.intensity*=Math.max(0,1-25*dt);
     }
+    if(scopedHide)this.flashLight.intensity=0; // no warm wash over the scope view
 
     // Shell ejection
     for(const sh of this.shells){

@@ -151,7 +151,7 @@ class Game{
     if(this.mapOverride&&MAPS[this.mapOverride])this.ui.sel.map=this.mapOverride; // per-map screenshot / verification hook
     this.buildWorldFor(this.ui.sel.map);
 
-    this.effects=new Effects(this.scene,this.assets,this.quality);
+    this.effects=new Effects(this.scene,this.assets,this.quality,this.camera);
     this.effects.onShake=v=>{this.shake=Math.max(this.shake,v);};
     this.player=new Player(this.camera,this.world.colliders);
     this.weapon=new Weapon(this.viewScene,this.assets,this.audio,this.ui,this.quality);
@@ -171,7 +171,7 @@ class Game{
     this.losRay=new THREE.Raycaster();
     // Reusable vector pool for shooting: avoids a new Vector3 per bullet and the resulting GC jitter
     this._sd=new THREE.Vector3();this._sr=new THREE.Vector3();this._su=new THREE.Vector3();
-    this._send=new THREE.Vector3();this._muzzle=new THREE.Vector3();this._losV=new THREE.Vector3();this._pierceO=new THREE.Vector3();
+    this._send=new THREE.Vector3();this._muzzle=new THREE.Vector3();this._losV=new THREE.Vector3();this._pierceO=new THREE.Vector3();this._smokeM=new THREE.Vector3();
     this._shotGroups=[];
 
     this._setupComposer();
@@ -701,7 +701,13 @@ class Game{
     const muzzle=cam.localToWorld(this.weapon.muzzleCameraLocal(this._muzzle));
     this.effects.tracer(muzzle,dir,cam.position.distanceTo(end),
       {color:def.tracer,width:def.tracerW,speed:def.tracerSpeed});
-    this.effects.muzzleSmoke(muzzle);
+    // Scoped: a full-size smoke puff at the hidden gun's muzzle point (half a metre from
+    // the camera, on the scope axis) would cover the entire lens — spawn a smaller, fainter
+    // puff metres down the aim ray instead
+    const scoped=this.weapon.def.scope&&this.weapon.adsAmt>.5;
+    this.effects.muzzleSmoke(scoped
+      ?this._smokeM.copy(cam.position).addScaledVector(dir,5)
+      :muzzle,{far:scoped});
 
     if(bestHero){
       this.stats.hits++;
@@ -1566,12 +1572,15 @@ class Game{
       assert(h.coverTarget===null,'there should be no cover target initially');
       const saved=this.world.colliders.slice();
       this.world.colliders.push({minX:-2,maxX:2,minZ:-2,maxZ:2,top:2});
-      h.pos.set(0,0,8);
-      const c=h._findCover(new THREE.Vector3(0,1.4,0),()=>false);
-      assert(c&&Number.isFinite(c.x)&&Number.isFinite(c.z),'a valid cover spot should be found');
-      assert(Math.hypot(c.x,c.z)>2,'the cover spot should be outside the cover');
-      this.world.colliders.length=0;
-      for(const v of saved)this.world.colliders.push(v);
+      try{
+        h.pos.set(0,0,8);
+        const c=h._findCover(new THREE.Vector3(0,1.4,0),()=>false);
+        assert(c&&Number.isFinite(c.x)&&Number.isFinite(c.z),'a valid cover spot should be found');
+        assert(Math.hypot(c.x,c.z)>2,'the cover spot should be outside the cover');
+      }finally{ // restore even on failure — a leaked collider list would poison later tests
+        this.world.colliders.length=0;
+        for(const v of saved)this.world.colliders.push(v);
+      }
       this.settings.set('botDifficulty','normal');
       h.takeDamage(9999,'E2E');
     });
@@ -1770,6 +1779,13 @@ class Game{
       assert(h.parts.rifle.parent===this.scene,'the rifle should drop on death');
       h.update(1,this.time,()=>true);
       assert(h.state==='dead','should become a corpse after 0.7 s');
+      // the collapse lands prone with flat limbs, then the corpse fades out ≈0.8 s later
+      assert(Math.abs(h.group.rotation.x+Math.PI/2.2)<.03,'the body should be prone when the limbs land, rotation.x='+h.group.rotation.x.toFixed(2));
+      const A=h.armL,restQ=A.userData.rig?A.userData.rig.restQ:(b=>{const e=new THREE.Euler(b.x,b.y,b.z);return new THREE.Quaternion().setFromEuler(e);})(A.userData.restR);
+      const armAng=2*Math.acos(Math.min(1,Math.abs(A.quaternion.clone().dot(restQ))));
+      assert(armAng>.7,'the arms should unwind from the rifle hold as the body lands, angle '+armAng.toFixed(2));
+      h.update(.7,this.time,()=>true); // deathT≈1.7 → past the .8 s vanish window
+      assert(Math.abs(h.materials[0].opacity)<.02,'the corpse should be gone shortly after the limbs land, opacity '+h.materials[0].opacity);
       h.deathT=5.6;
       h.update(.016,this.time,()=>true);
       assert(h.alive&&h.state==='active','should respawn after 5.5 s');
@@ -1832,6 +1848,194 @@ class Game{
       this.ui.selectOperator('frost');
       assert(this.ui.sel.hero==='ct','switching back to a Nova operator should restore the faction');
       assert(this.ui.sel.camo===this.ui.camoOf(byId('frost')),'camo should follow the operator back');
+    });
+    await run('bot-separate-4v4',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const L=this.heroes.list;
+      // Blind everyone: no target-driven movement or fire, but separation + collide stay active
+      L.forEach((h,i)=>{h.place(new THREE.Vector3(i*.1-.35,0,0),0);h.blindT=999;h.vel.set(0,0,0);});
+      for(let i=0;i<30;i++)this.heroes.update(.016,this.time+i*.016,()=>true);
+      for(let i=0;i<L.length;i++)for(let j=i+1;j<L.length;j++){
+        const a=L[i],b=L[j];
+        if(!a.alive||!b.alive)continue;
+        const d=Math.hypot(a.pos.x-b.pos.x,a.pos.z-b.pos.z);
+        assert(d>=.7,`alive bots must stay ≥.7 apart after separation: ${a.name}/${b.name} = ${d.toFixed(3)}`);
+      }
+      for(const h of L){
+        if(!h.alive)continue;
+        for(const c of this.world.colliders){
+          if(h.pos.y>c.top)continue;
+          const cx=Math.max(c.minX,Math.min(h.pos.x,c.maxX)),cz=Math.max(c.minZ,Math.min(h.pos.z,c.maxZ));
+          assert(Math.hypot(h.pos.x-cx,h.pos.z-cz)>=.44,`${h.name} must not end up inside a collider after separation`);
+        }
+      }
+    });
+    await run('bot-duel',()=>{
+      this.settings.set('botDifficulty','hard');
+      this.ui.sel.mode='dm';this.startGame();
+      const L=this.heroes.list;
+      const a=L.find(h=>h.team==='A'),b=L.find(h=>h.team==='B');
+      for(const h of L)if(h!==a&&h!==b){h.place(new THREE.Vector3(0,0,h.team==='A'?40:-40),0);h.blindT=999;}
+      this.player.pos.set(50,0,60); // keep the player out of the duelists' targeting
+      a.place(new THREE.Vector3(-1.5,0,0),0);
+      b.place(new THREE.Vector3(1.5,0,0),Math.PI);
+      a.blindT=0;b.blindT=0;a.fireT=0;b.fireT=0;a.reactionT=0;b.reactionT=0;
+      const origFeed=this.ui.killFeed;let feedCalls=0,lastKill=null;
+      this.ui.killFeed=(k,v,...rest)=>{feedCalls++;lastKill={k,v};return origFeed.apply(this.ui,[k,v,...rest]);};
+      const kills0=[...this.dm.scores.values()].reduce((s,x)=>s+x.kills,0);
+      let deaths=0;
+      for(let i=0;i<1250&&deaths<1;i++){
+        this.heroes.update(.016,this.time+i*.016,()=>true);
+        deaths=[...this.dm.scores.values()].reduce((s,x)=>s+x.kills,0)-kills0;
+      }
+      this.ui.killFeed=origFeed;
+      assert(deaths>=1,'two bots dueling at 3 m should score a kill within 20 s');
+      assert(feedCalls>=1,'a bot kill should add a killfeed entry');
+      assert(lastKill&&(lastKill.k===a.name||lastKill.k===b.name),'the killfeed killer should be one of the duelists');
+      this.settings.set('botDifficulty','normal');
+    });
+    await run('dm-win',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      assert(this.dm&&this.dm.winKills,'deathmatch should initialise scores');
+      for(const s of this.dm.scores.values())if(s.team==='A')s.kills=this.dm.winKills-1;
+      const b=this.heroes.list.find(h=>h.team==='B');
+      b.takeDamage(9999,this.playerName); // credited to the player → team A reaches winKills
+      assert(this.state==='over','reaching winKills should end the match');
+      this.startGame();
+    });
+    await run('bot-reload-choreo',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const h=this.heroes.list[0];
+      h.place(new THREE.Vector3(0,0,0),0);h.blindT=0;h.coverTarget=null;
+      // Pose deltas live on the quaternion for GLB bones (rig.js) and on the euler for proc
+      // parts — measure the total rotation away from the rest pose, which works for both
+      const qRest=new THREE.Quaternion(),qCur=new THREE.Quaternion(),eRest=new THREE.Euler();
+      const poseAngle=o=>{
+        const r=o.userData.rig;
+        if(r){qRest.copy(r.restQ);qCur.copy(o.quaternion);}
+        else{const b=o.userData.restR;qRest.setFromEuler(eRest.set(b.x,b.y,b.z));qCur.setFromEuler(o.rotation);}
+        return 2*Math.acos(Math.min(1,Math.abs(qRest.dot(qCur))));
+      };
+      h.reloadT=1.2;h.ammo=h.magSize;h.reactionT=0;h.fireT=1.2;
+      let peak=0;
+      for(let i=0;i<75;i++){
+        h.update(.016,this.time+i*.016,()=>false); // LOS blocked: no fire once the reload ends
+        peak=Math.max(peak,poseAngle(h.armL));
+      }
+      assert(peak>.5,'the support arm should swing through the reload choreography, peak '+peak.toFixed(2));
+      assert(h.reloadT===0,'the reload should complete after 1.2 s');
+      assert(h.ammo===h.magSize,'the magazine should be full after the reload');
+      assert(poseAngle(h.armL)<.02,'the support arm should return to rest after the reload');
+      h.respawn();
+    });
+    await run('bot-player-damage',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const b=this.heroes.list.find(h=>h.team==='B');
+      this.player.god=false;this.invulnT=0;this.player.alive=true;
+      this.player.pos.set(0,0,4);this.player.health=100;this.player.maxHealth=100;
+      b.place(new THREE.Vector3(0,0,10),Math.PI);
+      b.blindT=0;b.update(.016,this.time,()=>true); // acquire the player as the nearest enemy
+      b.reactionT=0;b.fireT=0;
+      const orig=Math.random;
+      Math.random=()=>.99; // force a hit
+      try{b.update(.016,this.time,()=>true);}finally{Math.random=orig;}
+      assert(this.player.health===91,'rogue dmgP 9 should reach the player, health '+this.player.health);
+      this.invulnT=2;this.player.health=100;b.fireT=0;
+      Math.random=()=>.99;
+      try{b.update(.016,this.time,()=>true);}finally{Math.random=orig;}
+      assert(this.player.health===100,'spawn invulnerability must block bot damage');
+      this.invulnT=0;this.player.god=true;this.player.health=100;b.fireT=0;
+      Math.random=()=>.99;
+      try{b.update(.016,this.time,()=>true);}finally{Math.random=orig;}
+      assert(this.player.health===100,'god mode must block bot damage');
+      this.player.god=false;this.player.health=100;
+    });
+    await run('map-matrix-4',()=>{
+      const m0=this.world.mapKey;
+      const MAP_KEYS=['desert','snow','snowtown','ember'];
+      const clearOf=(x,z,r)=>this.world.colliders.every(c=>{
+        const cx=Math.max(c.minX,Math.min(x,c.maxX)),cz=Math.max(c.minZ,Math.min(z,c.maxZ));
+        return Math.hypot(x-cx,z-cz)>=r;
+      });
+      for(const k of MAP_KEYS){
+        this.ui.sel.map=k;this.ui.sel.mode='dm';this.startGame();
+        assert(this.world.mapKey===k,k+' should load');
+        assert(this.world.colliders.length>0&&this.world.losStatics.length>0,k+' should build colliders and LOS statics');
+        for(const c of this.world.colliders)
+          assert(c.minX<c.maxX&&c.minZ<c.maxZ&&c.top>0&&Number.isFinite(c.top),k+' has a degenerate collider: '+JSON.stringify(c));
+        // Fixed gameplay anchors must be clear of geometry on every layout.
+        // The DM respawn envelope is x∈[-3,3] at z=24 (main.js tick), so sample along that line.
+        for(const gx of[-3,-1.5,0,1.5,3])
+          assert(clearOf(gx,24,.4),k+': the player DM spawn line is blocked at '+gx+',24');
+        for(const [gx,gz] of this.world.spawnPoints)
+          assert(clearOf(gx,gz,.5),k+': drone spawn gate is blocked at '+gx+','+gz);
+        assert(clearOf(0,0,.45),k+': the KOTH capture point at the origin is blocked');
+        assert(clearOf(0,24,.45)&&clearOf(0,-24,.45),k+': a bot team base center is blocked');
+        // Stepped simulation: nothing goes NaN and the match keeps running
+        const errs0=this.ui.errors.length;
+        this.player.god=true;this.player.alive=true;this.invulnT=0;
+        this.player.pos.set(0,0,24);this.player.velY=0;this.player.grounded=true;
+        for(let i=0;i<60;i++){
+          this.player.update(.016,this.input,this.keys,this.time+i*.016,this.audio);
+          this.weapon.update(.016,this.input,this.player,this.camera,this.time+i*.016,()=>{});
+          this.heroes.update(.016,this.time+i*.016,(a,b)=>this._los(a,b));
+        }
+        assert(Number.isFinite(this.player.pos.x)&&Number.isFinite(this.player.pos.y)&&Number.isFinite(this.player.pos.z),k+': player position went NaN');
+        for(const h of this.heroes.list)
+          assert(Number.isFinite(h.pos.x)&&Number.isFinite(h.pos.z),k+': '+h.name+' position went NaN');
+        assert(this.state==='playing',k+': the match should stay running, got '+this.state);
+        assert(this.ui.errors.length===errs0,k+' raised runtime errors: '+this.ui.errors.slice(errs0).join(';'));
+      }
+      this.ui.sel.map=m0;this.startGame();
+    });
+    await run('scoped-fire-clear',()=>{
+      this.ui.sel.mode='waves';this.startGame();
+      this.fallbackAim=true;
+      this.weapon.setLoadout('awp');
+      this.player.pos.set(0,0,20);this.player.alive=true;this.player.god=true;
+      this.input.ads=true;
+      for(let i=0;i<40;i++)this.weapon.update(.016,this.input,this.player,this.camera,this.time,()=>{});
+      assert(this.weapon.adsAmt>.9,'should be fully scoped, adsAmt '+this.weapon.adsAmt.toFixed(2));
+      this.fire(0);
+      this.effects.update(.016);
+      const t=this.effects.tracers.find(x=>x.active);
+      assert(t,'firing should spawn a tracer');
+      // the bright head must render past the near-fade zone, never on the lens
+      const hcs=this.camera.worldToLocal(t.head.position.clone());
+      assert(hcs.z<-1.8,'the tracer head must render beyond the scope fade zone, cam z '+hcs.z.toFixed(1));
+      // the muzzle smoke spawns metres down the aim ray — a full-size puff at the muzzle
+      // point (half a metre out, on-axis) would cover the entire lens
+      const s=this.effects.smoke;
+      assert(s.n>0,'a muzzle smoke puff should spawn');
+      const i3=(s.n-1)*3;
+      const cs=this.camera.worldToLocal(new THREE.Vector3(s.pos[i3],s.pos[i3+1],s.pos[i3+2]));
+      assert(cs.z<-3,'scoped muzzle smoke should spawn well ahead of the lens, cam z '+cs.z.toFixed(1));
+      // one weapon update with the flash timer running: the point light must stay dark on the scope view
+      this.weapon.update(.016,this.input,this.player,this.camera,this.time,()=>{});
+      assert(this.weapon.flashLight.intensity===0,'the muzzle light must stay dark while scoped, got '+this.weapon.flashLight.intensity.toFixed(2));
+      this.input.ads=false;
+      for(let i=0;i<40;i++)this.weapon.update(.016,this.input,this.player,this.camera,this.time,()=>{});
+    });
+    await run('bot-spawn-4maps',()=>{
+      const m0=this.world.mapKey;
+      for(const k of ['desert','snow','snowtown','ember']){
+        this.ui.sel.map=k;this.ui.sel.mode='dm';this.startGame();
+        assert(this.world.mapKey===k,k+' should load');
+        for(const h of this.heroes.list){
+          h.respawn();
+          const baseZ=h.team==='A'?24:-24;
+          if(h.team==='A')assert(Math.abs(h.yaw-Math.PI)<1e-6,'team A should face the enemy side after respawn on '+k);
+          else assert(Math.abs(h.yaw)<1e-6,'team B should face the enemy side after respawn on '+k);
+          // ±4 jitter + up to ~.9 m of spawn pop-out from map geometry (caldera rims/pillars)
+          assert(Math.hypot(h.pos.x,h.pos.z-baseZ)<=7,k+' respawn strayed from the base: '+h.name+' at '+h.pos.x.toFixed(1)+','+h.pos.z.toFixed(1));
+          for(const c of this.world.colliders){
+            if(h.pos.y>c.top)continue;
+            const cx=Math.max(c.minX,Math.min(h.pos.x,c.maxX)),cz=Math.max(c.minZ,Math.min(h.pos.z,c.maxZ));
+            assert(Math.hypot(h.pos.x-cx,h.pos.z-cz)>=.44,`${h.name} respawned inside map geometry on ${k}`);
+          }
+        }
+      }
+      this.ui.sel.map=m0;this.startGame();
     });
     await run('memory-stable',()=>{
       this.ui.sel.mode='dm';this.startGame();
