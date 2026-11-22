@@ -1,6 +1,6 @@
-// heroes.js — realistic 3D faction characters (third person) + 3v3 bot deathmatch:
-//   looks are built by character.js from operator definitions (4 operators / camos / silhouettes);
-//   combat style by faction (Nova steady bursts / Rogue heavy spray); death: fall → corpse fade → respawn.
+// heroes.js — realistic 3D faction characters (third person) + 4v4 bot deathmatch:
+//   looks are built by character.js from operator definitions (8 operators / camos / silhouettes);
+//   combat style by faction (Nova steady bursts / Rogue heavy spray); death: fall → limbs land flat → fade out → respawn.
 import * as THREE from 'three';
 import {t,isEN} from './i18n.js';
 import {byId,byFaction,DEFAULT_OP} from './operators.js';
@@ -24,6 +24,7 @@ const BOT_PROFILE={
 
 let BID=0;
 const _Y=new THREE.Vector3(0,1,0),_Zc=new THREE.Vector3(0,0,1),_qLag=new THREE.Quaternion(),_qCant=new THREE.Quaternion();
+const _losRay=new THREE.Raycaster(); // shared: clips miss tracers at cover (no through-wall tracers)
 
 /* M2-A5: name tag health bar — both geometries shared at module level, materials per bot */
 const TAG_BG_GEO=new THREE.PlaneGeometry(.62,.075);
@@ -89,8 +90,12 @@ export class HeroBot{
     this.blindT=0;
     /* M3-G6: cover / flanking / reactions */
     this.coverTarget=null;this.coverT=0;
+    /* Stuck escape: cover movement has no strafe, so a blocker on the straight path can pin
+       the bot — track progress and open a perpendicular detour when it grinds in place */
+    this._stuck=0;this._stuckChk=.4;this._stuckPos=new THREE.Vector3();
+    this.detourT=0;this._detourSide=0;
     this.flankDir=Math.random()>.5?1:-1;
-    this.reactionT=0;
+    this.reactionT=0;this._lastTargetId=null; // last target identity — reaction re-arms when it changes
     this.difficulty=(game.settings&&game.settings.get('botDifficulty'))||'normal';
     this._coverFrom=new THREE.Vector3();this._coverTo=new THREE.Vector3();this._coverBest=new THREE.Vector3();
     this.baseArmR=[0,0,0];this.baseArmL=[0,0,0];this.baseTorsoY=0;
@@ -191,7 +196,7 @@ export class HeroBot{
     return this.hp;
   }
 
-  /* C2: death — fall over in 0.7 s → corpse fades → respawn after 5.5 s; no more explosions */
+  /* C2: death — fall over in 0.7 s with the limbs landing flat, corpse gone ≈0.8 s later; respawn after 5.5 s */
   die(byName){
     if(!this.alive)return;
     this.alive=false;
@@ -223,13 +228,23 @@ export class HeroBot{
     if(!this.rifleFalling)return;
     const r=this.parts.rifle;
     if(!r)return;
+    const y0=r.position.y; // pre-step height: tops below it are landing candidates (no tunnelling past a top in one frame)
     this._rifleVel.y-=9.8*dt;
     r.position.addScaledVector(this._rifleVel,dt);
     r.rotation.x+=this._rifleSpin.x*dt;
     r.rotation.y+=this._rifleSpin.y*dt;
     r.rotation.z+=this._rifleSpin.z*dt;
-    if(r.position.y<=.06){
-      r.position.y=.06;
+    /* Rest on whatever was underneath — crate/container tops included, not just the ground
+       plane; the origin rests .06 above the surface (same offset as the ground rest), so the
+       rifle never sinks half-way into the crate top. */
+    let ground=.06;
+    const cols=this.game.world&&this.game.world.colliders;
+    if(cols)for(const c of cols)
+      if(c.top<=y0&&c.top+.06>ground
+        &&r.position.x>=c.minX&&r.position.x<=c.maxX
+        &&r.position.z>=c.minZ&&r.position.z<=c.maxZ)ground=c.top+.06;
+    if(r.position.y<=ground){
+      r.position.y=ground;
       this._rifleVel.set(0,0,0);
       this.rifleFalling=false;
     }
@@ -260,6 +275,8 @@ export class HeroBot{
     const base=this.team==='A'?new THREE.Vector3(0,0,24):new THREE.Vector3(0,0,-24);
     this.place(base.clone().add(new THREE.Vector3((Math.random()-.5)*8,0,(Math.random()-.5)*8)),
       this.team==='A'?Math.PI:0);
+    this._collide(this.game.world.colliders); // jittered spawn can land on map geometry (caldera gate pillars)
+    this._stuck=0;this.detourT=0;this._stuckChk=.4;this._stuckPos.copy(this.pos);
     this.audio.respawn();
     // Dead bots are skipped by HeroTeam.refreshModels — catch up on the GLB swap here
     if(this.builtWith!==modelAssets.mode())this.setOperator(this.def);
@@ -280,9 +297,20 @@ export class HeroBot{
       const cz=Math.max(c.minZ,Math.min(this.pos.z,c.maxZ));
       const dx=this.pos.x-cx,dz=this.pos.z-cz;
       const d2=dx*dx+dz*dz;
-      if(d2<r*r&&d2>1e-8){
+      if(d2>r*r)continue;
+      if(d2>1e-8){
         const d=Math.sqrt(d2),push=(r-d)/d;
         this.pos.x+=dx*push;this.pos.z+=dz*push;
+      }else{
+        /* Center inside (or exactly on) the box: the boundary push-out above is a no-op,
+           so a bot spawned or separation-shoved fully inside would stay embedded — pop it
+           out to the nearest face + r. */
+        const dl=this.pos.x-c.minX,dr=c.maxX-this.pos.x,dn=this.pos.z-c.minZ,df=c.maxZ-this.pos.z;
+        const m=Math.min(dl,dr,dn,df);
+        if(m===dr)this.pos.x=c.maxX+r;
+        else if(m===dl)this.pos.x=c.minX-r;
+        else if(m===df)this.pos.z=c.maxZ+r;
+        else this.pos.z=c.minZ-r;
       }
     }
     const dd=Math.hypot(this.pos.x,this.pos.z);
@@ -292,25 +320,32 @@ export class HeroBot{
   update(dt,time,losCheck){
     if(this.state!=='active'){
       this.deathT+=dt;
-      if(this.state==='dying'){
-        // Two-stage death on rigs: stagger (hips buckle, knees fold, spine twists) → collapse
-        const k1=Math.min(1,this.deathT/.28);
-        const k2raw=Math.max(0,Math.min(1,(this.deathT-.28)/.42));
-        const k2=k2raw*k2raw*(3-2*k2raw); // smoothstep
-        this.group.rotation.x=-Math.PI/2.2*k2;
-        this.group.position.y=this.pos.y+.3*k2;
-        if(this.hips){
-          posePos(this.hips,0,-.22*k1,0);
-          poseRot(this.hips,0,this.hitDir*.5*k1*(1-k2*.7),0);
-        }
-        if(this.shinL){
-          const fold=.95*k1*(1-k2*.55);
-          poseRot(this.shinL,fold);poseRot(this.shinR,fold*.8);
-        }
-        if(k2raw>=1)this.state='dead';
-      }else{
-        fadeMaterials(this.materials,Math.max(0,1-(this.deathT-.7)/4));
+    if(this.state==='dying'){
+      // Two-stage death on rigs: stagger (hips buckle, knees fold, spine twists) → collapse.
+      // The limbs straighten while the body lands, so all four end up flat on the ground;
+      // the corpse then fades out quickly (gone ≈0.8 s after the limbs land).
+      const k1=Math.min(1,this.deathT/.28);
+      const k2raw=Math.max(0,Math.min(1,(this.deathT-.28)/.42));
+      const k2=k2raw*k2raw*(3-2*k2raw); // smoothstep
+      this.group.rotation.x=-Math.PI/2.2*k2;
+      this.group.position.y=this.pos.y+.3*k2;
+      if(this.hips){
+        posePos(this.hips,0,-.22*k1,0);
+        poseRot(this.hips,0,this.hitDir*.5*k1*(1-k2*.7),0);
       }
+      if(this.shinL){
+        const fold=.95*k1*(1-k2); // knees buckle, then fully straighten as the body lands
+        poseRot(this.shinL,fold);poseRot(this.shinR,fold*.8);
+      }
+      if(this.legL){poseRot(this.legL,0,0,.12*k2);poseRot(this.legR,0,0,-.12*k2);} // slight sprawl
+      /* Arms relax from the rifle hold back to hanging along the body (character.js rest
+         angles: R(-.72,0,-.04) / L(-.85,.35,.5)) — flat on the ground once prone */
+      if(this.armR)poseRot(this.armR,.72*k2,0,.04*k2);
+      if(this.armL)poseRot(this.armL,.85*k2,-.35*k2,-.5*k2);
+      if(k2raw>=1)this.state='dead';
+    }else{
+      fadeMaterials(this.materials,Math.max(0,1-(this.deathT-.7)/.8));
+    }
       this._updateDroppedRifle(dt);
       if(this.deathT>this.respawnT)this.respawn();
       return;
@@ -335,12 +370,18 @@ export class HeroBot{
       this.vel.x*=Math.max(0,1-4*dt);this.vel.z*=Math.max(0,1-4*dt);
       this.pos.x+=this.vel.x*dt;this.pos.z+=this.vel.z*dt;
       this._collide(this.game.world.colliders);
+      /* Status timers keep ticking while blinded — a flash mid-reload no longer freezes the reload */
+      if(this.reloadT>0)this.reloadT=Math.max(0,this.reloadT-dt);
+      if(this.hitT>0)this.hitT=Math.max(0,this.hitT-dt);
+      if(this.recoilKick>0)this.recoilKick=Math.max(0,this.recoilKick-dt*4.5);
       this._animate(dt,time,this.vel.length());
       this.group.position.set(this.pos.x,this.pos.y,this.pos.z);
       this.group.rotation.y=this.yaw;
       return;
     }
     // M2-A1: animation timers (no new allocations on the hot path)
+    /* Live difficulty: a mid-match botDifficulty change reaches existing bots on the next frame */
+    this.difficulty=(this.game.settings&&this.game.settings.get('botDifficulty'))||this.difficulty||'normal';
     if(this.reloadT>0)this.reloadT=Math.max(0,this.reloadT-dt);
     if(this.hitT>0)this.hitT=Math.max(0,this.hitT-dt);
     if(this.recoilKick>0)this.recoilKick=Math.max(0,this.recoilKick-dt*4.5);
@@ -362,10 +403,15 @@ export class HeroBot{
     const tPos=this._tPosT;
     if(this.blindT>0)target=null; // lose the target while blinded
     const P=BOT_PROFILE[this.faction];
-    if(target&&!hadTarget){
-      this.bark('bark_spot');
-      this.reactionT=P.reaction*(this.difficulty==='hard'?.6:this.difficulty==='easy'?1.6:1);
-    }
+    if(target){
+      const tid=target==='player'?'player':target.id;
+      if(!hadTarget)this.bark('bark_spot');
+      /* Reaction re-arms on every target change — swapping between two known enemies
+         no longer skips the aim delay (and a fresh acquisition keeps the bark) */
+      if(tid!==this._lastTargetId)
+        this.reactionT=P.reaction*(this.difficulty==='hard'?.6:this.difficulty==='easy'?1.6:1);
+      this._lastTargetId=tid;
+    }else this._lastTargetId=null;
     if(this.reactionT>0)this.reactionT-=dt;
     if(target){
       const dx=tPos.x-this.pos.x,dz=tPos.z-this.pos.z;
@@ -404,6 +450,15 @@ export class HeroBot{
         mx+=-nz*this.strafeDir*spd*(.35+flank*.5);
         mz+=nx*this.strafeDir*spd*(.35+flank*.5);
       }
+      /* Sidestep while detouring: walk perpendicular to the desired direction (the bot keeps
+         its side until the detour expires, then resumes the normal movement) */
+      if(this.detourT>0){
+        this.detourT-=dt;
+        const dl=Math.max(.001,Math.hypot(mx,mz));
+        const dx=mx/dl,dz=mz/dl;
+        mx=-dz*this._detourSide*spd*1.2;
+        mz= dx*this._detourSide*spd*1.2;
+      }
       const k=Math.min(1,8*dt);
       this.vel.x+=(mx-this.vel.x)*k;
       this.vel.z+=(mz-this.vel.z)*k;
@@ -411,14 +466,30 @@ export class HeroBot{
       this.pos.z+=this.vel.z*dt;
       this._collide(this.game.world.colliders);
 
-      // Bursts / spray (no firing while reloading)
+      /* Stuck detection: full effort but no progress over a .4 s window (holding an already
+         reached cover spot does not count) — open a perpendicular detour around the blocker */
+      this._stuckChk-=dt;
+      if(this._stuckChk<=0){
+        const atGoal=this.coverTarget&&Math.hypot(this.coverTarget.x-this.pos.x,this.coverTarget.z-this.pos.z)<1;
+        if(this.vel.length()>1&&!atGoal&&this.pos.distanceTo(this._stuckPos)<.12)this._stuck+=.4;
+        else this._stuck=Math.max(0,this._stuck-.8);
+        this._stuckPos.copy(this.pos);this._stuckChk=.4;
+        if(this._stuck>=.8&&this.detourT<=0){
+          this.detourT=.55+Math.random()*.3;
+          if(!this._detourSide)this._detourSide=Math.random()<.5?1:-1;
+          else if(Math.random()<.35)this._detourSide*=-1; // a failed detour may try the other side
+          this._stuck=0;
+        }
+      }
+
+      // Bursts / spray (no firing while reloading). The pause branch only opens the
+      // inter-burst gap — firing there too made every "burst:N" fire N+1 rounds.
       this.fireT-=dt;
       if(this.fireT<=0&&this.reloadT<=0&&this.reactionT<=0){
         const clear=losCheck(eye,tPos);
         if(clear){
-          if(this.burst<P.burst){this.burst++;this.fireT=P.burstT;}
+          if(this.burst<P.burst){this.burst++;this.fireT=P.burstT;this._shoot(tPos,target,dist,P);}
           else{this.burst=0;this.fireT=P.pause+Math.random()*.5;}
-          this._shoot(tPos,target,dist,P);
         }else this.fireT=.4;
       }
     }else{
@@ -500,12 +571,16 @@ export class HeroBot{
     const mk=P.missK*(this.difficulty==='hard'?.7:this.difficulty==='easy'?1.4:1);
     const smoked=this.game.grenades&&this.game.grenades.inSmoke(tPos);
     const miss=Math.random()<Math.min(.92,dist*.018*mk+.08+(smoked?.45:0));
-    if(miss)dir.add(new THREE.Vector3((Math.random()-.5)*.12,(Math.random()-.5)*.08,(Math.random()-.5)*.12)).normalize();
-    const end=miss
-      ?from.clone().addScaledVector(dir,dist+4)
-      :tPos.clone();
+    let end;
+    if(miss){
+      dir.add(new THREE.Vector3((Math.random()-.5)*.12,(Math.random()-.5)*.08,(Math.random()-.5)*.12)).normalize();
+      // Clip the miss tracer at the first piece of cover so it never draws through walls
+      _losRay.set(from,dir);_losRay.far=dist+4;
+      const hit=_losRay.intersectObjects(this.game.world&&this.game.world.losStatics||[],false)[0];
+      end=from.clone().addScaledVector(dir,hit?Math.max(1,hit.distance):dist+4);
+    }else end=tPos.clone();
     this.fx.tracer(from,dir,from.distanceTo(end));
-    // Hit effects come from botDamageFx / player hit feedback; a miss's end point is in mid-air past walls, so no floating bullet hole
+    // Hit effects come from botDamageFx / player hit feedback; the wall-clipped miss end keeps bullet holes off mid-air
     this.audio.botShot(this.game.player.pos.distanceTo(this.pos));
     if(!miss){
       if(target==='player'){
@@ -609,7 +684,7 @@ export class HeroBot{
   }
 }
 
-/* Faction team manager: 2 teammates on the player's faction vs 3 enemies on the other (4-operator roster, cycled) */
+/* Faction team manager: 3 bot teammates on the player's faction (the player is the 4th) vs 4 enemies (8-operator roster, cycled) */
 export class HeroTeam{
   constructor(game){
     this.game=game;
@@ -629,8 +704,8 @@ export class HeroTeam{
     const g=this.game,scene=g.scene,assets=g.assets,fx=g.effects,audio=g.audio,ui=g.ui;
     const pf=playerFaction==='t'?'t':'ct';
     const ef=pf==='ct'?'t':'ct';
-    // Roster is one male + one female per faction, so squads cycle through it (name suffixes
-    // keep repeated operators distinguishable); match size stays 2 teammates vs 3 enemies.
+    // Roster has several operators per faction, so squads cycle through it (name suffixes
+    // keep repeated operators distinguishable); match size stays 3 bot teammates + player vs 4 enemies.
     const cycle=(arr,n)=>arr.length?Array.from({length:n},(_,i)=>arr[i%arr.length]):[];
     const ownPool=byFaction(pf).filter(o=>o.id!==playerOpId);
     const own=cycle(ownPool.length?ownPool:byFaction(pf),3);
@@ -653,6 +728,7 @@ export class HeroTeam{
       const b=d.team==='A'?new THREE.Vector3(0,0,24):new THREE.Vector3(0,0,-24);
       h.place(b.clone().add(new THREE.Vector3((Math.random()-.5)*10,0,(Math.random()-.5)*10)),
         d.team==='A'?Math.PI:0);
+      h._collide(g.world.colliders); // match-start jitter can land on map geometry too
       this.list.push(h);
     }
   }
@@ -663,6 +739,9 @@ export class HeroTeam{
   update(dt,time,losCheck){
     for(const h of this.list)h.update(dt,time,losCheck);
     this._separate();
+    /* Separation can shove a bot across a collider boundary (or fully inside one);
+       re-run the push-out so nobody ends the frame embedded in geometry. */
+    for(const h of this.list)if(h.alive)h._collide(this.game.world.colliders);
   }
   /* Soft bot-vs-bot separation: dead bodies and spawn clusters otherwise pass through each
      other (visible clipping in 4v4). Push overlapping alive pairs apart on XZ only. */
@@ -678,7 +757,8 @@ export class HeroTeam{
       a.pos.x-=dx*push;a.pos.z-=dz*push;
       b.pos.x+=dx*push;b.pos.z+=dz*push;
     }
-    // The player is solid too: bots get pushed out of the player's circle (the player keeps moving)
+    // The player is solid as well: bots yield fully out of the player's circle, and the player
+    // gets a soft half push — walking straight through a bot is no longer possible
     if(this.game.player&&this.game.player.alive){
       const pp=this.game.player.pos;
       for(const h of L){
@@ -688,6 +768,7 @@ export class HeroTeam{
         if(d2<R*R&&d2>1e-6){
           const d=Math.sqrt(d2),push=(R-d)/d;
           h.pos.x+=dx*push;h.pos.z+=dz*push;
+          pp.x-=dx*push*.5;pp.z-=dz*push*.5;
         }
       }
     }
