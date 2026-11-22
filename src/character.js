@@ -534,10 +534,11 @@ export function buildOperatorMeshGLTF(assets,def,{camo='default'}={}){
       for(const m of helm.materials){applyFactionTint(m,P);inst.materials.push(m);}
       helm.root.name='helmet';
       bones.headAnchor.add(helm.root);
-    }else{
+    }else if(def.gender!=='f'){
       // Procedural headgear is built for the procedural skull (radius .105); the anchor sits at the
       // measured skull centre in character orientation, so one uniform scale fits it to the real head.
-      // Hair is baked into the rig mesh.
+      // Hair is baked into the rig mesh. Female rigs get NO head decorations — the band/beanie
+      // domes read as clutter on the realistic heads (user call); the baked hair is the look.
       const H=new THREE.Group();
       H.scale.setScalar(inst.headFit?inst.headFit.scale:1);
       bones.headAnchor.add(H);
