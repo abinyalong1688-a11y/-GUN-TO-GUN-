@@ -1,6 +1,6 @@
 # GUN TO GUN
 
-A single-file 3D FPS web game — faction combat · four maps · 7 realistic weapons · real physics (gravity / jumping / crouching / recoil ballistics) · male & female operatives · 3v3 AI deathmatch · endless waves.
+A single-file 3D FPS web game — faction combat · four maps · 7 realistic weapons · real physics (gravity / jumping / crouching / recoil ballistics) · male & female operatives · 4v4 AI deathmatch · endless waves.
 
 Designed and developed end-to-end as an original project: every system — rendering, physics, weapons, characters, AI, audio, UI — is implemented in-house and bundled into one self-contained HTML file.
 
@@ -31,9 +31,9 @@ Or **double-click [`dist/gun-to-gun.html`](dist/gun-to-gun.html)** (~0.8 MB, zer
 - **Raven · Rogue Mercenary** (male): rugged and sharp · V-shaped broad shoulders / narrow waist · rolled-sleeve red jacket · clean short hair, +12% move speed / +25% reload speed
 - Both factions are mixed-gender squads — one male + one female each (Nova: Frost / Snowwolf; Rogue: Raven / Fox); first-person view shows gun-holding arms with tactical gloves
 
-### v1.9 — rigged-model character pipeline (AI-ready bodies, procedural fallback)
+### v1.9 — rigged-model character pipeline (rigged bodies, procedural fallback)
 
-- **GLB character pipeline**: rigged humanoid models (male 1.80 m / female 1.75 m) load from data URLs embedded in the single file — orientation / scale / ground contact normalised at load, bone names resolved by keyword aliasing (Tripo / Mixamo / custom rigs all work), `SkeletonUtils` instancing with per-instance material clones (hit flash and corpse fade stay independent). The original procedural builder remains the permanent fallback (`?model=proc` forces it; any load failure auto-falls back with zero regression)
+- **GLB character pipeline**: rigged humanoid models (male 1.80 m / female 1.75 m) load from data URLs embedded in the single file — orientation / scale / ground contact normalised at load, bone names resolved by keyword aliasing (any standard humanoid naming scheme works), `SkeletonUtils` instancing with per-instance material clones (hit flash and corpse fade stay independent). The original procedural builder remains the permanent fallback (`?model=proc` forces it; any load failure auto-falls back with zero regression)
 - **Procedural rig animation**: walk cycle with knee bend + ankle compensation stacked on each rig's bind-pose baseline (restE), idle weight shift, locomotion forward lean, rifle turn inertia, two-stage death (stagger → collapse)
 - **Material quality**: neutral three-channel canvas maps (cloth weave / armour panels / leather / skin pores) tinted per operator palette; headgear auto-scales to the rig head radius
 - **Per-map IBL**: the live sky shader is baked to a PMREM on every map switch — metals and outfits reflect real scene colours (sunset orange / aurora green / dock neon / lava glow); each map adds a rim backlight (cool blue / aurora green / neon cyan / lava orange) that lifts character silhouettes
@@ -72,7 +72,7 @@ Four hand-built arenas, each a distinct scene with its own layout, sky, lighting
 ## Game Modes
 
 - **Endless Waves**: defend the outpost against three drone classes with detailed silhouettes — WASP (kamikaze) / REAPER (roaming shooter) / WARDEN (heavy: glowing sensor windows, core guard rings, wing plates / claw feet / gun shields, rotor hubs, breathing red-core pulse). Red-core crits ×2.5
-- **6-Player Deathmatch (3v3)**: you + 2 same-faction AI teammates vs 3 enemy AI. Nova fires controlled bursts, Rogue sprays. First to 25 kills wins, with killfeed, TAB scoreboard and respawns
+- **8-Player Deathmatch (4v4)**: you + 3 same-faction AI teammates vs 4 enemy AI. Nova fires controlled bursts, Rogue sprays. First to 25 kills wins, with killfeed, TAB scoreboard and respawns
   - Note: true networked multiplayer requires a persistent server, which conflicts with the "single file, offline-playable" goal — deathmatch delivers the same arena experience with AI combatants
 
 ## Sponsorship Placements
@@ -86,7 +86,7 @@ src/
   assets.js   Materials — 1024px procedural Canvas PBR textures (sand / snow / basalt / ice / wet asphalt) + normal maps + weapon wood / faction fabrics + neon signage + billboard art; zero image files
   world.js    Scene — parametric sky shaders (sunset / aurora night / rain night / ember) + four distinct per-map layouts + lighting / fog / ambient particles
   weapon.js   Weapons — three-slot loadout viewmodels + first-person arms (tactical gloves) + semi-auto trigger + slash animations + recoil / ADS / reload / shell ejection
-  heroes.js   Characters — realistic 3D faction operatives (lathe-surface torsos, facial features, hair physics, faction outfits) and 3v3 AI
+  heroes.js   Characters — realistic 3D faction operatives (lathe-surface torsos, facial features, hair physics, faction outfits) and 4v4 AI
   enemies.js  Enemies — three drone classes (sensor windows / guard rings / detail parts) + AI + projectiles + occlusion checks
   player.js   Player — movement / circle-vs-AABB collision / health / regeneration
   waves.js    Gameplay — wave scheduling / spawn throttling / supplies
@@ -110,7 +110,7 @@ Built-in verification hooks:
 
 - `?shot=menu|combat|dm|over` — jump straight into a state for screenshot review
 - `?selftest=1` — weapon self-test (primary hit-kill + Desert Eagle semi-auto + knife melee); results in the debug bar and console
-- `?e2e=1` — **system integration test**: 12 end-to-end assertions (loading / ADS / recoil ballistics / gravity jump / crate-top landing / crouch / weight-based speed / **4-primary same-slot cycling** / crits / XSS protection / 360° look); results in `window.__e2e` and the debug bar; deterministic, reproducible in background tabs
+- `?e2e=1` — **system integration test**: 54 end-to-end assertions (loading / ADS / recoil ballistics / gravity jump / crate-top landing / crouch / weight-based speed / **4-primary same-slot cycling** / crits / XSS protection / 360° look); results in `window.__e2e` and the debug bar; deterministic, reproducible in background tabs
 - `?perf=1` — hitch monitor: slow-frame (>25 ms) count and max frame time reported to console periodically
 - `?ipcc=US` / `?ipcc=CN` — force the interface language (default: auto by IP — English overseas / Chinese in China; silent fallback on probe failure)
 

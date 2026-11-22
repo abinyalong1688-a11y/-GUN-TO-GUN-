@@ -1,10 +1,10 @@
 // make_test_rig.mjs — generate PLACEHOLDER rigged humanoids (male / female) as GLB.
 // Purpose: validate the whole GLB character pipeline (preload → bone mapping → procedural
-// bone animation → portraits clone → single-file embedding) BEFORE the real Tripo models
+// bone animation → portraits clone → single-file embedding) BEFORE the production models
 // arrive in stage 1. These are deliberately simple rigid-segment dummies; the real models
 // replace these files one-for-one (same paths, same bone naming scheme).
 //
-// Rig spec (what modelAssets.js expects from any rig, Tripo included):
+// Rig spec (what modelAssets.js expects from any rig):
 //   · humanoid skeleton, bones named with recognisable keywords (hips/spine/chest/neck/head,
 //     upperArm_L/R, lowerArm_L/R, hand_L/R, thigh_L/R, calf_L/R, foot_L/R, ponytail);
 //   · faces +Z, feet on the ground, roughly 1.8 m (male) / 1.75 m (female);
@@ -153,7 +153,7 @@ function buildRig(p){
     }
   }
 
-  // One vertex-colour material for the whole dummy (mimics Tripo single baked material)
+  // One vertex-colour material for the whole dummy (mimics a single baked material)
   const mat=new THREE.MeshStandardMaterial({vertexColors:true,roughness:.65,metalness:.05});
   const meshes=geos.map(g=>{
     const m=new THREE.SkinnedMesh(g,mat);

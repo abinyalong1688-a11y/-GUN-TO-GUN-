@@ -4,7 +4,7 @@
 //
 //   · Procedural parts are direct children of the character group, so character space IS their
 //     parent space: rest = build-time euler / position, deltas add to the euler (legacy behaviour).
-//   · GLB bones have arbitrary local frames (Tripo: Root is rotated -90° about X, every bone has its
+//   · GLB bones have arbitrary local frames (e.g. Root rotated -90° about X, every bone has its
 //     own roll), so writing rotation.x there rotates around a meaningless axis. modelAssets.js
 //     precomputes, per mapped bone, the character axes expressed in the bone's local rest frame
 //     (userData.rig.ax) and the character unit translations in the parent's local frame (rig.px);

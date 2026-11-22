@@ -17,7 +17,7 @@ const result = await esbuild.build({
 let js = result.outputFiles[0].text
   .replace(/<\/script/gi, '<\\/script'); // keep the bundle from closing the script tag early
 
-// Character GLBs (AI-generated rigged bodies): embedded as data URLs so the single file
+// Character GLBs (rigged bodies): embedded as data URLs so the single file
 // stays self-contained. modelAssets.js prefers window.__GTG_GLB__ and falls back to fetch.
 const glbs = {};
 for (const g of ['male1', 'male2', 'male11', 'male22', 'female1', 'female2', 'female11', 'female22']) {

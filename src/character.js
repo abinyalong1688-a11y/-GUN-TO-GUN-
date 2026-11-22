@@ -412,7 +412,7 @@ function buildMale(ctx){
   parts.armL.rotation.set(-.82,.35,.5);
 }
 
-/* ============ GLB path: AI-generated rigged body + procedural attachments ============ */
+/* ============ GLB path: rigged body + procedural attachments ============ */
 /* Same contract as buildOperatorMesh: {group,parts,materials,dispose}.
    The rigged body plugs into the parts contract (limb nodes are Object3Ds; rig.js poses them in
    character space). Rifle / headgear / extras stay procedural (C1 silhouette coding + rifle drop
@@ -506,7 +506,7 @@ function addExtrasGLTF(M,def,bones){
   }
 }
 
-/* Faction / camo on a single baked albedo: the Tripo outfit is neutral grey (light fabric, dark
+/* Faction / camo on a single baked albedo: the outfit is neutral grey (light fabric, dark
    gear) while skin is saturated, so low-saturation texels are re-shaded with the operator palette
    (light → jacket, dark → armour) and everything saturated (skin, eyes) is left alone. */
 function applyFactionTint(mat,P){

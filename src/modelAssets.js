@@ -1,4 +1,4 @@
-// modelAssets.js — GLB character asset pipeline (AI-generated rigged models):
+// modelAssets.js — GLB character asset pipeline (rigged models):
 //   preloadCharacters()  start loading male/female GLB once at boot; embedded data URLs in
 //                        the single-file build (window.__GTG_GLB__), relative fetch in dev.
 //   cloneCharacter(g)    instance a normalized template via SkeletonUtils.clone, with
@@ -7,12 +7,12 @@
 //                        dispatches to the GLB builder; any failure silently falls back to
 //                        the procedural builder (?model=proc forces it, ?model=gltf forces on).
 //
-// Rig requirements (documented in scripts/make_test_rig.mjs, same contract as Tripo output):
+// Rig requirements (documented in scripts/make_test_rig.mjs, same contract as the production rigs):
 //   · humanoid skeleton with recognisable bone keywords (hips / spine / chest / neck / head /
 //     upperArm · lowerArm · hand · thigh · calf · foot + optional ponytail), any naming style
 //     (upperArm_L, LeftArm, arm_l, mixamorig:LeftArm …) — resolved by ALIAS matching below;
 //   · any bind orientation / scale — corrected at load: model is re-oriented to face +Z,
-//     rescaled to the operator height, feet placed on y=0 (per guizang skill: measure, never assume).
+//     rescaled to the operator height, feet placed on y=0 (measure, never assume).
 // Each mapped bone carries userData.rig (rest quaternion + character-space axes in its local
 // frame) — rig.js stacks animation deltas on it, whatever the rig's local axis conventions.
 import * as THREE from 'three';
@@ -133,7 +133,7 @@ const SLOT_RULES=[
   {slot:'head', re:/head/},
   {slot:'neck', re:/neck/},
   {slot:'forearm', re:/lowerarm|forearm|elbow/},
-  // clavicle before upperarm: Mixamo "LeftShoulder" / Tripo "L_Clavicle" are the collarbone —
+  // clavicle before upperarm: "LeftShoulder" / "L_Clavicle" style names are the collarbone —
   // animating it instead of the upper arm hunches the whole shoulder
   {slot:'clavicle', re:/clavicle|shoulder|collar/},
   {slot:'upperarm', re:/upperarm|uparm|arm/},
@@ -158,14 +158,14 @@ function boneSide(name){
   // suffix tokens first (lowerarm_r must not be caught by the /^l/ prefix below)
   if(/(^|[^a-z])l($|[0-9])/.test(n)||/l$/.test(n))return -1;
   if(/(^|[^a-z])r($|[0-9])/.test(n)||/r$/.test(n))return 1;
-  // Tripo game-rig prefixes: L_Thigh → lthigh
+  // game-rig prefixes: L_Thigh → lthigh
   if(/^l/.test(n))return -1;
   if(/^r/.test(n))return 1;
   return 0;
 }
 
 /* ---- per-gender rig profile ----
-   Tripo rigs face +X natively → yawFix turns them to the game's +Z (the thigh heuristic misfires
+   The production rigs face +X natively → yawFix turns them to the game's +Z (the thigh heuristic misfires
    on staggered stances). Everything below is CHARACTER space (+Z forward, anatomical right hand
    on -X) and solved by two-bone IK at load time, so the pose is independent of every bone's local
    axis convention. headDY/headR are only the fallback when the skull can't be measured.
@@ -265,7 +265,7 @@ function measureHead(scene,head){
    +Y up, +Z face. Measured head geometry in that space (male / female): hair-top +.088 / +.085,
    back of skull −.12 / −.20, face front +.09, half-width .095 / .092 incl. ears; the skull widens
    to .09 at y≈−.03 (ear line) and the brow sits at y≈+.03, z≈+.075.
-   Tripo helmets face +X (NVG shroud + face opening verified in orthographic renders), so yaw
+   The helmet props face +X (NVG shroud + face opening verified in orthographic renders), so yaw
    −90° turns them to +Z; the prop is then scaled so its shell half-width is `halfW` and placed
    so its crown sits at `top`, shifted by `cz` front/back. Values below were fitted against the
    head-skin vertex cloud (sweep harness): the shell must clear the hair by a few mm at the
@@ -305,7 +305,7 @@ function normalizeTemplate(key,scene){
   scene.updateMatrixWorld(true);
 
   // Skeleton nodes: skin joints AND their non-joint ancestors. three.js only flags glTF skin joints
-  // as Bones — Tripo's real limb nodes (R_Thigh / R_Calf / R_Upperarm / R_Forearm) aren't joints,
+  // as Bones — the rig's real limb nodes (R_Thigh / R_Calf / R_Upperarm / R_Forearm) aren't joints,
   // only their Twist children are. Mapping the twists leaves the child chain behind (rotating
   // ForearmTwist01 bends the sleeve while R_Hand — a child of R_Forearm — stays put: floating hands).
   const inRig=new Set();
