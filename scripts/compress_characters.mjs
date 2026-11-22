@@ -1,15 +1,15 @@
 // compress_characters.mjs — character asset pipeline:
-//   assets_raw/characters/*.glb  (originals from Tripo / make_test_rig — source of truth)
+//   assets_raw/characters/*.glb  (source models / make_test_rig dummies — source of truth)
 //     → this script → assets/characters/*.glb  (compressed, what build.mjs embeds)
 //
-// SKINNED-CHARACTER RULE (the expensive lesson from guizang skill packaging.md):
+// SKINNED-CHARACTER RULE (an expensive packaging lesson):
 //   reorder + EXT_meshopt_compression, NEVER quantize. Quantizing a skinned mesh puts the
 //   dequantization scale on the bone nodes; baked animation tracks carry scale=1 and squash
 //   characters mid-run ("dev fine, packaged half-size"). Costs ~30-40% size vs quantized,
 //   but behaviour is identical to the raw file.
 //
 // RIGID PROPS (helmet_m / helmet_f): same meshopt path, plus textures downscaled 2048² → 512²
-// (Tripo ships three 2048² maps ≈ 1.9 MB per helmet; on a ~25 cm head 512² is already more
+// (the source helmets ship three 2048² maps ≈ 1.9 MB each; on a ~25 cm head 512² is already more
 // than the screen shows, and every byte is base64-embedded in the single-file build).
 //
 // Run: node scripts/compress_characters.mjs             (all)
@@ -41,6 +41,14 @@ for(const name of NAMES){
   const src=join(SRC,`${name}.glb`);
   const before=readFileSync(src).length;
   const doc=await io.read(src);
+  // keep vendor provenance out of the shipped assets: neutral generator, no source extras,
+  // no vendor-prefixed node/material/mesh names
+  const root=doc.getRoot();
+  root.setGenerator('gun-to-gun asset pipeline');
+  root.setExtras({});
+  for(const o of [...root.listNodes(),...root.listMaterials(),...root.listMeshes()]){
+    const n=o.getName();if(/^tripo_/i.test(n))o.setName(n.replace(/^tripo_/i,''));
+  }
   await doc.transform(
     dedup(),                                   // duplicate accessors/materials → shared
     weld(),                                    // merge duplicate vertices → better compression
