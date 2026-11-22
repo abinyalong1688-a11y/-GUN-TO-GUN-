@@ -1443,16 +1443,16 @@ class Game{
       this.player.pitch=0;this.player.update(.016,this.input,this.keys,this.time,this.audio);
     });
 
-    await run('operators-4',()=>{
+    await run('operators-8',()=>{
       this.ui.sel.operator='frost';this.ui.sel.hero='ct';this.ui.sel.primary='m4a4';this.ui.sel.mode='dm';
       this.startGame();
       const ids=this.heroes.list.map(h=>h.opId);
-      assert(ids.length===5,'deathmatch should have 5 bots, got '+ids.length);
+      assert(ids.length===7,'deathmatch should have 7 bots (4v4 with the player), got '+ids.length);
       assert(!ids.includes('frost'),'bots must not duplicate the player operator');
       const names=this.heroes.list.map(h=>h.name);
       assert(new Set(names).size===names.length,'cycled operators need distinct names: '+names.join(','));
-      assert(this.heroes.list.filter(h=>h.team==='A').length===2,'there should be 2 teammates');
-      assert(this.heroes.list.filter(h=>h.team==='B').length===3,'there should be 3 enemies');
+      assert(this.heroes.list.filter(h=>h.team==='A').length===3,'there should be 3 teammates');
+      assert(this.heroes.list.filter(h=>h.team==='B').length===4,'there should be 4 enemies');
       for(const h of this.heroes.list){
         assert(h.materials.length<=13,'each character should have ≤13 materials (GLB: body + used attachments), got '+h.materials.length);
         assert(h.parts.head&&h.parts.gunTip,'character parts should be complete');

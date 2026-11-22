@@ -132,7 +132,7 @@ const STR={
     callsign:'CALLSIGN',
     name_ph:'Enter callsign (default Guard-07)',
     default_name:'Guard-07',
-    sec_role:'OPERATOR · NOVA vs ROGUE · 4 operators',
+    sec_role:'OPERATOR · NOVA vs ROGUE · 8 operators',
     sec_primary:'PRIMARY (all 4 carried · press 1 to cycle)',
     sec_map:'MAP',
     sec_mode:'MODE',

@@ -619,8 +619,8 @@ export class HeroTeam{
     // keep repeated operators distinguishable); match size stays 2 teammates vs 3 enemies.
     const cycle=(arr,n)=>arr.length?Array.from({length:n},(_,i)=>arr[i%arr.length]):[];
     const ownPool=byFaction(pf).filter(o=>o.id!==playerOpId);
-    const own=cycle(ownPool.length?ownPool:byFaction(pf),2);
-    const foe=cycle(byFaction(ef),3);
+    const own=cycle(ownPool.length?ownPool:byFaction(pf),3);
+    const foe=cycle(byFaction(ef),4);
     const used=new Set([playerName]);
     const nm=o=>{
       let n=isEN()?o.name.en:o.name.zh;

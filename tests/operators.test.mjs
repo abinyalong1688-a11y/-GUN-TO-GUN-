@@ -6,8 +6,11 @@ import {WEAPON_DEFS} from '../src/weapon.js';
 
 test('operator count and faction split',()=>{
   assert.equal(OPERATORS.length,8);
-  assert.equal(byFaction('ct').length,4);
-  assert.equal(byFaction('t').length,4);
+  for(const f of ['ct','t']){
+    const ops=byFaction(f);
+    assert.equal(ops.length,4,f+' should have 4 operators');
+    assert.deepEqual(ops.map(o=>o.gender).sort(),['f','f','m','m'],f+' should be two males + two females');
+  }
 });
 
 test('operator ids are unique and the default operator exists',()=>{
