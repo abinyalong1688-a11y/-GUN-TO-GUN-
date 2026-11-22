@@ -432,19 +432,42 @@ const _wp=o=>o.getWorldPosition(new THREE.Vector3());
 /* Rifle at the profile's character-space mount (the IK hold pose put the trigger hand on its
    pistol grip and the support hand on its handguard), parented to the trigger hand so recoil /
    reload arm layers carry it; barrel straight down character +Z */
+/* Procedural grip fingers: the baked hands are flat open palms (the 32-joint rig has no finger
+   bones), so finger cylinders are added ON the rifle itself — wrapping the pistol grip and the
+   handguard in front of the palms. Rifle-local space → they follow recoil / lag / rifle drop.
+   Cylinders run along rifle-local X: the middle hides inside the gun, the ends read as knuckles. */
+function addGripFingers(rifle,M){
+  const g=M.gloveDark;
+  const F=(y,z,len)=>{
+    const m=new THREE.Mesh(cyl(.011,.011,len,8),g);
+    m.position.set(0,y,z);
+    m.rotation.z=Math.PI/2;
+    rifle.add(m);
+    return m;
+  };
+  // trigger-hand fingers stacked down the pistol grip (grip box spans y −.125…−.025)
+  for(let i=0;i<4;i++)F(-.112+i*.022,.02,.055);
+  // thumb along the grip's back edge
+  F(-.03,-.005,.042).rotation.x=Math.PI/2;
+  // support-hand fingers curled up under the handguard
+  for(let i=0;i<4;i++)F(-.034-i*.012,.14,.062);
+}
 function mountRifleTo(group,parts,bones,M,def,profile){
   const rifle=makeRifle(def.rifle,M);
   const sc=profile.rifle.scale;
   const pos=new THREE.Vector3(...profile.rifle.pos);
   group.updateMatrixWorld(true);
   if(bones.handR){
-    attachAt(bones.handR,rifle.group,pos);
+    // muzzle up a touch: patrol-ready carry (pitch about character X)
+    const q=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0),-.14);
+    attachAt(bones.handR,rifle.group,pos,q);
     rifle.group.scale.multiplyScalar(sc);
   }else{
     rifle.group.position.copy(pos);
     rifle.group.scale.setScalar(sc);
     group.add(rifle.group);
   }
+  addGripFingers(rifle.group,M);
   parts.rifle=rifle.group;
   const gunTip=new THREE.Object3D();
   gunTip.position.set(0,.02,rifle.tipZ);

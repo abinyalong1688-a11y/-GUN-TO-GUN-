@@ -202,13 +202,13 @@ function boneSide(name){
    handguard. */
 const HOLD={
   poleR:[-.6,-1,-.25],poleL:[.55,-1,-.1],       // elbows down and out
-  palmR:[1,-.15,0],palmL:[-.35,1,0],
+  palmR:[1,-.15,0],palmL:[-1,.2,.3],
 };
 const mkProfile=(height,headDY,headR,rifleScale)=>{
-  const k=height/1.8,pos=[-.10*k,1.20*k,.16*k];
+  const k=height/1.8,pos=[-.10*k,1.28*k,.16*k];
   const at=(x,y,z)=>[pos[0]+x*rifleScale,pos[1]+y*rifleScale,pos[2]+z*rifleScale];
   return {height,headDY,headR,yawFix:-Math.PI/2,
-    hold:{...HOLD,handR:at(-.03,-.075,.02),handL:at(0,-.07,.26),palmLen:.07*k},
+    hold:{...HOLD,handR:at(-.03,-.03,-.07),handL:at(0,-.005,.16),palmLen:.07*k},
     rifle:{scale:rifleScale,pos}};
 };
 const PROFILES={
