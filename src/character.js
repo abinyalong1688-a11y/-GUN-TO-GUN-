@@ -227,6 +227,7 @@ function makeRifle(kind,M){
   let first=true;
   // Only the receiver (first piece) casts a shadow; the rest are detail meshes
   const B=(...a)=>{const m=first?mesh(g,...a):detail(g,...a);first=false;return m;};
+  let mag=null;
   const dark=M.gunDark,poly=M.gunPoly,wood=M.gunWood;
   let tipZ=.44;
   if(kind==='ak47'){
@@ -237,7 +238,7 @@ function makeRifle(kind,M){
     B(cyl(.009,.009,.22,10),dark,0,.02,-.47,Math.PI/2);
     B(box(.014,.055,.012),dark,0,.052,-.55);
     B(box(.04,.06,.15),wood,0,-.012,-.30);
-    B(box(.028,.11,.055),dark,0,-.078,.02,.35);
+    mag=B(box(.028,.11,.055),dark,0,-.078,.02,.35);
     B(box(.026,.02,.045),dark,0,.02,-.575);
     tipZ=.60;
   }else if(kind==='aug'){
@@ -246,7 +247,7 @@ function makeRifle(kind,M){
     B(box(.046,.06,.12),dark,0,.01,.18);
     B(cyl(.012,.012,.16,10),dark,0,.018,.27,Math.PI/2);
     B(box(.045,.05,.12),poly,0,-.005,-.26);
-    B(box(.03,.11,.055),dark,0,-.078,.03,.18);
+    mag=B(box(.03,.11,.055),dark,0,-.078,.03,.18);
     B(box(.04,.04,.16),dark,0,.075,-.01);
     B(cyl(.024,.024,.13,12),dark,0,.10,-.01,Math.PI/2);
     B(cyl(.032,.032,.02,12),dark,0,.10,.07,Math.PI/2);
@@ -256,7 +257,7 @@ function makeRifle(kind,M){
     B(box(.05,.05,.16),poly,0,.002,-.22);
     B(cyl(.011,.011,.20,10),dark,0,.018,-.42,Math.PI/2);
     B(box(.042,.055,.14),poly,0,-.01,-.30);
-    B(box(.028,.11,.055),dark,0,-.078,.02,.3);
+    mag=B(box(.028,.11,.055),dark,0,-.078,.02,.3);
     B(box(.04,.04,.15),dark,0,.072,-.02);
     B(cyl(.022,.022,.12,12),dark,0,.098,-.02,Math.PI/2);
     B(box(.016,.06,.012),dark,0,.05,-.52);
@@ -266,7 +267,7 @@ function makeRifle(kind,M){
     B(box(.05,.075,.24),dark,0,.005,-.02);
     B(cyl(.026,.026,.14,12),poly,0,.006,.15,Math.PI/2);
     B(cyl(.01,.01,.10,10),dark,0,.018,.27,Math.PI/2);
-    B(box(.028,.13,.045),dark,0,-.085,.02,.05);
+    mag=B(box(.028,.13,.045),dark,0,-.085,.02,.05);
     B(box(.038,.05,.12),poly,0,-.006,-.22);
     B(box(.03,.05,.10),poly,0,.005,-.30);
     B(box(.014,.045,.012),dark,0,.045,.32);
@@ -277,7 +278,7 @@ function makeRifle(kind,M){
     B(cyl(.014,.014,.38,12),dark,0,.018,.30,Math.PI/2);
     B(cyl(.018,.018,.06,12),dark,0,.018,.50,Math.PI/2);
     B(box(.05,.075,.16),poly,0,.0,-.28);
-    B(box(.034,.10,.055),dark,0,-.075,.0);
+    mag=B(box(.034,.10,.055),dark,0,-.075,.0);
     B(box(.03,.02,.18),poly,0,.085,-.02);
     B(cyl(.028,.028,.16,12),dark,0,.115,-.02,Math.PI/2);
     B(cyl(.036,.036,.025,12),dark,0,.115,.065,Math.PI/2);
@@ -291,7 +292,7 @@ function makeRifle(kind,M){
     B(cyl(.011,.011,.18,10),dark,0,.018,.28,Math.PI/2);
     B(box(.014,.05,.012),dark,0,.045,.34);
     B(box(.04,.06,.13),poly,0,-.008,-.24);
-    B(box(.028,.10,.05),dark,0,-.075,.02,.15);
+    mag=B(box(.028,.10,.05),dark,0,-.075,.02,.15);
     B(box(.035,.018,.12),dark,0,.058,-.02);
     tipZ=.44;
   }
@@ -301,7 +302,7 @@ function makeRifle(kind,M){
     const flip=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),Math.PI);
     for(const c of g.children){c.position.applyQuaternion(flip);c.quaternion.premultiply(flip);}
   }
-  return {group:g,tipZ};
+  return {group:g,tipZ,mag};
 }
 
 function mountRifle(group,parts,M,def,{y,scale=1}){
@@ -469,6 +470,7 @@ function mountRifleTo(group,parts,bones,M,def,profile){
   }
   addGripFingers(rifle.group,M);
   parts.rifle=rifle.group;
+  if(rifle.mag){rifle.group.userData.mag=rifle.mag;rifle.group.userData.magBase={y:rifle.mag.position.y,rx:rifle.mag.rotation.x};}
   const gunTip=new THREE.Object3D();
   gunTip.position.set(0,.02,rifle.tipZ);
   rifle.group.add(gunTip);parts.gunTip=gunTip;

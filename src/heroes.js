@@ -23,7 +23,7 @@ const BOT_PROFILE={
 };
 
 let BID=0;
-const _Y=new THREE.Vector3(0,1,0),_qLag=new THREE.Quaternion();
+const _Y=new THREE.Vector3(0,1,0),_Zc=new THREE.Vector3(0,0,1),_qLag=new THREE.Quaternion(),_qCant=new THREE.Quaternion();
 
 /* M2-A5: name tag health bar — both geometries shared at module level, materials per bot */
 const TAG_BG_GEO=new THREE.PlaneGeometry(.62,.075);
@@ -550,18 +550,28 @@ export class HeroBot{
     const k=Math.min(1,8*dt);
     this._headPitch+=(-this.aimPitch*.5-this._headPitch)*k;
     this._torsoYaw+=(this.aimYaw*.3-this._torsoYaw)*k;
-    if(this.parts.head)poseRot(this.parts.head,this._headPitch);
+    // Reload choreography phases (0 = just started, 1 = done):
+    //   reach the chest rig → bring the mag up to the well → slap it home → settle
+    let aR=this.recoilKick*.35,aL=this.recoilKick*.12;
+    let magOut=0,reloadCant=0,lookDown=0;
+    if(this.reloadT>0){
+      const ph=1-this.reloadT/1.2;
+      const ss=p=>{p=Math.max(0,Math.min(1,p));return p*p*(3-2*p);};
+      const bell=p=>Math.sin(Math.max(0,Math.min(1,p))*Math.PI);
+      const reach=ss(Math.min(1,ph/.3));                 // drop to the chest rig by 30 %
+      const lift=ss(Math.max(0,Math.min(1,(ph-.5)/.3))); // swing up to the mag well 50-80 %
+      aL=+.72*reach-.87*lift;
+      aR=+.2*bell(Math.max(0,Math.min(1,(ph-.72)/.28))); // trigger hand presses the mag home
+      reloadCant=-.38*bell(Math.min(1,ph/.9));           // the rifle rolls toward the support side
+      magOut=ss(Math.min(1,ph/.42))-ss(Math.max(0,Math.min(1,(ph-.5)/.35)));
+      lookDown=.32*bell(Math.min(1,Math.max(0,(ph-.1)/.8)));
+    }
+    if(this.parts.head)poseRot(this.parts.head,this._headPitch+lookDown);
     if(this.torso){
       // Breathing rise + locomotion forward lean + idle sway
       posePos(this.torso,0,Math.sin(time*1.8)*.003,0);
       const lean=this.moveK*Math.min(.09,Math.max(0,(spd-1.2)*.014));
       poseRot(this.torso,lean+idleK*Math.sin(time*.55+1.1)*.02,this._torsoYaw);
-    }
-    // Rifle-hold base pose + recoil / reload layers
-    let aR=this.recoilKick*.35,aL=this.recoilKick*.12;
-    if(this.reloadT>0){
-      const a=Math.sin((1-this.reloadT/1.2)*Math.PI)*.8;
-      aL=-a;aR=-a*.35;
     }
     if(this.armR)poseRot(this.armR,aR);
     if(this.armL)poseRot(this.armL,aL);
@@ -574,7 +584,11 @@ export class HeroBot{
     this._rifleLag+=(Math.max(-4,Math.min(4,yawV))*.05-this._rifleLag)*Math.min(1,10*dt);
     const r=this.parts.rifle;
     if(r&&this._rifleBaseQ&&!this.rifleFalling&&r.parent!==this.scene)
-      r.quaternion.copy(this._rifleBaseQ).multiply(_qLag.setFromAxisAngle(_Y,this._rifleLag));
+      r.quaternion.copy(this._rifleBaseQ).multiply(_qLag.setFromAxisAngle(_Y,this._rifleLag))
+        .multiply(_qCant.setFromAxisAngle(_Zc,reloadCant));
+    // The magazine slides out and home with the support hand (tracked mag on the procedural rifle)
+    const mag=r&&r.userData.mag;
+    if(mag){mag.position.y=r.userData.magBase.y-.075*magOut;mag.rotation.x=r.userData.magBase.rx+.45*magOut;}
     // Ponytail follow-through (approximate hair physics)
     if(this.pony)poseRot(this.pony,-.15+Math.sin(time*1.7)*.05+(moving?swing*.18:0),0,Math.sin(time*1.3)*.06);
     this.group.rotation.y=this.yaw;

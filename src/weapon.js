@@ -319,6 +319,11 @@ export class Weapon{
      so it inherits recoil / ADS / reload / switch / knife animations. tip = grip point, entry = off-screen entry point. */
   _arm(g,tip,entry,r=.034,opts={}){
     const M=this.assets.mats;
+    // The support arm gets its own group (userData.armSupport) so the reload choreography can
+    // drop it away from the handguard and bring it back to the mag well
+    const sup=opts.support?new THREE.Group():null;
+    if(sup)g.add(sup);
+    const add=o=>(sup||g).add(o);
     const dir=entry.clone().sub(tip);
     const len=dir.length();
     const dirN=dir.clone().normalize();
@@ -327,13 +332,13 @@ export class Weapon{
     const fore=new THREE.Mesh(new THREE.CylinderGeometry(r*.78,r,len,12),skinMat);
     fore.position.copy(tip).addScaledVector(dir,.45);
     fore.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),dirN);
-    g.add(fore);
+    add(fore);
     const sleeveMat=M.armSleeve.clone();
     this._armSleeves.push(sleeveMat);
     const slv=new THREE.Mesh(new THREE.CylinderGeometry(r*1.1,r*1.3,Math.min(.14,len*.45),12),sleeveMat);
     slv.position.copy(tip).addScaledVector(dir,.82);
     slv.quaternion.copy(fore.quaternion);
-    g.add(slv);
+    add(slv);
     /* Tactical glove: palm + four wrapped fingers in a row + thumb (group space: knuckles toward -z around the front of the grip) */
     const glove=M.gloveDark.clone();
     this._armGloves.push(glove);
@@ -354,43 +359,46 @@ export class Weapon{
     fist.position.copy(tip);
     fist.position.z+=r*.4; // move the fist back to show the knuckles instead of burying them in the grip
     fist.rotation.x=opts.tilt!=null?opts.tilt:.15;
-    g.add(fist);
+    add(fist);
+    if(sup)g.userData.armSupport=sup;
   }
   _addFPArms(){
+    // Per-model mag baselines for the reload choreography (continuous slide, not threshold nudges)
+    for(const id in this.models){const ud=this.models[id].userData;if(ud.mag)ud.magBase={y:ud.mag.position.y,rz:ud.mag.rotation.z};}
     // Rifles: right hand on the grip + left hand over the handguard (both gloved; cuffs stay inside the frame edge)
     for(const id of['ak47','m4a4']){
       const g=this.models[id];
       this._arm(g,new THREE.Vector3(.012,-.075,.08),new THREE.Vector3(.13,-.25,.18),.036,{tilt:.12,side:-1});
-      this._arm(g,new THREE.Vector3(-.005,-.012,-.24),new THREE.Vector3(-.14,-.22,-.04),.038,{tilt:1.0,side:1});
+      this._arm(g,new THREE.Vector3(-.005,-.012,-.24),new THREE.Vector3(-.14,-.22,-.04),.038,{tilt:1.0,side:1,support:true});
     }
     // AUG: grip + vertical foregrip
     {
       const ag=this.models.aug;
       this._arm(ag,new THREE.Vector3(.01,-.075,.05),new THREE.Vector3(.13,-.25,.18),.036,{tilt:.12,side:-1});
-      this._arm(ag,new THREE.Vector3(-.005,-.062,-.16),new THREE.Vector3(-.13,-.22,-.02),.037,{tilt:.95,side:1});
+      this._arm(ag,new THREE.Vector3(-.005,-.062,-.16),new THREE.Vector3(-.13,-.22,-.02),.037,{tilt:.95,side:1,support:true});
     }
     // SG 553: grip + foregrip
     {
       const sg=this.models.sg553;
       this._arm(sg,new THREE.Vector3(.01,-.078,.045),new THREE.Vector3(.13,-.25,.18),.036,{tilt:.12,side:-1});
-      this._arm(sg,new THREE.Vector3(-.005,-.062,-.145),new THREE.Vector3(-.13,-.22,-.02),.037,{tilt:.95,side:1});
+      this._arm(sg,new THREE.Vector3(-.005,-.062,-.145),new THREE.Vector3(-.13,-.22,-.02),.037,{tilt:.95,side:1,support:true});
     }
     // Longbow: right hand on the grip + left hand under the front of the handguard
     {
       const aw=this.models.awp;
       this._arm(aw,new THREE.Vector3(.012,-.08,.06),new THREE.Vector3(.13,-.25,.18),.035,{tilt:.12,side:-1});
-      this._arm(aw,new THREE.Vector3(-.008,-.024,-.2),new THREE.Vector3(-.14,-.24,-.04),.038,{tilt:.95,side:1});
+      this._arm(aw,new THREE.Vector3(-.008,-.024,-.2),new THREE.Vector3(-.14,-.24,-.04),.038,{tilt:.95,side:1,support:true});
     }
     // MP5: right hand on the grip + left hand under the handguard
     {
       const m5=this.models.mp5;
       this._arm(m5,new THREE.Vector3(.01,-.072,.05),new THREE.Vector3(.13,-.25,.18),.035,{tilt:.12,side:-1});
-      this._arm(m5,new THREE.Vector3(-.008,-.058,-.18),new THREE.Vector3(-.13,-.22,-.02),.037,{tilt:.9,side:1});
+      this._arm(m5,new THREE.Vector3(-.008,-.058,-.18),new THREE.Vector3(-.13,-.22,-.02),.037,{tilt:.9,side:1,support:true});
     }
     // Desert Eagle: two-handed grip
     const dg=this.models.deagle;
     this._arm(dg,new THREE.Vector3(.01,-.075,.06),new THREE.Vector3(.13,-.24,.26),.032,{tilt:.12,side:-1});
-    this._arm(dg,new THREE.Vector3(.045,-.058,.02),new THREE.Vector3(-.12,-.22,.14),.03,{tilt:.5,side:1});
+    this._arm(dg,new THREE.Vector3(.045,-.058,.02),new THREE.Vector3(-.12,-.22,.14),.03,{tilt:.5,side:1,support:true});
     // Knife: single-handed reverse grip
     this._arm(this.models.knife,new THREE.Vector3(0,-.045,.05),new THREE.Vector3(.13,-.22,.24),.033,{tilt:.45,side:-1});
   }
@@ -548,8 +556,16 @@ export class Weapon{
     if(this.reloading){
       this.reloadT+=dt;
       const ph=this.reloadT/rdur;
-      if(ph>.12&&this._reloadSnd===0){this.audio.reload(0);this._reloadSnd=1;this.models[d.id].userData.mag.position.y-=.05;this.models[d.id].userData.mag.rotation.z=.3;}
-      if(ph>.5&&this._reloadSnd===1){this.audio.reload(1);this._reloadSnd=2;this.models[d.id].userData.mag.position.y+=.05;this.models[d.id].userData.mag.rotation.z=0;}
+      const ss=p=>{p=Math.max(0,Math.min(1,p));return p*p*(3-2*p);};
+      // The magazine slides out and home continuously (was two discrete threshold nudges)
+      const drop=ss(Math.min(1,ph/.3))-ss(Math.max(0,Math.min(1,(ph-.55)/.3)));
+      const ud=this.models[d.id].userData;
+      if(ud.mag&&ud.magBase){ud.mag.position.y=ud.magBase.y-.075*drop;ud.mag.rotation.z=ud.magBase.rz+.36*drop;}
+      // The support hand drops away with the mag and comes back up to the well
+      const sup=ud.armSupport;
+      if(sup){sup.position.y=-.105*drop;sup.position.z=.055*drop;sup.rotation.z=-.26*drop;}
+      if(ph>.12&&this._reloadSnd===0){this.audio.reload(0);this._reloadSnd=1;}
+      if(ph>.5&&this._reloadSnd===1){this.audio.reload(1);this._reloadSnd=2;}
       if(ph>.82&&this._reloadSnd===2){this.audio.reload(2);this._reloadSnd=3;}
       this.ui.reloadRing(Math.min(1,ph));
       if(this.reloadT>=rdur){this.finishReload();this.ui.reloadRing(-1);}
@@ -645,8 +661,12 @@ export class Weapon{
     if(slide)slide.position.z=slide.userData.z0+this._slide*.06;
     if(this.reloading){
       const ph=this.reloadT/rdur;
-      rot.z+=Math.sin(ph*Math.PI)*.5;
-      rot.x+=Math.sin(ph*Math.PI*2)*.06;
+      const bell=p=>Math.sin(Math.max(0,Math.min(1,p))*Math.PI);
+      const slap=bell(Math.max(0,Math.min(1,(ph-.78)/.22)));
+      rot.z+=bell(ph)*.22;            // cant toward the mag well
+      rot.y+=bell(ph)*.08;            // yaw presenting the well
+      rot.x+=bell(ph)*.07+slap*.09;   // tip up + dip on the slap
+      pos.y-=slap*.014;               // the slap jolts the gun down a touch
     }
     // Knife swing animation
     if(this.swingT>0){
