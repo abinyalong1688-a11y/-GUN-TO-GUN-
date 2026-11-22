@@ -295,6 +295,12 @@ function makeRifle(kind,M){
     B(box(.035,.018,.12),dark,0,.058,-.02);
     tipZ=.44;
   }
+  // The AK47 / SG553 pieces are modelled muzzle-toward -Z while every other rifle (and gunTip)
+  // uses +Z — turn them around so the barrel, muzzle flash and tracer origin agree
+  if(kind==='ak47'||kind==='sg553'){
+    const flip=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),Math.PI);
+    for(const c of g.children){c.position.applyQuaternion(flip);c.quaternion.premultiply(flip);}
+  }
   return {group:g,tipZ};
 }
 
@@ -407,38 +413,36 @@ function buildMale(ctx){
 
 /* ============ GLB path: AI-generated rigged body + procedural attachments ============ */
 /* Same contract as buildOperatorMesh: {group,parts,materials,dispose}.
-   The skinned body (bones ARE Object3Ds) plugs straight into the parts contract — HeroBot
-   animates bones exactly like the procedural Groups; rifle / headgear / extras stay procedural
-   (C1 silhouette coding + rifle drop physics), attached to the mapped bones. */
-/* Rifle mounted on the hand bone, but PLACED by auto-calibration from the rest-pose hands:
-   grip = midpoint between the hands biased toward the trigger hand, barrel = character forward.
-   Works for any bind pose (shooting stance / A-pose) without hand-tuned offsets. */
-function mountRifleTo(group,parts,bones,M,def,profile,charQuat){
+   The rigged body plugs into the parts contract (limb nodes are Object3Ds; rig.js poses them in
+   character space). Rifle / headgear / extras stay procedural (C1 silhouette coding + rifle drop
+   physics) and are attached to bones, but PLACED in character space — the bot group's frame,
+   +Z forward, anatomical right hand on -X — because rig bones carry arbitrary local frames. */
+const _ONE=new THREE.Vector3(1,1,1),_QID=new THREE.Quaternion();
+/* Parent `obj` to `bone` so that it ends up at character-space pos/quat (unit world scale) */
+function attachAt(bone,obj,pos,quat=_QID){
+  bone.updateWorldMatrix(true,false);
+  new THREE.Matrix4().copy(bone.matrixWorld).invert()
+    .multiply(new THREE.Matrix4().compose(pos,quat,_ONE))
+    .decompose(obj.position,obj.quaternion,obj.scale);
+  if(obj.parent!==bone)bone.add(obj);
+  return obj;
+}
+const _wp=o=>o.getWorldPosition(new THREE.Vector3());
+
+/* Rifle at the profile's character-space mount (the IK hold pose put the trigger hand on its
+   pistol grip and the support hand on its handguard), parented to the trigger hand so recoil /
+   reload arm layers carry it; barrel straight down character +Z */
+function mountRifleTo(group,parts,bones,M,def,profile){
   const rifle=makeRifle(def.rifle,M);
-  const hand=bones.handR;
-  if(hand&&bones.handL){
-    group.updateMatrixWorld(true);
-    const pR=new THREE.Vector3();hand.getWorldPosition(pR);
-    const pL=new THREE.Vector3();bones.handL.getWorldPosition(pL);
-    const mid=new THREE.Vector3().addVectors(pR,pL).multiplyScalar(.5);
-    const grip=new THREE.Vector3().lerpVectors(mid,pR,.35);
-    // Barrel (+Z of the rifle mesh) must point along the model's NATIVE forward (+X in
-    // orienter-local space): compose orienter's world quat with a +90° yaw
-    const qBarrel=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),Math.PI/2);
-    const qWorld=charQuat.clone().multiply(qBarrel);
-    const mWorld=new THREE.Matrix4().compose(grip,qWorld,new THREE.Vector3(1,1,1));
-    const local=new THREE.Matrix4().copy(hand.matrixWorld).invert().multiply(mWorld);
-    local.decompose(rifle.group.position,rifle.group.quaternion,new THREE.Vector3());
-    rifle.group.scale.setScalar(profile.rifle.scale);
-    hand.add(rifle.group);
-  }else if(hand){
-    rifle.group.position.set(...profile.rifle.pos);
-    rifle.group.rotation.set(...profile.rifle.rot);
-    rifle.group.scale.setScalar(profile.rifle.scale);
-    hand.add(rifle.group);
+  const sc=profile.rifle.scale;
+  const pos=new THREE.Vector3(...profile.rifle.pos);
+  group.updateMatrixWorld(true);
+  if(bones.handR){
+    attachAt(bones.handR,rifle.group,pos);
+    rifle.group.scale.multiplyScalar(sc);
   }else{
-    rifle.group.position.set(.10,1.20,.16);
-    rifle.group.scale.setScalar(profile.rifle.scale);
+    rifle.group.position.copy(pos);
+    rifle.group.scale.setScalar(sc);
     group.add(rifle.group);
   }
   parts.rifle=rifle.group;
@@ -446,81 +450,110 @@ function mountRifleTo(group,parts,bones,M,def,profile,charQuat){
   gunTip.position.set(0,.02,rifle.tipZ);
   rifle.group.add(gunTip);parts.gunTip=gunTip;
 }
-/* Silhouette extras in bone-local space (offsets differ from the procedural limb Groups).
-   Tripo twist bones run elbow→wrist with +Y toward the wrist, so the armband sits at +y mid-forearm */
-/* Silhouette extras placed in CHARACTER space: rig bones carry rotated rest frames (the
-   Armature node), so raw bone-local offsets land anywhere. boneAttach computes the bone-local
-   transform that yields the desired model-space position/orientation. */
-function boneAttach(bone,charQuat,offset){
-  bone.updateWorldMatrix(true,false);
-  const target=offset.clone().applyQuaternion(charQuat).add(bone.getWorldPosition(new THREE.Vector3()));
-  const local=new THREE.Matrix4().copy(bone.matrixWorld).invert()
-    .multiply(new THREE.Matrix4().compose(target,charQuat.clone(),new THREE.Vector3(1,1,1)));
-  return local;
-}
-function addExtrasGLTF(parts,M,def,bones,charQuat){
+
+/* Silhouette extras (C1) on the rig. Offsets mirror the procedural ones (whose "right" limbs sit
+   on +X) onto the anatomical sides of the rig. */
+function addExtrasGLTF(M,def,bones){
   const ex=def.extras||[];
   const V3=(x,y,z)=>new THREE.Vector3(x,y,z);
-  const fix=(bone,offset,mesh)=>{
-    if(!bone)return;
-    const p=new THREE.Vector3(),q=new THREE.Quaternion(),s=new THREE.Vector3();
-    boneAttach(bone,charQuat,offset).decompose(p,q,s);
-    mesh.position.copy(p);mesh.quaternion.copy(q);mesh.scale.copy(s);
-  };
+  const at=(bone,mesh,off)=>bone&&attachAt(bone,mesh,_wp(bone).add(off));
+  const lone=(g,m)=>new THREE.Mesh(g,m); // attachAt parents it; detail() would add it twice
   if(ex.includes('armband')){
-    // mid-forearm: interpolate between the forearm bone and the hand bone; boneAttach wants
-    // the DELTA from the bone origin, so subtract it before placing
-    const armPair=(fore,hand)=>{const a=new THREE.Vector3(),b=new THREE.Vector3();
-      fore.getWorldPosition(a);hand.getWorldPosition(b);
-      return a.lerp(b,.42).sub(a);};
-    for(const [arm,hand] of [[bones.foreR,bones.handR],[bones.foreL,bones.handL]])
-      fix(arm,armPair(arm,hand),detail(arm,cyl(.042,.042,.03,12),M.accent,0,0,0));
+    // sleeve band 40 % down the upper arm, ring axis along the (posed) arm
+    for(const [arm,fore] of [[bones.armR,bones.foreR],[bones.armL,bones.foreL]]){
+      if(!arm||!fore)continue;
+      const a=_wp(arm),b=_wp(fore);
+      const q=new THREE.Quaternion().setFromUnitVectors(V3(0,1,0),b.clone().sub(a).normalize());
+      attachAt(arm,lone(cyl(.047,.047,.034,12),M.accent),a.lerp(b,.4),q);
+    }
   }
   if(ex.includes('kneepads')){
-    for(const calf of [bones.calfL,bones.calfR])
-      fix(calf,V3(0,.02,.055),detail(calf,box(.1,.1,.06),M.armor,0,0,0));
+    for(const calf of [bones.calfL,bones.calfR])at(calf,lone(box(.1,.1,.06),M.armor),V3(0,-.03,.065));
   }
   if(ex.includes('holster')&&bones.legR){
-    fix(bones.legR,V3(.066,-.17,.02),detail(bones.legR,box(.06,.15,.05),M.glove,0,0,0));
-    fix(bones.legR,V3(.066,-.10,.02),detail(bones.legR,box(.05,.03,.05),M.gunDark,0,0,0));
+    at(bones.legR,lone(box(.06,.15,.05),M.glove),V3(-.11,-.19,.01));
+    at(bones.legR,lone(box(.05,.03,.05),M.gunDark),V3(-.11,-.12,.01));
   }
   if(ex.includes('backpack')&&bones.chest){
-    fix(bones.chest,V3(0,-.07,-.16),detail(bones.chest,box(.25,.3,.12),M.armor,0,0,0));
-    fix(bones.chest,V3(0,-.23,-.16),detail(bones.chest,box(.2,.08,.13),M.clothDark,0,0,0));
+    at(bones.chest,lone(box(.25,.3,.12),M.armor),V3(0,-.01,-.17));
+    at(bones.chest,lone(box(.2,.08,.13),M.clothDark),V3(0,-.17,-.175));
+    at(bones.chest,lone(box(.045,.12,.02),M.accent),V3(.075,-.03,-.235));
   }
 }
+
+/* Faction / camo on a single baked albedo: the Tripo outfit is neutral grey (light fabric, dark
+   gear) while skin is saturated, so low-saturation texels are re-shaded with the operator palette
+   (light → jacket, dark → armour) and everything saturated (skin, eyes) is left alone. */
+function applyFactionTint(mat,P){
+  if(!mat.map)return;
+  const u={
+    uJacket:{value:new THREE.Color(P.jacket)},
+    uArmor:{value:new THREE.Color(P.armor)},
+    uTintK:{value:.88},
+  };
+  mat.userData.tint=u;
+  mat.onBeforeCompile=sh=>{
+    Object.assign(sh.uniforms,u);
+    sh.fragmentShader='uniform vec3 uJacket;uniform vec3 uArmor;uniform float uTintK;\n'+sh.fragmentShader
+      .replace('#include <map_fragment>',`#include <map_fragment>
+      {
+        vec3 c=diffuseColor.rgb;
+        float mx=max(c.r,max(c.g,c.b)),mn=min(c.r,min(c.g,c.b));
+        float sat=(mx-mn)/max(mx,1e-3);
+        float m=1.0-smoothstep(.12,.30,sat);
+        float l=dot(c,vec3(.2126,.7152,.0722));
+        float w=smoothstep(.06,.22,l);
+        vec3 t=mix(uArmor*(l/.07),uJacket*(l/.36),w);
+        diffuseColor.rgb=mix(c,min(t,vec3(1.)),m*uTintK);
+      }`);
+  };
+  mat.customProgramCacheKey=()=>'gtg-faction-tint';
+  mat.needsUpdate=true;
+}
+
 export function buildOperatorMeshGLTF(assets,def,{camo='default'}={}){
   const inst=modelAssets.cloneCharacter(def.gender);
-  const {M}=makeMaterials(assets.mats,def,camo);
+  const {M,materials:attachMats}=makeMaterials(assets.mats,def,camo);
+  const P=paletteFor(def,camo);
+  for(const m of inst.materials)applyFactionTint(m,P);
   const group=inst.root,bones=inst.bones;
   const parts={
-    head:null,torso:null,armL:null,armR:null,legL:null,legR:null,
-    shinL:null,shinR:null,footL:null,footR:null,hips:null,pony:null,rifle:null,gunTip:null,
-    headY:inst.headY,nameTagAnchor:null,
+    head:bones.head,torso:bones.chest||bones.spine,armL:bones.armL,armR:bones.armR,
+    legL:bones.legL,legR:bones.legR,shinL:bones.calfL||null,shinR:bones.calfR||null,
+    footL:bones.footL||null,footR:bones.footR||null,hips:bones.hips||null,pony:bones.pony||null,
+    rifle:null,gunTip:null,headY:inst.headY,nameTagAnchor:null,
   };
-  parts.head=bones.head;parts.torso=bones.chest||bones.spine;
-  parts.hips=bones.hips||null;
-  parts.footL=bones.footL||null;parts.footR=bones.footR||null;
-  parts.armL=bones.armL;parts.armR=bones.armR;
-  parts.legL=bones.legL;parts.legR=bones.legR;
-  parts.shinL=bones.calfL;parts.shinR=bones.calfR;
-  parts.pony=bones.pony||null;
-  mountRifleTo(group,parts,bones,M,def,inst.profile,inst.charQuat);
+  mountRifleTo(group,parts,bones,M,def,inst.profile);
   if(bones.headAnchor){
-    // Headgear pieces are sized for the procedural skull (~.105 m deep); scale to the rig's
-    // actual head and pull face-front pieces back (real heads are ~half as deep).
-    // The real models' hair is baked into the mesh — no procedural hair fallback here.
-    const H=new THREE.Group();
-    H.scale.setScalar(inst.profile.headR?inst.profile.headR/.105:1);
-    bones.headAnchor.add(H);
-    makeHeadgear(H,M,def,def.gender==='f',.55);
+    // GLB helmet (pre-fitted to ANCHOR space by modelAssets.normalizeHelmet) goes straight on the
+    // anchor, NOT inside H: H carries the procedural skull's scale factor (headFit.scale ≈ .88) and
+    // would shrink the pre-fitted shell a second time. Its grey shell takes the faction armour tint
+    // like the body, so the C1 colour coding holds; materials join the lifecycle set below.
+    const helm=def.headgear==='helmet'?modelAssets.helmet(def.gender):null;
+    if(helm){
+      for(const m of helm.materials){applyFactionTint(m,P);inst.materials.push(m);}
+      helm.root.name='helmet';
+      bones.headAnchor.add(helm.root);
+    }else{
+      // Procedural headgear is built for the procedural skull (radius .105); the anchor sits at the
+      // measured skull centre in character orientation, so one uniform scale fits it to the real head.
+      // Hair is baked into the rig mesh.
+      const H=new THREE.Group();
+      H.scale.setScalar(inst.headFit?inst.headFit.scale:1);
+      bones.headAnchor.add(H);
+      makeHeadgear(H,M,def,def.gender==='f');
+    }
   }
-  addExtrasGLTF(parts,M,def,bones,inst.charQuat);
+  addExtrasGLTF(M,def,bones);
   const anchor=new THREE.Object3D();
   anchor.position.y=2.0;
   group.add(anchor);parts.nameTagAnchor=anchor;
-  // inst.materials are already per-instance clones (textures stay shared across characters)
-  const materials=inst.materials;
+  // Lifecycle set = rig body clones + the attachment materials actually used; drop the rest
+  // (skin/hair/jacket/pants clones exist only for the procedural body)
+  const used=new Set();
+  group.traverse(o=>{if(o.isMesh)(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>used.add(m));});
+  const materials=[...inst.materials];
+  for(const m of attachMats){used.has(m)?materials.push(m):m.dispose();}
   const dispose=()=>{for(const m of materials)m.dispose();};
   return {group,parts,materials,dispose};
 }

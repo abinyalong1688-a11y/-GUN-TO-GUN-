@@ -274,6 +274,7 @@ class Game{
     if(this.shotMode||this.portraitsMode){
       window.__GTG_DEBUG__=this;
       window.__modelAssets=modelAssets;
+      window.__GTG_OPS__=OPERATORS; // roster lineup captures (portraits.renderSheet)
     }
 
     this.clock=new THREE.Clock();
@@ -1134,12 +1135,7 @@ class Game{
     if(this.damageBoostT>0)this.damageBoostT=Math.max(0,this.damageBoostT-dt);
     if(this.empT>0)this.empT=Math.max(0,this.empT-dt);
     // M3-G5: radar (setting toggle + EMP jamming)
-    const rc=document.getElementById('radar');
-    if(rc){
-      const on=this.settings.get('radar')&&this.state==='playing';
-      rc.classList.toggle('hidden',!on);
-      if(on)this.radar.update(this.player,this.enemies.list,this.heroes.list,this.pickups,this.empT>0);
-    }
+    if(this._syncRadar())this.radar.update(this.player,this.enemies.list,this.heroes.list,this.pickups,this.empT>0);
     this.ui.update(dt,this.player.health,this.player.maxHealth);
     // M2-A6: low-health BGM tension (written only when the state flips, not scheduled every frame)
     if(this.state==='playing'){
@@ -1193,7 +1189,7 @@ class Game{
     return rows;
   }
 
-  /* S1.3: ?portraits=1 renders all 8 portraits and prints time / size */
+  /* S1.3: ?portraits=1 renders all operator portraits and prints time / size */
   _debugPortraits(){
     const t0=performance.now();
     const rows=OPERATORS.map(o=>{
@@ -1204,6 +1200,15 @@ class Game{
     console.table(rows);
     console.log(`[PORTRAITS] ${rows.filter(r=>r.ok).length}/${rows.length} in ${ms.toFixed(0)}ms`);
     return {ms,rows};
+  }
+
+  /* Radar visibility follows the setting + play state (per frame; e2e calls it directly) */
+  _syncRadar(){
+    const rc=document.getElementById('radar');
+    if(!rc)return false;
+    const on=this.settings.get('radar')&&this.state==='playing';
+    rc.classList.toggle('hidden',!on);
+    return on;
   }
 
   /* Dev: grab the composed frame as a PNG data URL (same-task readback — call from automation) */
@@ -1262,7 +1267,7 @@ class Game{
     this.fallbackAim=true;
     this.player.god=true;
     this.ui.killFeed('Snowwolf','Fox','AK-47',false);
-    this.ui.killFeed(this.playerName,'Vulture','M4A4',true);
+    this.ui.killFeed(this.playerName,'Raven','M4A4',true);
     this.ui.setDmScore(7,5,213);
   }
   /* M4-P3: spectator screenshot */
@@ -1302,6 +1307,10 @@ class Game{
      Result: window.__e2e = {pass, fail, results[]} */
   async e2e(){
     store.set('o07_tutorial_done','1'); // skip first-run onboarding under e2e
+    // Run against the default (GLB) character path: wait for the rigged models unless ?model=proc
+    // (bounded — a failed load falls back to procedural and the suite still runs)
+    if(!/model=proc/.test(location.search)&&!modelAssets.isReady())
+      await new Promise(r=>{modelAssets.onReady(r);setTimeout(r,15000);});
     const results=[];let pass=0;
     const run=async(name,fn)=>{
       try{await fn();results.push({name,ok:true});pass++;}
@@ -1434,17 +1443,18 @@ class Game{
       this.player.pitch=0;this.player.update(.016,this.input,this.keys,this.time,this.audio);
     });
 
-    await run('operators-8',()=>{
+    await run('operators-4',()=>{
       this.ui.sel.operator='frost';this.ui.sel.hero='ct';this.ui.sel.primary='m4a4';this.ui.sel.mode='dm';
       this.startGame();
       const ids=this.heroes.list.map(h=>h.opId);
       assert(ids.length===5,'deathmatch should have 5 bots, got '+ids.length);
-      assert(new Set(ids).size===5,'no operator should repeat within a match: '+ids.join(','));
       assert(!ids.includes('frost'),'bots must not duplicate the player operator');
+      const names=this.heroes.list.map(h=>h.name);
+      assert(new Set(names).size===names.length,'cycled operators need distinct names: '+names.join(','));
       assert(this.heroes.list.filter(h=>h.team==='A').length===2,'there should be 2 teammates');
       assert(this.heroes.list.filter(h=>h.team==='B').length===3,'there should be 3 enemies');
       for(const h of this.heroes.list){
-        assert(h.materials.length===12,'each character should have ≤12 materials, got '+h.materials.length);
+        assert(h.materials.length<=13,'each character should have ≤13 materials (GLB: body + used attachments), got '+h.materials.length);
         assert(h.parts.head&&h.parts.gunTip,'character parts should be complete');
       }
     });
@@ -1581,6 +1591,7 @@ class Game{
       assert(n2>100,'radar should still draw after rotating');
       this.radar.frame=0;
       this.radar.update(this.player,this.enemies.list,this.heroes.list,this.pickups,true);
+      this._syncRadar(); // the loop may have hidden it on menu frames before this test (e2e waits for the GLB rigs)
       assert(!document.getElementById('radar').classList.contains('hidden'),'radar element should exist');
     });
     await run('wave-20',()=>{
@@ -1718,13 +1729,13 @@ class Game{
       this.camera.position.set(0,1.6,8);
     });
     await run('mvp-card',()=>{
-      const op=byId('vulture');
+      const op=byId('raven');
       this.ui.showOver({title:'X',win:true,kicker:'X',mvp:null,
         stats:{time:60,waveLabel:'W',wave:'1',kills:10,critKills:2,hits:20,shots:30,score:100,best:0,bestCombo:2,
-          mvp:{name:'Vulture',op,kills:10,deaths:1}}});
+          mvp:{name:'Raven',op,kills:10,deaths:1}}});
       const el=document.getElementById('o-mvp');
       assert(!el.classList.contains('hidden'),'MVP card should show');
-      assert(el.textContent.includes('Vulture'),'MVP name should show');
+      assert(el.textContent.includes('Raven'),'MVP name should show');
       assert(el.querySelector('.mvp-face'),'MVP should have a portrait or the initial fallback');
       this.ui.showOnly(null);
     });
@@ -1811,11 +1822,11 @@ class Game{
       this.baseHFov=106;this._hfovCur=106;this._applyCameraState();
     });
     await run('operator-camo-persist',()=>{
-      this.ui.selectOperator('viper');
+      this.ui.selectOperator('fox');
       this.ui.setCamo('desert');
-      assert(store.get('o07_operator')==='viper','operator choice should persist');
-      assert(store.get('o07_camo_viper')==='desert','camo choice should persist');
-      assert(this.ui.camoOf(byId('viper'))==='desert','camoOf should return the saved camo');
+      assert(store.get('o07_operator')==='fox','operator choice should persist');
+      assert(store.get('o07_camo_fox')==='desert','camo choice should persist');
+      assert(this.ui.camoOf(byId('fox'))==='desert','camoOf should return the saved camo');
       assert(this.ui.sel.hero==='t','choosing a Rogue operator should switch faction');
       assert(this.ui.sel.primary==='ak47','after a faction switch the primary should fall back to a valid faction weapon');
       this.ui.selectOperator('frost');

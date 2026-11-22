@@ -29,7 +29,7 @@ Or **double-click [`dist/gun-to-gun.html`](dist/gun-to-gun.html)** (~0.8 MB, zer
 - **Callsign login**: enter a nickname, shown in the killfeed and scoreboard
 - **Frost · Nova Operator** (female): model-grade physique · ponytail that swings with the gait · refined facial features · tactical headset, 115 HP
 - **Raven · Rogue Mercenary** (male): rugged and sharp · V-shaped broad shoulders / narrow waist · rolled-sleeve red jacket · clean short hair, +12% move speed / +25% reload speed
-- Both factions are mixed-gender squads (Nova: Frost / Snowwolf / Swift / Thunder; Rogue: Raven / Fox / Vulture / Viper); first-person view shows gun-holding arms with tactical gloves
+- Both factions are mixed-gender squads — one male + one female each (Nova: Frost / Snowwolf; Rogue: Raven / Fox); first-person view shows gun-holding arms with tactical gloves
 
 ### v1.9 — rigged-model character pipeline (AI-ready bodies, procedural fallback)
 

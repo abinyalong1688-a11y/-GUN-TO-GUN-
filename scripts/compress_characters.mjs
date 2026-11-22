@@ -8,11 +8,17 @@
 //   characters mid-run ("dev fine, packaged half-size"). Costs ~30-40% size vs quantized,
 //   but behaviour is identical to the raw file.
 //
-// Run: node scripts/compress_characters.mjs
+// RIGID PROPS (helmet_m / helmet_f): same meshopt path, plus textures downscaled 2048² → 512²
+// (Tripo ships three 2048² maps ≈ 1.9 MB per helmet; on a ~25 cm head 512² is already more
+// than the screen shows, and every byte is base64-embedded in the single-file build).
+//
+// Run: node scripts/compress_characters.mjs             (all)
+//      node scripts/compress_characters.mjs helmet_m    (selected)
 import {NodeIO} from '@gltf-transform/core';
 import {EXTMeshoptCompression} from '@gltf-transform/extensions';
-import {dedup,weld,reorder} from '@gltf-transform/functions';
+import {dedup,weld,reorder,textureCompress} from '@gltf-transform/functions';
 import {MeshoptEncoder} from 'meshoptimizer';
+import sharp from 'sharp';
 import {readFileSync,writeFileSync,mkdirSync} from 'fs';
 import {dirname,join} from 'path';
 import {fileURLToPath} from 'url';
@@ -20,7 +26,9 @@ import {fileURLToPath} from 'url';
 const ROOT=join(dirname(fileURLToPath(import.meta.url)),'..');
 const SRC=join(ROOT,'assets_raw','characters');
 const OUT=join(ROOT,'assets','characters');
-const NAMES=process.argv.slice(2).length?process.argv.slice(2):['male','female'];
+const NAMES=process.argv.slice(2).length?process.argv.slice(2):['male','female','helmet_m','helmet_f'];
+const isProp=name=>name.startsWith('helmet_');
+const PROP_TEX=512;
 
 await MeshoptEncoder.ready;
 const io=new NodeIO()
@@ -36,6 +44,8 @@ for(const name of NAMES){
     weld(),                                    // merge duplicate vertices → better compression
     reorder({encoder:MeshoptEncoder,target:'size'}), // vertex cache order, NO quantize() transform
   );
+  // formats kept (jpeg stays jpeg, png stays png) → no new texture extensions for the loader
+  if(isProp(name))await doc.transform(textureCompress({encoder:sharp,resize:[PROP_TEX,PROP_TEX]}));
   // EncoderMethod.QUANTIZE is the writer's per-accessor encode mode — NOT the forbidden
   // quantize() transform (that one rescales vertices and parks the dequantization on the
   // bones, which shrinks skinned characters mid-animation). FILTER mangles vertex colours.

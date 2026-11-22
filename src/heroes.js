@@ -1,11 +1,12 @@
 // heroes.js — realistic 3D faction characters (third person) + 3v3 bot deathmatch:
-//   looks are built by character.js from operator definitions (8 operators / camos / silhouettes);
+//   looks are built by character.js from operator definitions (4 operators / camos / silhouettes);
 //   combat style by faction (Nova steady bursts / Rogue heavy spray); death: fall → corpse fade → respawn.
 import * as THREE from 'three';
 import {t,isEN} from './i18n.js';
 import {byId,byFaction,DEFAULT_OP} from './operators.js';
 import {buildOperatorMeshAuto,fadeMaterials} from './character.js';
 import {modelAssets} from './modelAssets.js';
+import {rigInit,poseRot,posePos,poseReset} from './rig.js';
 
 /* Compatibility layer: legacy code reads base stats per faction; the data lives in operators.js */
 const _opCT=byId('frost'),_opT=byId('raven');
@@ -22,8 +23,7 @@ const BOT_PROFILE={
 };
 
 let BID=0;
-/* Zero rest pose: procedural parts have no bind-pose euler, GLB rigs do */
-const ZEROT={x:0,y:0,z:0};
+const _Y=new THREE.Vector3(0,1,0),_qLag=new THREE.Quaternion();
 
 /* M2-A5: name tag health bar — both geometries shared at module level, materials per bot */
 const TAG_BG_GEO=new THREE.PlaneGeometry(.62,.075);
@@ -77,6 +77,7 @@ export class HeroBot{
     this.walkT=0;
     this.moveK=0;          // smoothed moving flag (blends idle / locomotion layers)
     this._lastYaw=0;this._rifleLag=0; // rifle inertia on turns
+    this._headPitch=0;this._torsoYaw=0; // smoothed aim layers (character-space deltas)
     /* M2-A1 animation state machine */
     this.animState='idle';this.animT=0;
     this.aimPitch=0;this.aimYaw=0;
@@ -120,6 +121,11 @@ export class HeroBot{
     this.hips=built.parts.hips||null; // GLB rigs: idle weight shift + death buckle
     this.pony=built.parts.pony;
     this.gunTip=built.parts.gunTip;
+    this._animParts=[this.parts.head,this.torso,this.armL,this.armR,this.legL,this.legR,
+      this.shinL,this.shinR,this.footL,this.footR,this.hips,this.pony].filter(Boolean);
+    for(const o of this._animParts)rigInit(o);
+    this._rifleBaseQ=built.parts.rifle?built.parts.rifle.quaternion.clone():null;
+    this._headPitch=0;this._torsoYaw=0;
     // Record the initial rifle-hold pose: animation offsets from this baseline, avoiding a T-pose
     if(this.armR)this.baseArmR=[this.armR.rotation.x,this.armR.rotation.y,this.armR.rotation.z];
     if(this.armL)this.baseArmL=[this.armL.rotation.x,this.armL.rotation.y,this.armL.rotation.z];
@@ -248,26 +254,15 @@ export class HeroBot{
     this._restoreFlash(); // the killing hit's white flash is never restored in the death branch; restore it on respawn or the bot stays white
     this.coverTarget=null;this.coverT=0;
     if(this.nameTag&&this.nameTag.bar)this.nameTag.bar.scale.x=1;
-    if(this.torso)this.torso.position.y=this.baseTorsoY;
-    if(this.parts.head)this.parts.head.rotation.x=(this.parts.head.userData.restE||ZEROT).x;
-    // Restore the layers the death buckle deformed (idle/walk rewrite x/z every frame, y only here)
-    if(this.hips){
-      const rp=this.hips.userData.restP;if(rp)this.hips.position.y=rp.y;
-      this.hips.rotation.y=(this.hips.userData.restE||ZEROT).y;
-    }
-    if(this.shinL){
-      const sl=this.shinL.userData.restE||ZEROT;
-      this.shinL.rotation.x=sl.x;this.shinR.rotation.x=sl.x;
-      if(this.footL){
-        const fl=this.footL.userData.restE||ZEROT;
-        this.footL.rotation.x=fl.x;this.footR.rotation.x=fl.x;
-      }
-    }
+    for(const o of this._animParts)poseReset(o);
+    this._headPitch=0;this._torsoYaw=0;
     this.group.rotation.x=0;
     const base=this.team==='A'?new THREE.Vector3(0,0,24):new THREE.Vector3(0,0,-24);
     this.place(base.clone().add(new THREE.Vector3((Math.random()-.5)*8,0,(Math.random()-.5)*8)),
       this.team==='A'?Math.PI:0);
     this.audio.respawn();
+    // Dead bots are skipped by HeroTeam.refreshModels — catch up on the GLB swap here
+    if(this.builtWith!==modelAssets.mode())this.setOperator(this.def);
   }
 
   _restoreFlash(){
@@ -305,15 +300,12 @@ export class HeroBot{
         this.group.rotation.x=-Math.PI/2.2*k2;
         this.group.position.y=this.pos.y+.3*k2;
         if(this.hips){
-          const rp=this.hips.userData.restP||this.hips.position;
-          this.hips.position.y=rp.y-.22*k1;
-          const rh=this.hips.userData.restE||ZEROT;
-          this.hips.rotation.y=rh.y+this.hitDir*.5*k1*(1-k2*.7);
-          if(this.shinL){
-            const sl=this.shinL.userData.restE||ZEROT;
-            const fold=.95*k1*(1-k2*.55);
-            this.shinL.rotation.x=sl.x+fold;this.shinR.rotation.x=sl.x+fold*.8;
-          }
+          posePos(this.hips,0,-.22*k1,0);
+          poseRot(this.hips,0,this.hitDir*.5*k1*(1-k2*.7),0);
+        }
+        if(this.shinL){
+          const fold=.95*k1*(1-k2*.55);
+          poseRot(this.shinL,fold);poseRot(this.shinR,fold*.8);
         }
         if(k2raw>=1)this.state='dead';
       }else{
@@ -531,28 +523,18 @@ export class HeroBot{
     const swing=moving?Math.sin(this.walkT)*.6:0;
     this.moveK+=((moving?1:0)-this.moveK)*Math.min(1,6*dt); // idle ↔ locomotion blend
     const idleK=1-this.moveK;
-    // Leg swing stacks on the rig's bind-pose euler (restE) — GLB rigs often rest non-identity
-    if(this.legL){
-      const rl=this.legL.userData.restE||ZEROT,rr=this.legR.userData.restE||ZEROT;
-      this.legL.rotation.x=rl.x+swing;this.legR.rotation.x=rr.x-swing;
-      // Knee bend pulses through the swing window (heel-off → strike), ankle keeps the sole level
-      if(this.shinL){
-        const sl=this.shinL.userData.restE||ZEROT,sr=this.shinR.userData.restE||ZEROT;
-        const kneeL=this.moveK*Math.max(0,-Math.sin(this.walkT))*.85;
-        const kneeR=this.moveK*Math.max(0,Math.sin(this.walkT))*.85;
-        this.shinL.rotation.x=sl.x+kneeL;this.shinR.rotation.x=sr.x+kneeR;
-        if(this.footL){
-          const fl=this.footL.userData.restE||ZEROT,fr=this.footR.userData.restE||ZEROT;
-          this.footL.rotation.x=fl.x-kneeL*.55;this.footR.rotation.x=fr.x-kneeR*.55;
-        }
-      }
+    // Every layer is a character-space delta on the part's rest pose (rig.js): procedural Groups
+    // and GLB bones with arbitrary local frames animate identically
+    if(this.legL){poseRot(this.legL,swing);poseRot(this.legR,-swing);}
+    // Knee bend pulses through the swing window (heel-off → strike), ankle keeps the sole level
+    if(this.shinL){
+      const kneeL=this.moveK*Math.max(0,-Math.sin(this.walkT))*.85;
+      const kneeR=this.moveK*Math.max(0,Math.sin(this.walkT))*.85;
+      poseRot(this.shinL,kneeL);poseRot(this.shinR,kneeR);
+      if(this.footL){poseRot(this.footL,-kneeL*.55);poseRot(this.footR,-kneeR*.55);}
     }
-    // Idle weight shift: hips drift hip-to-hip, torso counter-leans over the support foot
-    if(this.hips){
-      const rp=this.hips.userData.restP||this.hips.position;
-      this.hips.position.x=rp.x+idleK*Math.sin(time*.55)*.014;
-      this.hips.position.z=rp.z+idleK*Math.sin(time*.34)*.006;
-    }
+    // Idle weight shift: hips drift hip-to-hip
+    if(this.hips)posePos(this.hips,idleK*Math.sin(time*.55)*.014,0,idleK*Math.sin(time*.34)*.006);
     // Walk bob + female hip sway (heavier steps at low health)
     let bob=moving?Math.abs(Math.cos(this.walkT))*.035:0;
     if(this.hp/this.maxHp<.35)bob*=1.4;
@@ -564,47 +546,37 @@ export class HeroBot{
     if(this.hitT>0)rz+=this.hitDir*this.hitT*.3;
     this.group.rotation.z=rz;
 
-    // Breathing: subtle torso rise and fall (baseline from buildBody, avoids accumulated drift)
-    if(this.torso){
-      this.torso.position.y=this.baseTorsoY+Math.sin(time*1.8)*.003;
-      // Locomotion forward lean + idle sway (restE keeps the rig baseline)
-      const rt=this.torso.userData.restE||ZEROT;
-      const lean=this.moveK*Math.min(.09,Math.max(0,(spd-1.2)*.014));
-      this.torso.rotation.x=rt.x+lean+idleK*Math.sin(time*.55+1.1)*.02;
-    }
-    // Aiming: head pitch + torso follows (smoothed; restE keeps the rig's bind-pose baseline)
+    // Aiming: head pitch + torso yaw follow the target (smoothed)
     const k=Math.min(1,8*dt);
-    if(this.parts.head){
-      const rh=this.parts.head.userData.restE||ZEROT;
-      const want=rh.x-this.aimPitch*.5;
-      this.parts.head.rotation.x+=(want-this.parts.head.rotation.x)*k;
-    }
+    this._headPitch+=(-this.aimPitch*.5-this._headPitch)*k;
+    this._torsoYaw+=(this.aimYaw*.3-this._torsoYaw)*k;
+    if(this.parts.head)poseRot(this.parts.head,this._headPitch);
     if(this.torso){
-      const rt=this.torso.userData.restE||ZEROT;
-      const want=rt.y+this.aimYaw*.3;
-      this.torso.rotation.y+=(want-this.torso.rotation.y)*k;
+      // Breathing rise + locomotion forward lean + idle sway
+      posePos(this.torso,0,Math.sin(time*1.8)*.003,0);
+      const lean=this.moveK*Math.min(.09,Math.max(0,(spd-1.2)*.014));
+      poseRot(this.torso,lean+idleK*Math.sin(time*.55+1.1)*.02,this._torsoYaw);
     }
     // Rifle-hold base pose + recoil / reload layers
-    if(this.armR)this.armR.rotation.x=this.baseArmR[0]+this.recoilKick*.35;
-    if(this.armL)this.armL.rotation.x=this.baseArmL[0]+this.recoilKick*.12;
+    let aR=this.recoilKick*.35,aL=this.recoilKick*.12;
     if(this.reloadT>0){
-      const ph=1-this.reloadT/1.2;
-      const a=Math.sin(ph*Math.PI)*.8;
-      if(this.armL)this.armL.rotation.x=this.baseArmL[0]-a;
-      if(this.armR)this.armR.rotation.x=this.baseArmR[0]-a*.35;
+      const a=Math.sin((1-this.reloadT/1.2)*Math.PI)*.8;
+      aL=-a;aR=-a*.35;
     }
-    // Rifle inertia: the weapon trails a touch when the bot turns (held rifle only)
-    const yawV=(this.yaw-this._lastYaw)/Math.max(dt,1e-3);
+    if(this.armR)poseRot(this.armR,aR);
+    if(this.armL)poseRot(this.armL,aL);
+    // Rifle inertia: the weapon trails a touch when the bot turns (held rifle only). Composed on
+    // the held orientation — the GLB mount is a calibrated quaternion, not a zero euler
+    let dy=this.yaw-this._lastYaw;
+    dy=Math.atan2(Math.sin(dy),Math.cos(dy)); // ±π wrap must not read as a 2π/frame spin
+    const yawV=dy/Math.max(dt,1e-3);
     this._lastYaw=this.yaw;
     this._rifleLag+=(Math.max(-4,Math.min(4,yawV))*.05-this._rifleLag)*Math.min(1,10*dt);
-    if(this.parts.rifle&&!this.rifleFalling&&this.parts.rifle.parent!==this.scene)
-      this.parts.rifle.rotation.y=this._rifleLag;
+    const r=this.parts.rifle;
+    if(r&&this._rifleBaseQ&&!this.rifleFalling&&r.parent!==this.scene)
+      r.quaternion.copy(this._rifleBaseQ).multiply(_qLag.setFromAxisAngle(_Y,this._rifleLag));
     // Ponytail follow-through (approximate hair physics)
-    if(this.pony){
-      const rp=this.pony.userData.restE||ZEROT;
-      this.pony.rotation.x=rp.x-.15+Math.sin(time*1.7)*.05+(moving?swing*.18:0);
-      this.pony.rotation.z=rp.z+Math.sin(time*1.3)*.06;
-    }
+    if(this.pony)poseRot(this.pony,-.15+Math.sin(time*1.7)*.05+(moving?swing*.18:0),0,Math.sin(time*1.3)*.06);
     this.group.rotation.y=this.yaw;
   }
 
@@ -623,7 +595,7 @@ export class HeroBot{
   }
 }
 
-/* Faction team manager: 2 teammates on the player's faction vs 3 enemies on the other (8 operators, no repeats) */
+/* Faction team manager: 2 teammates on the player's faction vs 3 enemies on the other (4-operator roster, cycled) */
 export class HeroTeam{
   constructor(game){
     this.game=game;
@@ -643,8 +615,12 @@ export class HeroTeam{
     const g=this.game,scene=g.scene,assets=g.assets,fx=g.effects,audio=g.audio,ui=g.ui;
     const pf=playerFaction==='t'?'t':'ct';
     const ef=pf==='ct'?'t':'ct';
-    const own=byFaction(pf).filter(o=>o.id!==playerOpId).slice(0,2);
-    const foe=byFaction(ef).slice(0,3);
+    // Roster is one male + one female per faction, so squads cycle through it (name suffixes
+    // keep repeated operators distinguishable); match size stays 2 teammates vs 3 enemies.
+    const cycle=(arr,n)=>arr.length?Array.from({length:n},(_,i)=>arr[i%arr.length]):[];
+    const ownPool=byFaction(pf).filter(o=>o.id!==playerOpId);
+    const own=cycle(ownPool.length?ownPool:byFaction(pf),2);
+    const foe=cycle(byFaction(ef),3);
     const used=new Set([playerName]);
     const nm=o=>{
       let n=isEN()?o.name.en:o.name.zh;

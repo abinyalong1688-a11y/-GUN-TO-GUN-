@@ -1,5 +1,5 @@
 // operators.js — operator registry (pure data, no dependencies):
-//   8 operators · faction / gender / role / stats / palette / gear / quotes,
+//   4 operators (one male + one female per faction) · faction / gender / role / stats / palette / gear / quotes,
 //   shared by the character builder (character.js), roster UI, portraits, kill cards and MVP.
 // Convention: new operators only touch this file; every rifle must be an id in weapon.js WEAPON_DEFS.
 
@@ -37,26 +37,6 @@ export const OPERATORS=[
     quote:{zh:'掩体不会背叛你。',en:"Cover won't betray you."},
     voice:{pitch:.82},
   },
-  {
-    id:'swift',faction:'ct',gender:'f',
-    name:{zh:'雨燕',en:'Swift'},
-    role:{zh:'侦察',en:'Scout'},
-    hp:100,speedMul:1.08,reloadMul:1.05,recoilMul:1.00,rifle:'mp5',
-    palette:{skin:0xf0c6a8,hair:0x6a4028,jacket:0x3c5a58,armor:0x2a3c3a,accent:0x6fffd2,cloth:0x33504c},
-    headgear:'headset',hair:'bob',extras:['armband','holster'],
-    quote:{zh:'我先看见他们,你们再开火。',en:'I see them first. You shoot second.'},
-    voice:{pitch:1.12},
-  },
-  {
-    id:'thunder',faction:'ct',gender:'m',
-    name:{zh:'雷豹',en:'Thunder'},
-    role:{zh:'突击',en:'Assault'},
-    hp:115,speedMul:1.02,reloadMul:1.00,recoilMul:.95,rifle:'aug',
-    palette:{skin:0xd9a97e,hair:0x1a130e,jacket:0x3f4a58,armor:0x2a303a,accent:0xffd166,cloth:0x35404c},
-    headgear:'helmet',hair:'short',extras:['armband','kneepads'],
-    quote:{zh:'门后面?交给我。',en:'Behind the door? Mine.'},
-    voice:{pitch:.90},
-  },
 
   /* ---------------- Rogue ---------------- */
   {
@@ -78,26 +58,6 @@ export const OPERATORS=[
     headgear:'beanie',hair:'ponytail',extras:['armband','kneepads'],
     quote:{zh:'他们看左边,我们从右边进。',en:'They look left. We go right.'},
     voice:{pitch:1.06},
-  },
-  {
-    id:'vulture',faction:'t',gender:'m',
-    name:{zh:'秃鹫',en:'Vulture'},
-    role:{zh:'狙击',en:'Sniper'},
-    hp:100,speedMul:1.00,reloadMul:1.05,recoilMul:.88,rifle:'awp',
-    palette:{skin:0xc99878,hair:0x2a2622,jacket:0x4a4a38,armor:0x2a2a22,accent:0xd8ff7a,cloth:0x3a3a2c},
-    headgear:'goggles',hair:'short',extras:['armband','backpack'],
-    quote:{zh:'风向对了,一枪就够。',en:'Right wind, one shot.'},
-    voice:{pitch:.80},
-  },
-  {
-    id:'viper',faction:'t',gender:'f',
-    name:{zh:'黑蛇',en:'Viper'},
-    role:{zh:'渗透',en:'Infiltrator'},
-    hp:95,speedMul:1.10,reloadMul:1.30,recoilMul:1.02,rifle:'sg553',
-    palette:{skin:0xe8bfa6,hair:0x14100e,jacket:0x2c2c34,armor:0x1a1a1f,accent:0x9a6aff,cloth:0x3a3a44},
-    headgear:'shemagh',hair:'bob',extras:['armband','holster','kneepads'],
-    quote:{zh:'烟雾散之前,我已经不在了。',en:"Before the smoke clears, I'm gone."},
-    voice:{pitch:1.00},
   },
 ];
 

@@ -5,6 +5,8 @@
 import * as THREE from 'three';
 import {buildOperatorMeshAuto} from './character.js';
 import {modelAssets} from './modelAssets.js';
+import {OPERATORS} from './operators.js';
+import {isEN} from './i18n.js';
 
 export class PortraitRenderer{
   constructor(assets){
@@ -110,6 +112,32 @@ export class PortraitRenderer{
       if(built){this.scene.remove(built.group);built.dispose();}
       return null;
     }
+  }
+
+  /* Roster lineup: every operator side by side on one canvas (verification / lineup captures).
+     Returns the canvas, or null. size = per-card edge; each card is the bust framing. */
+  renderSheet({size=300,camo='default'}={}){
+    this._init();
+    if(!this.renderer)return null;
+    const pad=Math.round(size*.06);
+    const n=OPERATORS.length;
+    const labelH=Math.round(size*.14);
+    const canvas=document.createElement('canvas');
+    canvas.width=pad+(size+pad)*n;
+    canvas.height=pad*2+size+labelH;
+    const ctx=canvas.getContext('2d');
+    ctx.fillStyle='#101318';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    OPERATORS.forEach((o,i)=>{
+      const x=pad+i*(size+pad);
+      const c=this.renderCanvas(o,camo,size,{frame:'bust'});
+      if(c)ctx.drawImage(c,x,pad,size,size);
+      ctx.fillStyle=o.faction==='ct'?'#7fd4ff':'#ff8a6a';
+      ctx.font=`bold ${Math.round(size*.085)}px system-ui,sans-serif`;
+      ctx.textAlign='center';
+      ctx.fillText(isEN()?o.name.en:o.name.zh,x+size/2,pad+size+Math.round(labelH*.6));
+    });
+    return canvas;
   }
 
   dispose(){

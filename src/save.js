@@ -3,7 +3,7 @@
 //   · match results award XP for kills / waves; levelling up unlocks camos;
 //   · 3 daily challenges (date-seeded), stored locally, work offline.
 const KEY='o07_save_v2';
-const OPERATOR_IDS=['frost','snowwolf','swift','thunder','raven','fox','vulture','viper'];
+const OPERATOR_IDS=['frost','snowwolf','raven','fox'];
 
 const fresh=()=>({
   v:2,

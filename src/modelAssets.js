@@ -13,8 +13,8 @@
 //     (upperArm_L, LeftArm, arm_l, mixamorig:LeftArm …) — resolved by ALIAS matching below;
 //   · any bind orientation / scale — corrected at load: model is re-oriented to face +Z,
 //     rescaled to the operator height, feet placed on y=0 (per guizang skill: measure, never assume).
-// Each mapped bone records its bind-pose euler in userData.restE — HeroBot adds animation
-// deltas on top of it, so rigs with non-identity rest rotations still animate correctly.
+// Each mapped bone carries userData.rig (rest quaternion + character-space axes in its local
+// frame) — rig.js stacks animation deltas on it, whatever the rig's local axis conventions.
 import * as THREE from 'three';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {MeshoptDecoder} from 'three/examples/jsm/libs/meshopt_decoder.module.js';
@@ -31,6 +31,7 @@ if(typeof location!=='undefined'){
 const state={
   ready:false,failed:false,loading:false,
   models:{},                 // gender → {root,bones,headY,profile}
+  props:{},                  // 'helmet_m' / 'helmet_f' → normalized rigid template (optional)
   onReadyCbs:[],
 };
 
@@ -47,20 +48,38 @@ export const modelAssets={
     if(!m)throw new Error(`[modelAssets] model not loaded: ${gender}`);
     return cloneInstance(m);
   },
+  /* GLB helmet for the head anchor (procedural-skull space), or null → procedural helmet.
+     Gender-matched, falling back to the other gender's helmet. Geometry/textures shared,
+     materials cloned per instance (faction tint / hit flash / corpse fade). */
+  helmet(gender){
+    const t=state.props[gender==='f'?'helmet_f':'helmet_m']||state.props.helmet_m||state.props.helmet_f;
+    if(!t)return null;
+    const root=t.clone(true),materials=[],seen=new Map();
+    root.traverse(o=>{
+      if(!o.isMesh)return;
+      let c=seen.get(o.material);
+      if(!c){
+        c=o.material.clone();seen.set(o.material,c);materials.push(c);
+        if(c.emissive){c.userData.baseEH=c.emissive.getHex();c.userData.baseEI=c.emissiveIntensity;}
+      }
+      o.material=c;
+    });
+    return {root,materials};
+  },
   template(gender){return state.models[gender==='f'?'female':'male']||null;}, // dev: inspect the pre-clone template
   debug(){ // console helper: dump bone mapping (?model=gltf + this in devtools)
     for(const g of Object.keys(state.models)){
       const m=state.models[g];
-      console.table(Object.entries(m.bones).map(([k,b])=>({slot:k,bone:b.name,y:b.getWorldPosition(new THREE.Vector3()).y.toFixed(2)})));
+      console.table(Object.entries(m.bones).filter(([,b])=>b).map(([k,b])=>({slot:k,bone:b.name,y:b.getWorldPosition(new THREE.Vector3()).y.toFixed(2)})));
     }
   },
 };
 
 /* ---- GLB sources: embedded (single-file build) → dev fetch fallback ---- */
-function glbSource(gender){
-  const embedded=(typeof window!=='undefined')&&window.__GTG_GLB__&&window.__GTG_GLB__[gender];
+function glbSource(name){
+  const embedded=(typeof window!=='undefined')&&window.__GTG_GLB__&&window.__GTG_GLB__[name];
   if(embedded)return Promise.resolve(embedded);
-  return Promise.resolve(`assets/characters/${gender}.glb`);
+  return Promise.resolve(`assets/characters/${name}.glb`);
 }
 function toArrayBuffer(src){
   if(src.startsWith('data:')){
@@ -104,7 +123,19 @@ export function preloadCharacters(){
     const gltf=await new Promise((res,rej)=>l.parse(buf,'',gltf=>res(gltf),rej));
     state.models[gender]=normalizeTemplate(gender,gltf.scene);
   };
-  Promise.all([load('male'),load('female')])
+  // Helmets are optional: a missing/broken file only costs the GLB helmet (procedural one stays).
+  // Loaded inside the same gate so operators built on 'ready' already get them.
+  const loadProp=async name=>{
+    try{
+      const buf=await toArrayBuffer(await glbSource(name));
+      const l=await loader();
+      const gltf=await new Promise((res,rej)=>l.parse(buf,'',gltf=>res(gltf),rej));
+      state.props[name]=normalizeHelmet(name,gltf.scene);
+    }catch(e){
+      console.warn(`[modelAssets] ${name} unavailable — procedural helmet:`,e);
+    }
+  };
+  Promise.all([load('male'),load('female'),loadProp('helmet_m'),loadProp('helmet_f')])
     .then(()=>{
       state.ready=true;state.loading=false;
       console.log(`[modelAssets] GLB characters ready (${Object.keys(state.models).join(', ')})`);
@@ -125,7 +156,10 @@ const SLOT_RULES=[
   {slot:'head', re:/head/},
   {slot:'neck', re:/neck/},
   {slot:'forearm', re:/lowerarm|forearm|elbow/},
-  {slot:'upperarm', re:/upperarm|uparm|shoulder|clavicle|arm/},
+  // clavicle before upperarm: Mixamo "LeftShoulder" / Tripo "L_Clavicle" are the collarbone —
+  // animating it instead of the upper arm hunches the whole shoulder
+  {slot:'clavicle', re:/clavicle|shoulder|collar/},
+  {slot:'upperarm', re:/upperarm|uparm|arm/},
   {slot:'hand', re:/hand|wrist|palm/},
   {slot:'calf', re:/calf|lowerleg|shin|knee/},
   {slot:'thigh', re:/thigh|upleg|upperleg|leg|femur/},
@@ -153,27 +187,136 @@ function boneSide(name){
   return 0;
 }
 
-/* ---- per-gender rig profile: orientation fix / hold pose / attachment anchors ----
-   Tripo rigs face +Z natively (glTF convention) — yawFix=0 keeps the auto heuristic from
-   misfiring on staggered shooting stances (both thighs share the same X).
-   hold=null keeps the BIND POSE as the rifle-hold baseline (the stance IS a gun-hold); only the
-   dummy rigs need the procedural hold override. Tune rifle/head anchors against ?portraits. */
+/* ---- per-gender rig profile ----
+   Tripo rigs face +X natively → yawFix turns them to the game's +Z (the thigh heuristic misfires
+   on staggered stances). Everything below is CHARACTER space (+Z forward, anatomical right hand
+   on -X) and solved by two-bone IK at load time, so the pose is independent of every bone's local
+   axis convention. headDY/headR are only the fallback when the skull can't be measured.
+   Rifle mount = the procedural one (.10,1.20,.16) mirrored onto the anatomical right; hand targets
+   are rifle-local grip points (pistol grip ≈ (0,-.075,.02), handguard ≈ (0,-.03,.26)) carried into
+   character space, so the hands land ON the weapon. palm = desired palm normal (trigger palm on
+   the grip, support palm cupping the handguard); bind-pose palms are assumed to face the thighs
+   (A-pose: right palm +X, left palm -X). handR/handL are PALM-centre goals: the IK drives the
+   wrist bone, so the solve is iterated until the palm (wrist + palm length along the forearm)
+   sits on the goal — the trigger palm against the grip's outer face, the support palm under the
+   handguard. */
+const HOLD={
+  poleR:[-.6,-1,-.25],poleL:[.55,-1,-.1],       // elbows down and out
+  palmR:[1,-.15,0],palmL:[-.35,1,0],
+};
+const mkProfile=(height,headDY,headR,rifleScale)=>{
+  const k=height/1.8,pos=[-.10*k,1.20*k,.16*k];
+  const at=(x,y,z)=>[pos[0]+x*rifleScale,pos[1]+y*rifleScale,pos[2]+z*rifleScale];
+  return {height,headDY,headR,yawFix:-Math.PI/2,
+    hold:{...HOLD,handR:at(-.03,-.075,.02),handL:at(0,-.07,.26),palmLen:.07*k},
+    rifle:{scale:rifleScale,pos}};
+};
 const PROFILES={
-  male:{
-    height:1.80,headDY:.075,headR:.076,yawFix:-Math.PI/2,
-    hold:{armR:{x:-1.1,y:0,z:1.05},foreR:{x:-.75,z:-.5},armL:{x:-1.1,y:0,z:-1.05},foreL:{x:-.75,z:.5}},
-    rifle:{scale:1},
-  },
-  female:{
-    height:1.75,headDY:.06,headR:.072,yawFix:-Math.PI/2,
-    hold:{armR:{x:-1.1,y:0,z:1.05},foreR:{x:-.75,z:-.5},armL:{x:-1.1,y:0,z:-1.05},foreL:{x:-.75,z:.5}},
-    rifle:{scale:.94},
-  },
+  male:mkProfile(1.80,.075,.076,1),
+  female:mkProfile(1.75,.06,.072,.94),
 };
 
-/* Load-time normalisation: orientation → scale → ground → bone map → rest pose → hold pose.
-   THREE-node structure: wrapper (= the bot group, rotation/position owned by the game) →
-   orienter (carries yawFix / scale / ground offset — the game never touches it) → model. */
+const V=(x=0,y=0,z=0)=>new THREE.Vector3(x,y,z);
+const wpos=o=>o.getWorldPosition(V());
+/* Rotate `bone` (about its own pivot) so its world-space vector `from` lines up with `to` */
+function swing(bone,from,to){
+  if(from.lengthSq()<1e-10||to.lengthSq()<1e-10)return;
+  const dq=new THREE.Quaternion().setFromUnitVectors(from.clone().normalize(),to.clone().normalize());
+  const wq=bone.getWorldQuaternion(new THREE.Quaternion());
+  const pq=bone.parent.getWorldQuaternion(new THREE.Quaternion());
+  bone.quaternion.copy(pq.invert().multiply(dq.multiply(wq)));
+  bone.updateMatrixWorld(true);
+}
+/* Analytic two-bone IK (shoulder → elbow → wrist), elbow bent toward `pole` */
+function solveTwoBone(upper,fore,hand,target,pole){
+  const S=wpos(upper),E=wpos(fore),W=wpos(hand);
+  const a=S.distanceTo(E),b=E.distanceTo(W);
+  if(a<1e-4||b<1e-4)return;
+  const toT=target.clone().sub(S);
+  const d=Math.max(1e-4,Math.min(toT.length(),(a+b)*.995));
+  const dir=toT.normalize();
+  const cosA=Math.max(-1,Math.min(1,(a*a+d*d-b*b)/(2*a*d)));
+  const perp=pole.clone().addScaledVector(dir,-pole.dot(dir));
+  if(perp.lengthSq()<1e-8)perp.set(0,-1,0);
+  perp.normalize();
+  const E2=S.clone().addScaledVector(dir,a*cosA).addScaledVector(perp,a*Math.sqrt(1-cosA*cosA));
+  swing(upper,E.clone().sub(S),E2.clone().sub(S));
+  const E3=wpos(fore),W3=wpos(hand);
+  swing(fore,W3.clone().sub(E3),S.clone().addScaledVector(dir,d).sub(E3));
+}
+/* Roll the hand about the forearm axis until its palm normal (palmLocal, hand-local) faces `want` */
+function twistPalm(fore,hand,palmLocal,want){
+  const axis=wpos(hand).sub(wpos(fore)).normalize();
+  const hq=hand.getWorldQuaternion(new THREE.Quaternion());
+  const flat=v=>v.clone().addScaledVector(axis,-v.dot(axis));
+  const a=flat(palmLocal.clone().applyQuaternion(hq)),b=flat(want);
+  if(a.lengthSq()<1e-8||b.lengthSq()<1e-8)return;
+  a.normalize();b.normalize();
+  let ang=Math.acos(Math.max(-1,Math.min(1,a.dot(b))));
+  if(axis.dot(V().crossVectors(a,b))<0)ang=-ang;
+  const dq=new THREE.Quaternion().setFromAxisAngle(axis,ang);
+  const pq=hand.parent.getWorldQuaternion(new THREE.Quaternion());
+  hand.quaternion.copy(pq.invert().multiply(dq.multiply(hq)));
+  hand.updateMatrixWorld(true);
+}
+/* Skull bounds from the skin: vertices weighted mostly to the head joint, in character space */
+function measureHead(scene,head){
+  const box=new THREE.Box3();let n=0;
+  const v=V();
+  scene.traverse(o=>{
+    if(!o.isSkinnedMesh||!o.skeleton)return;
+    const ji=o.skeleton.bones.indexOf(head);
+    if(ji<0)return;
+    const g=o.geometry,si=g.attributes.skinIndex,sw=g.attributes.skinWeight;
+    if(!si||!sw)return;
+    for(let i=0;i<si.count;i++){
+      let w=0;
+      for(let k=0;k<4;k++)if(si.getComponent(i,k)===ji)w+=sw.getComponent(i,k);
+      if(w<.5)continue;
+      o.getVertexPosition(i,v);v.applyMatrix4(o.matrixWorld);
+      box.expandByPoint(v);n++;
+    }
+  });
+  return n>50?box:null;
+}
+
+/* Load-time normalisation: orientation → scale → ground → bone map → hold pose → rest frames.
+   Node structure: wrapper (= the bot group, rotation/position owned by the game) →
+   orienter (yawFix / scale / ground offset — the game never touches it) → model. */
+/* ---- rigid helmet → head-anchor space ----
+   Anchor space is the real skull (step 7 measures it per gender): origin at the skull centre,
+   +Y up, +Z face. Measured head geometry in that space (male / female): hair-top +.088 / +.085,
+   back of skull −.12 / −.20, face front +.09, half-width .095 / .092 incl. ears; the skull widens
+   to .09 at y≈−.03 (ear line) and the brow sits at y≈+.03, z≈+.075.
+   Tripo helmets face +X (NVG shroud + face opening verified in orthographic renders), so yaw
+   −90° turns them to +Z; the prop is then scaled so its shell half-width is `halfW` and placed
+   so its crown sits at `top`, shifted by `cz` front/back. Values below were fitted against the
+   head-skin vertex cloud (sweep harness): the shell must clear the hair by a few mm at the
+   crown while its front rim stops above the brow — a lower rim covers the eyes.
+   helmet_f is the slimmer high-cut shell: same crown, narrower and shifted 4 mm back. */
+const HELMET_YAW=-Math.PI/2;
+const HELMET_FIT={
+  helmet_m:{halfW:.121,top:.118,cz:-.008},
+  helmet_f:{halfW:.113,top:.116,cz:-.004},
+  // rim stays clear of the face; if a future prop has a much lower rim, raise `top`
+};
+function normalizeHelmet(name,scene){
+  const fit=HELMET_FIT[name]||HELMET_FIT.helmet_m;
+  const root=new THREE.Group();
+  root.name=name;
+  root.add(scene);
+  scene.rotation.y=HELMET_YAW;
+  root.updateMatrixWorld(true);
+  const b=new THREE.Box3().setFromObject(root);
+  scene.scale.multiplyScalar(fit.halfW/((b.max.x-b.min.x)/2));
+  root.updateMatrixWorld(true);
+  b.setFromObject(root);
+  scene.position.add(new THREE.Vector3(-(b.min.x+b.max.x)/2,fit.top-b.max.y,fit.cz-(b.min.z+b.max.z)/2));
+  scene.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=false;}});
+  root.updateMatrixWorld(true);
+  return root;
+}
+
 function normalizeTemplate(gender,scene){
   const profile=PROFILES[gender]||PROFILES.male;
   const wrapper=new THREE.Group();
@@ -182,71 +325,69 @@ function normalizeTemplate(gender,scene){
   orienter.name='orienter';
   wrapper.add(orienter);
   orienter.add(scene);
-
-  // 1. Orientation: derive facing from the two thigh bones (never assume the exporter's convention)
   scene.updateMatrixWorld(true);
+
+  // Skeleton nodes: skin joints AND their non-joint ancestors. three.js only flags glTF skin joints
+  // as Bones — Tripo's real limb nodes (R_Thigh / R_Calf / R_Upperarm / R_Forearm) aren't joints,
+  // only their Twist children are. Mapping the twists leaves the child chain behind (rotating
+  // ForearmTwist01 bends the sleeve while R_Hand — a child of R_Forearm — stays put: floating hands).
+  const inRig=new Set();
+  scene.traverse(o=>{
+    if(!o.isBone)return;
+    for(let p=o;p&&p!==scene&&!p.isMesh;p=p.parent)inRig.add(p);
+  });
   const bones=[];
-  scene.traverse(o=>{if(o.isBone||o.isObject3D&&o.type==='Bone')bones.push(o);});
-  if(!bones.length){ // unrigged mesh — still usable as a static dummy, but flag it
-    console.warn('[modelAssets] no bones found in',gender);
-  }
-  const find=(slot,side)=>{
+  scene.traverse(o=>{if(inRig.has(o))bones.push(o);}); // parent-first order
+  if(!bones.length)console.warn('[modelAssets] no bones found in',gender);
+  const pick=(slot,side)=>{
+    let best=null,bestScore=-Infinity;
     for(const b of bones){
-      if(classify(b.name)===slot&&(side===0||boneSide(b.name)===side||boneSide(b.name)===0&&side!==0&&bonesWithSide(slot,bones).length<2))return b;
+      if(classify(b.name)!==slot)continue;
+      const s=boneSide(b.name),nm=norm(b.name);
+      if(side!==0&&s!==0&&s!==side)continue;
+      // annotated matching side > unannotated; the limb node beats its twist helpers;
+      // the rig ROOT loses to Hip/Pelvis
+      let score=(side===0)?1:(s===side?2:1);
+      if(/twist|roll|helper/.test(nm))score-=1.5;
+      if(slot==='hips'&&/root/.test(nm))score-=1;
+      if(score>bestScore){bestScore=score;best=b;}
     }
-    return null;
+    return best;
   };
-  const bonesWithSide=(slot,list)=>list.filter(b=>classify(b.name)===slot&&boneSide(b.name)!==0);
-  const tR=find('thigh',1),tL=find('thigh',-1);
+
+  // 1. Orientation: facing from the two thighs, unless the profile pins it
+  const tR=pick('thigh',1),tL=pick('thigh',-1);
   if(tR&&tL){
-    const pR=new THREE.Vector3(),pL=new THREE.Vector3();
-    tR.getWorldPosition(pR);tL.getWorldPosition(pL);
-    const right=pR.sub(pL);right.y=0;
+    const right=wpos(tR).sub(wpos(tL));right.y=0;
     if(right.lengthSq()>1e-6){
-      const fwd=new THREE.Vector3().crossVectors(right,new THREE.Vector3(0,1,0)).normalize();
+      const fwd=V().crossVectors(right,V(0,1,0)).normalize();
       orienter.rotation.y=-Math.atan2(fwd.x,fwd.z);
     }
   }
-  // Explicit per-model override wins: staggered / shooting stances defeat the thigh heuristic
   if(profile.yawFix!=null)orienter.rotation.y=profile.yawFix;
-  scene.updateMatrixWorld(true);
+  wrapper.updateMatrixWorld(true);
 
-  // 2. Scale to operator height, 3. feet on the ground — on the ORIENTER (the game owns the wrapper)
-  const box=new THREE.Box3().setFromObject(wrapper);
+  // 2. Scale to operator height, 3. feet on the ground — on the ORIENTER
+  const box=new THREE.Box3().setFromObject(wrapper,true);
   const h=box.max.y-box.min.y;
   let s=1;
   if(h>1e-3){
     s=profile.height/h;
     orienter.scale.setScalar(s);
     wrapper.updateMatrixWorld(true);
-    const box2=new THREE.Box3().setFromObject(wrapper);
-    orienter.position.y=-box2.min.y;
+    orienter.position.y=-new THREE.Box3().setFromObject(wrapper,true).min.y;
   }
-  orienter.updateMatrixWorld(true);
   wrapper.updateMatrixWorld(true);
 
   // 4. Bone map for the animation contract (spine chain: first = spine, last = chest)
-  const pick=(slot,side)=>{
-    let best=null,bestScore=-1;
-    for(const b of bones){
-      if(classify(b.name)!==slot)continue;
-      const s=boneSide(b.name);
-      if(side!==0&&s!==0&&s!==side)continue;
-      // annotated matching side > unannotated > opposite; rig ROOT loses to Hip/Pelvis for hips
-      let score=(side===0)?1:(s===side?2:1);
-      if(slot==='hips'&&/root/.test(norm(b.name)))score-=1;
-      if(score>bestScore){bestScore=score;best=b;}
-    }
-    return best;
-  };
-  const spines=bones.filter(b=>classify(b.name)==='spine');
+  const spines=bones.filter(b=>classify(b.name)==='spine'&&!/twist/.test(norm(b.name)));
   const map={
     hips:pick('hips',0),
     spine:spines[0]||null,
     chest:spines.length>1?spines[spines.length-1]:(spines[0]||null),
     neck:pick('neck',0),
     head:pick('head',0),
-    pony:find('pony',0),
+    pony:pick('pony',0),
     armR:pick('upperarm',1),armL:pick('upperarm',-1),
     foreR:pick('forearm',1),foreL:pick('forearm',-1),
     handR:pick('hand',1),handL:pick('hand',-1),
@@ -256,43 +397,75 @@ function normalizeTemplate(gender,scene){
   };
   if(!map.head||!map.legR)console.warn('[modelAssets] bone mapping incomplete for',gender,map);
 
-  // 5. Rest pose: bind-pose euler + local position per mapped bone (animation deltas stack on top)
-  for(const b of Object.values(map)){
-    if(b){
-      b.userData.restE={x:b.rotation.x,y:b.rotation.y,z:b.rotation.z};
-      b.userData.restP=b.position.clone();
-    }
-  }
-
-  // 6. Rifle-hold base pose: DELTAS stacked on the bind-pose euler (the T-pose rig needs the
-  //    arms bent down/forward; the shooting-stance bind of the dummy needed none → hold=null)
+  // 5. Rifle-hold pose: two-bone IK to character-space hand targets (scaled to body height)
   const H=profile.hold;
   if(H){
-    for(const [key,bone] of [['armR',map.armR],['foreR',map.foreR],['armL',map.armL],['foreL',map.foreL]]){
-      if(bone&&H[key]){
-        const r=bone.userData.restE;
-        bone.rotation.set(r.x+H[key].x,r.y+H[key].y,r.z+H[key].z);
+    for(const [up,fore,hand,tgt,pole,palm,bindPalmX] of [
+      [map.armR,map.foreR,map.handR,H.handR,H.poleR,H.palmR,1],
+      [map.armL,map.foreL,map.handL,H.handL,H.poleL,H.palmL,-1]]){
+      if(!up||!fore||!hand)continue;
+      // bind-pose palm normal in hand-local space, captured before the arm moves
+      const palmLocal=V(bindPalmX,0,0).applyQuaternion(hand.getWorldQuaternion(new THREE.Quaternion()).invert());
+      const goal=V(...tgt),t=goal.clone(),poleV=V(...pole);
+      for(let it=0;it<5;it++){
+        solveTwoBone(up,fore,hand,t,poleV);
+        const w=wpos(hand),palmC=w.clone().add(w.clone().sub(wpos(fore)).normalize().multiplyScalar(H.palmLen));
+        const err=goal.clone().sub(palmC);
+        if(err.lengthSq()<1e-5)break;
+        t.add(err);
       }
+      twistPalm(fore,hand,palmLocal,V(...palm));
     }
   }
+  wrapper.updateMatrixWorld(true);
 
-  // 7. Head centre anchor (headgear / face attachments pivot around the skull centre)
-  let headY=profile.height-.13;
+  // 6. Rest frames (post-hold): per bone, character axes in its local frame + character unit
+  //    translations in its parent's frame — rig.js stacks animation deltas on these
+  const rig={};
+  const AX=[V(1,0,0),V(0,1,0),V(0,0,1)];
+  for(const b of Object.values(map)){
+    if(!b||rig[b.name])continue;
+    const inv=b.getWorldQuaternion(new THREE.Quaternion()).invert();
+    const pinv=new THREE.Matrix4().copy(b.parent.matrixWorld).invert();
+    const o0=V().applyMatrix4(pinv);
+    rig[b.name]={
+      restQ:b.quaternion.clone(),restP:b.position.clone(),
+      ax:AX.map(a=>a.clone().applyQuaternion(inv)),
+      px:AX.map(a=>a.clone().applyMatrix4(pinv).sub(o0)),
+    };
+  }
+
+  // 7. Head anchor: skull measured from the head-weighted skin (fallback: profile constants).
+  //    The anchor is placed in character space (identity orientation, unit scale) so headgear
+  //    built for the procedural skull (centre origin, +Z face) lands upright on the real head.
+  let headY=profile.height-.13,headFit=null;
   if(map.head){
-    const hp=new THREE.Vector3();map.head.getWorldPosition(hp);
-    headY=hp.y+profile.headDY*s;
+    const hp=wpos(map.head);
+    const hb=measureHead(scene,map.head);
+    let c,scale;
+    if(hb){
+      // Procedural skull: half-width ≈ .097, face front ≈ +.11 from its centre; the top offset is .10
+      // (not the skull's .114) because the baked hair adds height — at .114 helmet brims cover the eyes.
+      // Ears widen the measured box ~10 %; hair/ponytail only extends up/back, so anchor on the
+      // top and the face front rather than the box centre.
+      scale=((hb.max.x-hb.min.x)/2)*.9/.097;
+      c=V((hb.min.x+hb.max.x)/2,hb.max.y-.10*scale,hb.max.z-.11*scale);
+    }else{
+      scale=profile.headR/.105*s;
+      c=V(hp.x,hp.y+profile.headDY*s,hp.z);
+    }
+    headY=c.y;headFit={scale,measured:!!hb,box:hb};
     const anchor=new THREE.Group();
     anchor.name='headAnchor';
-    anchor.position.set(0,profile.headDY,0);
     map.head.add(anchor);
+    new THREE.Matrix4().copy(map.head.matrixWorld).invert()
+      .multiply(new THREE.Matrix4().makeTranslation(c.x,c.y,c.z))
+      .decompose(anchor.position,anchor.quaternion,anchor.scale);
     map.headAnchor=anchor;
   }
 
   wrapper.updateMatrixWorld(true);
-  // Character-space quaternion (yawFix baked): rifle barrels and other attachments align to it
-  const charQuat=new THREE.Quaternion();
-  orienter.getWorldQuaternion(charQuat);
-  const inst={root:wrapper,bones:map,headY,profile,charQuat};
+  const inst={root:wrapper,bones:map,rig,headY,headFit,profile};
   inst.clone=()=>cloneInstance(inst);
   return inst;
 }
@@ -300,12 +473,16 @@ function normalizeTemplate(gender,scene){
 /* ---- instance: SkeletonUtils.clone + per-instance material clones ---- */
 function cloneInstance(inst){
   const root=SkeletonUtils.clone(inst.root);
-  // Map bones by name (names survive the clone)
-  const map={};
-  root.traverse(o=>{if(o.isBone)map[o.name]=o;});
+  // Map nodes by name (names survive the clone; the limb nodes aren't all Bones)
+  const byName={};
+  root.traverse(o=>{if(o.name&&!byName[o.name])byName[o.name]=o;});
   const bones={};
   for(const [slot,b] of Object.entries(inst.bones)){
-    if(b instanceof THREE.Object3D)bones[slot]=map[b.name]||null;
+    if(!(b instanceof THREE.Object3D))continue;
+    const c=byName[b.name]||null;
+    bones[slot]=c;
+    // rest-frame data is immutable → shared by reference (Object3D.clone would JSON-copy userData)
+    if(c&&inst.rig[b.name])c.userData.rig=inst.rig[b.name];
   }
   bones.headAnchor=root.getObjectByName('headAnchor')||null;
   // Per-instance material clones: textures stay shared (GPU memory once), colours flash/fade independently
@@ -316,10 +493,14 @@ function cloneInstance(inst){
     o.frustumCulled=false; // skinned bounds go stale after posing — the bots are always near the action anyway
     const assign=m=>{
       let c=seen.get(m);
-      if(!c){c=m.clone();seen.set(m,c);materials.push(c);}
+      if(!c){
+        c=m.clone();seen.set(m,c);materials.push(c);
+        // hit-flash restore targets (HeroBot._restoreFlash): the material's own emissive
+        if(c.emissive){c.userData.baseEH=c.emissive.getHex();c.userData.baseEI=c.emissiveIntensity;}
+      }
       o.material=c;
     };
     Array.isArray(o.material)?o.material.forEach(assign):assign(o.material);
   });
-  return {root,bones,materials,headY:inst.headY,profile:inst.profile,charQuat:inst.charQuat};
+  return {root,bones,materials,headY:inst.headY,headFit:inst.headFit,profile:inst.profile};
 }
