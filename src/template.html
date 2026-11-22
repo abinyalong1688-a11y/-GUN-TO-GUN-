@@ -204,7 +204,10 @@
 
   <div id="debug" class="hidden"></div>
 </div>
-<script>window.__GTG_GLB__=/*__GLB__*/null;</script>
+<!-- The main bundle runs BEFORE the character payload: an interactive menu no longer has to
+     wait for the multi-megabyte GLB data. GLB tags below are inert (non-executing) and are
+     read on demand by modelAssets.js once the document finishes parsing. -->
 <script>//__JS__</script>
+<!--__GLB__-->
 </body>
 </html>

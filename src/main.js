@@ -43,7 +43,7 @@ const TUTORIAL=[
   {zh:'按 1 循环主武器,2 手枪,3 军刀',en:'Press 1 to cycle primaries, 2 sidearm, 3 knife'},
   {zh:'按 G / F / V 投掷破片 / 闪光 / 烟雾',en:'Press G / F / V for frag / flash / smoke'},
 ];
-const VERSION='1.9.3';
+const VERSION='1.9.4';
 const _rsO=new THREE.Vector3(); // reused ray-sphere test vector (zero allocation on the hot path)
 
 class Game{
@@ -144,9 +144,14 @@ class Game{
     this.portraits=new PortraitRenderer(this.assets);
     this.ui.portraits=this.portraits; // C4: menu operator card portraits
     // GLB characters load in the background (?model=proc|gltf overrides); when they arrive the
-    // portrait cache is stale — clear it and rebuild the roster so cards switch to the new look
-    preloadCharacters();
+    // portrait cache is stale — clear it and rebuild the roster so cards switch to the new look.
+    // The character data sits in inert <script> tags AFTER this bundle, so decoding starts once
+    // the document is parsed. The menu is fully interactive in the meantime and the procedural
+    // builders cover the gap until the models are ready.
     modelAssets.onReady(()=>{this.portraits.cache.clear();this.ui.buildOperators();});
+    if(typeof document!=='undefined'&&document.readyState==='loading')
+      document.addEventListener('DOMContentLoaded',preloadCharacters,{once:true});
+    else preloadCharacters();
     this.audio=new AudioFX();
     if(this.mapOverride&&MAPS[this.mapOverride])this.ui.sel.map=this.mapOverride; // per-map screenshot / verification hook
     this.buildWorldFor(this.ui.sel.map);

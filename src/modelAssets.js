@@ -59,10 +59,17 @@ export const modelAssets={
   },
 };
 
-/* ---- GLB sources: embedded (single-file build) → dev fetch fallback ---- */
+/* ---- GLB sources: inert embedded tags (single-file build) → legacy global → dev fetch ----
+   The build writes each model into its own <script type="application/octet-stream"> tag.
+   Reading only the tag we need avoids materialising a ~4.5 MB JS object literal at parse
+   time, and lets the main bundle start while the payload is still streaming in. */
 function glbSource(name){
-  const embedded=(typeof window!=='undefined')&&window.__GTG_GLB__&&window.__GTG_GLB__[name];
-  if(embedded)return Promise.resolve(embedded);
+  if(typeof document!=='undefined'){
+    const el=document.getElementById('gtg-glb-'+name);
+    if(el&&el.textContent.length>64)return Promise.resolve(el.textContent.trim());
+  }
+  const legacy=(typeof window!=='undefined')&&window.__GTG_GLB__&&window.__GTG_GLB__[name];
+  if(legacy)return Promise.resolve(legacy);
   return Promise.resolve(`assets/characters/${name}.glb`);
 }
 function toArrayBuffer(src){
