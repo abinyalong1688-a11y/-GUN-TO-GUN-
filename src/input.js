@@ -55,7 +55,7 @@ export class KeyboardMouseAdapter{
       if(e.code==='KeyR')g.weapon.switchT<0&&g.weapon.startReload();
       if(e.code==='Digit1')g.weapon.switchTo(0);                            // primary slot (press repeatedly to cycle all 4)
       if(e.code==='Digit2')g.weapon.switchTo(g.weapon.primaryCount);        // Desert Eagle
-      if(e.code==='Digit3')g.weapon.switchTo(g.weapon.primaryCount+1);      // combat knife
+      if(e.code==='Digit3')g.weapon.switchTo(g.weapon.primaryCount+1);      // UMP-45 backup SMG
       // M3-G1: grenades — G frag / F flash / V smoke
       if(e.code==='KeyG'&&g.grenades)g.grenades.throw('frag');
       if(e.code==='KeyF'&&g.grenades)g.grenades.throw('flash');

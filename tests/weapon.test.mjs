@@ -25,7 +25,8 @@ test('sniper / rifle / SMG / pistol damage and weight ordering matches real-worl
   assert.ok(g('awp').speedMul<g('ak47').speedMul,'Longbow should be the heaviest');
   assert.ok(g('mp5').rpm>g('ak47').rpm,'MP5 should fire faster than the rifles');
   assert.ok(g('mp5').speedMul>g('ak47').speedMul,'SMG should move faster than a rifle');
-  assert.ok(g('knife').speedMul>g('deagle').speedMul,'knife should move faster than any gun');
+  assert.ok(g('ump45').speedMul>g('m4a4').speedMul,'the backup SMG should be lighter than the rifles');
+  assert.ok(g('deagle').speedMul>g('ump45').speedMul,'the pistol should stay the lightest gun');
   assert.ok(g('awp').mag<g('ak47').mag,'sniper magazine should be smaller');
 });
 
@@ -48,8 +49,14 @@ test('recoilShot: deterministic, climbs over the first shots, stateless reset wh
   assert.ok(typeof recoilShot(ak,0,false).right==='number','horizontal drift should be a number');
 });
 
-test('knife is melee and uses no ammo',()=>{
-  const k=WEAPON_DEFS.knife;
-  assert.ok(k.melee);
-  assert.equal(k.mag,0);
+test('third slot: the UMP-45 backup SMG replaced the melee knife',()=>{
+  const u=WEAPON_DEFS.ump45;
+  assert.ok(u,'slot 3 should be the UMP-45');
+  assert.equal(WEAPON_DEFS.knife,undefined,'the combat knife should be gone');
+  assert.equal(u.mag,25);
+  assert.ok(u.reserve>0,'a firearm needs reserve ammo');
+  assert.ok(u.auto,'the backup SMG should be full-auto');
+  assert.ok(!u.melee,'slot 3 must be a firearm, not melee');
+  assert.ok(u.rpm>400&&u.rpm<800,'compact SMG fire rate, got '+u.rpm);
+  assert.ok(u.dmg>WEAPON_DEFS.mp5.dmg,'the .45 UMP should hit harder per round than the 9 mm MP5');
 });

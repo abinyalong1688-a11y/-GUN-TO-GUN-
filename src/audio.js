@@ -267,15 +267,6 @@ export class AudioFX{
     this._noise(t,.24,.55,{freq:220,q:.7,type:'lowpass'});
     this._tone(t,.13,.85,{freq:120,end:36,type:'sawtooth'});
   }
-  knifeSwing(){ // knife swing (miss)
-    if(!this.ok)return;const t=this.ctx.currentTime;
-    this._noise(t,.13,.3,{freq:2600,q:1.1,slide:500});
-  }
-  knifeHit(){ // knife hit
-    if(!this.ok)return;const t=this.ctx.currentTime;
-    this._noise(t,.08,.5,{freq:1500,q:2,slide:350});
-    this._tone(t,.07,.4,{freq:340,end:110,type:'square'});
-  }
   botShot(dist){
     if(!this.ok)return;const t=this.ctx.currentTime;
     const v=Math.max(.05,.5-Math.min(1,dist/50)*.45);

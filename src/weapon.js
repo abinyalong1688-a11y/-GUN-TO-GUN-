@@ -1,5 +1,5 @@
-// weapon.js — weapon system: 1 primary (all 4 faction primaries carried, press 1 to cycle) 2 Desert Eagle 3 combat knife
-// semi-auto trigger · knife slash / heavy stab · viewmodel recoil / ADS / reload / switching / muzzle flash / shell ejection
+// weapon.js — weapon system: 1 primary (all 4 faction primaries carried, press 1 to cycle) 2 Desert Eagle 3 UMP-45 backup SMG
+// semi-auto / full-auto triggers · viewmodel recoil / ADS / reload / switching / muzzle flash / shell ejection
 import * as THREE from 'three';
 import {isEN} from './i18n.js';
 
@@ -41,9 +41,10 @@ export const WEAPON_DEFS={
    spreadHip:.02,spreadAds:.009,moveSpread:.004,heatShot:.013,heatMax:.032,
    kick:.03,kickAds:.017,recoilV:.023,recoilH:.008,auto:false,
    tracer:0xffe9c8,tracerW:.042,tracerSpeed:540,reloadDur:2.2,speedMul:.98},
-  knife:{id:'knife',name:'战术军刀 · 近战',nameEn:'Tactical Knife · Melee',slotName:'军刀',slotEn:'Knife',rpm:150,dmg:40,mag:0,reserve:0,
-   spreadHip:0,spreadAds:0,moveSpread:0,heatShot:0,heatMax:0,
-   kick:0,kickAds:0,recoilV:0,recoilH:0,auto:false,tracer:0,tracerW:0,melee:true,reloadDur:0,speedMul:1.06},
+  ump45:{id:'ump45',name:'UMP-45 · .45 ACP',slotName:'UMP-45',rpm:600,dmg:34,mag:25,reserve:75,
+   spreadHip:.019,spreadAds:.0068,moveSpread:.0022,heatShot:.0034,heatMax:.015,
+   kick:.0078,kickAds:.0044,recoilV:.0102,recoilH:.0042,auto:true,
+   tracer:0xffd7a2,tracerW:.027,tracerSpeed:440,reloadDur:2.9,speedMul:.97,adsLift:.043},
 };
 
 /* Weapon / slot name for the current language (the other weapon names are already English) */
@@ -73,9 +74,9 @@ export class Weapon{
     this._addFPArms(); // first-person arms (inherit the gun's fire / ADS / switch animations)
 
     // Default Nova loadout (setLoadout resets it for the chosen faction at match start)
-    this.defs=[WEAPON_DEFS.m4a4,WEAPON_DEFS.deagle,WEAPON_DEFS.knife];
+    this.defs=[WEAPON_DEFS.m4a4,WEAPON_DEFS.deagle,WEAPON_DEFS.ump45];
     this.primaryCount=1;      // number of primaries (pressing 1 repeatedly cycles them)
-    this.lastPrimary=0;       // last primary held (1 returns straight to it from the pistol / knife)
+    this.lastPrimary=0;       // last primary held (1 returns straight to it from the pistol / SMG)
     this.cur=0;
     this.state=this.defs.map(d=>({ammo:d.mag,reserve:d.reserve}));
     this.reloading=false;this.reloadT=0;this._reloadSnd=0;
@@ -83,10 +84,9 @@ export class Weapon{
     this.recoilMul=1;this.reloadSpeedMul=1;this.rpmMul=1;
     this.camKick=0;this.gunKickZ=0;this.gunKickRX=0;this.gunKickRY=0;this._slide=0;
     this.camKickYaw=0;this.recoilIdx=0;this.recoilReset=0;
-    this.bobT=0;this._trigWasDown=false;this._adsWas=false;
+    this.bobT=0;this._trigWasDown=false;
     this.muzzleFlashT=0;
     this.switchT=-1;      // weapon switch animation timer
-    this.swingT=0;this.swingHeavy=false; // knife swing animation
     // Muzzle flash
     this.flash=new THREE.Mesh(new THREE.PlaneGeometry(.3,.3),
       new THREE.MeshBasicMaterial({map:assets.tex.flash,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false,depthTest:false}));
@@ -136,7 +136,7 @@ export class Weapon{
       const mag=this._mk();                            // curved magazine (two segments)
       this._box(mag,.03,.1,.05,M.gunDark,0,-.05,0,.32);
       this._box(mag,.03,.085,.048,M.gunDark,0,-.115,.028,.62);
-      mag.position.set(0,-.045,-.03);
+      mag.position.set(0,-.025,-.03);
       g.add(mag);g.userData.mag=mag;
       g.userData.muzzle=new THREE.Vector3(0,.02,-.6);   // muzzle point (group space)
       this.models.ak47=g;
@@ -174,20 +174,22 @@ export class Weapon{
       const box=(...a)=>this._box(g,...a),cyl=(...a)=>this._cyl(g,...a);
       if(!M.gunGreen)M.gunGreen=new THREE.MeshStandardMaterial({color:0x39463b,roughness:.6,metalness:.3});
       box(.048,.078,.40,M.gunGreen,0,0,-.05);          // body
-      cyl(.012,.30,M.gunDark,0,.012,-.42);             // long barrel
+      cyl(.012,.34,M.gunDark,0,.012,-.42);             // long barrel (reaches into the receiver)
       box(.016,.02,.05,M.gunDark,0,.012,-.575);        // flash hider
       cyl(.028,.22,M.gunDark,0,.095,-.06);             // high-power scope
       box(.03,.03,.05,M.gunDark,0,.095,.06);           // scope mount
+      box(.03,.032,.05,M.gunDark,0,.051,-.16);         // front scope riser (receiver → tube)
+      box(.03,.032,.05,M.gunDark,0,.051,.055);         // rear scope riser
       cyl(.024,.01,M.shades,0,.095,.07);               // eyepiece
       box(.014,.03,.06,M.gunDark,.033,.02,.02);        // bolt handle
       // Details: elevation / windage turrets + bolt knob
-      this._box(g,.014,.014,.014,M.gunDark,0,.135,-.06);
-      this._box(g,.012,.012,.014,M.gunDark,.042,.095,-.06);
+      this._box(g,.014,.014,.014,M.gunDark,0,.129,-.06);
+      this._box(g,.012,.012,.014,M.gunDark,.034,.095,-.06);
       const boltBall=new THREE.Mesh(new THREE.SphereGeometry(.011,10,8),M.gunDark);
       boltBall.position.set(.033,.02,.052);g.add(boltBall);
       g.userData.mag=box(.032,.08,.08,M.gunDark,0,-.07,-.05);
       box(.045,.09,.14,M.gunGreen,0,-.005,.18);        // stock
-      box(.05,.02,.1,M.gunGreen,0,.055,.17);           // cheek rest
+      box(.05,.02,.1,M.gunGreen,0,.048,.17);           // cheek rest
       box(.03,.09,.045,M.gunPoly,0,-.085,.06,.15);     // grip
       g.userData.muzzle=new THREE.Vector3(0,.012,-.6);
       this.models.awp=g;
@@ -199,7 +201,7 @@ export class Weapon{
       box(.044,.068,.24,M.gunDark,0,0,-.05);           // compact receiver
       box(.048,.055,.12,M.gunPoly,0,-.002,-.19);       // handguard
       cyl(.008,.1,M.gunDark,0,.006,-.30);              // short barrel
-      box(.014,.04,.012,M.gunDark,0,.042,-.34);        // front sight ring base
+      box(.03,.04,.012,M.gunDark,0,.03,-.34);          // front sight ring base (hood sits on the barrel)
       const mp5mag=this._mk();                         // curved magazine
       this._box(mp5mag,.026,.09,.04,M.gunDark,0,-.045,0,.18);
       this._box(mp5mag,.026,.07,.038,M.gunDark,0,-.125,.02,.4);
@@ -220,7 +222,8 @@ export class Weapon{
       cyl(.01,.14,M.gunDark,0,.01,-.33);               // barrel
       box(.02,.02,.04,M.gunDark,0,.01,-.41);           // flash hider
       cyl(.021,.13,M.gunDark,0,.082,-.04);             // integrated scope tube
-      cyl(.017,.01,M.shades,0,.082,.045);              // eyepiece
+      box(.03,.032,.14,M.gunDark,0,.048,-.03);         // scope mount rail (receiver → tube)
+      cyl(.017,.01,M.shades,0,.082,.03);               // eyepiece
       box(.05,.06,.11,M.gunPoly,0,-.005,.15);          // folding stock
       box(.03,.09,.045,M.gunPoly,0,-.085,.04,.15);     // grip
       g.userData.mag=box(.03,.10,.05,M.gunDark,0,-.085,-.02,.1);
@@ -241,7 +244,7 @@ export class Weapon{
       cyl(.019,.01,M.shades,0,.085,.055);              // eyepiece (dark glass)
       box(.02,.015,.12,M.gunDark,0,.052,-.14);         // top rail
       box(.03,.085,.045,M.gunPoly,0,-.085,.03,.15);    // grip (forward)
-      g.userData.mag=box(.032,.11,.05,M.gunDark,0,-.105,-.075,-.12); // rear magazine (bullpup signature)
+      g.userData.mag=box(.032,.11,.05,M.gunDark,0,-.09,-.075,-.12); // rear magazine (bullpup signature)
       box(.048,.075,.12,M.gunPoly,0,-.005,.16);        // butt
       box(.026,.07,.03,M.gunPoly,0,-.075,-.17);        // vertical foregrip
       g.userData.muzzle=new THREE.Vector3(0,.008,-.44);
@@ -256,7 +259,7 @@ export class Weapon{
       // Slide serrations (attached to the slide so they follow the recoil animation)
       for(let i=0;i<3;i++)for(const sx of[-1,1])
         this._box(slide,.004,.036,.006,M.gunDark,sx*.0225,.022,.02-i*.014);
-      box(.036,.036,.045,M.gunSteel,0,.022,-.175);     // muzzle block
+      box(.036,.036,.045,M.gunSteel,0,.022,-.172);     // muzzle block
       box(.008,.016,.012,M.gunSteel,0,.054,-.135);     // front sight
       box(.014,.018,.012,M.gunSteel,0,.052,.03);       // rear sight
       box(.042,.05,.13,M.gunDark,0,-.018,.03);         // lower frame
@@ -267,18 +270,38 @@ export class Weapon{
       g.userData.muzzle=new THREE.Vector3(0,.022,-.21); // muzzle point (group space)
       this.models.deagle=g;
     }
-    /* --- Tactical knife --- */
+    /* --- UMP-45 (both factions): compact .45 SMG, straight magazine + folding stock --- */
     {
       const g=this._mk();
-      const box=(...a)=>this._box(g,...a);
-      box(.02,.044,.095,M.gunDark,0,-.005,.055);       // handle
-      for(let i=0;i<3;i++)box(.023,.006,.02,M.gunPoly,0,-.02+i*.018,.075); // handle wrap
-      box(.036,.014,.014,M.gunDark,0,-.005,-.005);     // guard
-      box(.007,.03,.15,M.gunSteel,0,0,-.085);          // blade
-      box(.004,.026,.13,M.gunSteel,.0045,0,-.08);      // edge bevel (highlight strip on the right edge)
-      box(.007,.02,.05,M.gunSteel,0,.006,-.178,.22);   // tip
-      box(.006,.052,.008,M.gunDark,0,-.005,.108);      // pommel ring
-      this.models.knife=g;
+      const box=(...a)=>this._box(g,...a),cyl=(...a)=>this._cyl(g,...a);
+      box(.05,.075,.24,M.gunPoly,0,0,-.04);            // boxy polymer receiver
+      box(.03,.012,.20,M.gunDark,0,.043,-.04);         // top rail (sits on the receiver)
+      // Rear sight: an open frame (not a solid block) so the front post stays visible in ADS
+      box(.026,.005,.012,M.gunDark,0,.047,.028);       // frame bottom
+      box(.026,.005,.012,M.gunDark,0,.072,.028);       // frame top
+      box(.005,.03,.012,M.gunDark,-.0105,.0595,.028);  // frame left post
+      box(.005,.03,.012,M.gunDark,.0105,.0595,.028);   // frame right post
+      box(.012,.028,.014,M.gunDark,0,.055,-.142);      // front sight post
+      box(.046,.052,.13,M.gunPoly,0,-.002,-.215);      // handguard
+      cyl(.009,.10,M.gunDark,0,.008,-.32);             // short barrel
+      box(.02,.02,.03,M.gunDark,0,.008,-.372);         // muzzle collar
+      box(.038,.05,.06,M.gunPoly,0,-.05,-.055);        // magwell
+      const mag=this._mk();                            // straight .45 magazine
+      this._box(mag,.03,.11,.05,M.gunDark,0,-.055,0,.1);
+      this._box(mag,.032,.006,.052,M.gunDark,0,-.105,0); // base plate
+      mag.position.set(0,-.055,-.05);
+      g.add(mag);g.userData.mag=mag;
+      box(.032,.10,.045,M.gunPoly,0,-.075,.062,.18);   // pistol grip
+      box(.008,.005,.055,M.gunDark,0,-.062,.006);      // trigger guard bottom
+      box(.008,.028,.006,M.gunDark,0,-.048,-.02);      // guard front post
+      box(.006,.016,.006,M.gunDark,0,-.045,-.002,.2);  // trigger
+      box(.008,.02,.14,M.gunPoly,-.017,.005,.15);      // folding stock rail L
+      box(.008,.02,.14,M.gunPoly,.017,.005,.15);       // folding stock rail R
+      box(.05,.07,.014,M.gunPoly,0,0,.226);            // butt plate
+      box(.004,.016,.05,M.gunDark,.027,.015,-.02);     // ejection port
+      box(.012,.012,.04,M.gunDark,-.03,.02,-.03);      // charging handle
+      g.userData.muzzle=new THREE.Vector3(0,.008,-.39);
+      this.models.ump45=g;
     }
     /* --- Shared details: trigger / guard / ejection port (long guns) --- */
     const trigZ={ak47:.08,m4a4:.075,mp5:.05,sg553:.04,awp:.06,aug:.03};
@@ -300,23 +323,23 @@ export class Weapon{
       this._box(mag,w,.005,d,M.gunDark,0,-.03,0);  // magazine bottom rib
     }
     // AK-47 front sight wings
-    this._box(this.models.ak47,.004,.028,.02,M.gunDark,-.014,.056,-.53);
-    this._box(this.models.ak47,.004,.028,.02,M.gunDark,.014,.056,-.53);
+    this._box(this.models.ak47,.004,.028,.02,M.gunDark,-.009,.056,-.53);
+    this._box(this.models.ak47,.004,.028,.02,M.gunDark,.009,.056,-.53);
     // MP5 front sight ring wings
     this._box(this.models.mp5,.004,.02,.02,M.gunDark,-.013,.046,-.34);
     this._box(this.models.mp5,.004,.02,.02,M.gunDark,.013,.046,-.34);
     // M4A4 / AK-47 butt plates
-    this._box(this.models.m4a4,.05,.08,.014,M.gunPoly,0,-.005,.345);
+    this._box(this.models.m4a4,.05,.08,.014,M.gunPoly,0,-.005,.292);
     this._box(this.models.ak47,.047,.08,.012,M.gunDark,0,-.008,.24);
     this.group.add(this.models.ak47,this.models.m4a4,this.models.aug,this.models.sg553,
-      this.models.awp,this.models.mp5,this.models.deagle,this.models.knife);
+      this.models.awp,this.models.mp5,this.models.deagle,this.models.ump45);
     for(const k in this.models)this.models[k].visible=false;
     this.models.m4a4.visible=true;
   }
 
   /* ================= First-person arms =================
      One arm = full sleeve (uniform) + gloved hand with only the fingertips showing; parented inside
-     the weapon model group, so it inherits recoil / ADS / reload / switch / knife animations.
+     the weapon model group, so it inherits recoil / ADS / reload / switch animations.
      tip = grip point, entry = off-screen entry point. */
   _arm(g,tip,entry,r=.034,opts={}){
     const M=this.assets.mats;
@@ -372,6 +395,9 @@ export class Weapon{
     }
     fist.rotation.x=opts.tilt!=null?opts.tilt:.15;
     add(fist);
+    // Attachment-integrity check (src/attach.js) ignores the arms: they reach in from
+    // off-screen on purpose and are not part of the gun assembly.
+    for(const o of [fore,slv,fist])o.traverse(c=>{if(c.isMesh)c.userData.fpArm=true;});
     if(sup)g.userData.armSupport=sup;
   }
   _addFPArms(){
@@ -411,8 +437,12 @@ export class Weapon{
     const dg=this.models.deagle;
     this._arm(dg,new THREE.Vector3(.01,-.075,.06),new THREE.Vector3(.13,-.24,.26),.032,{tilt:.12,side:-1});
     this._arm(dg,new THREE.Vector3(.045,-.058,.02),new THREE.Vector3(-.12,-.22,.14),.03,{tilt:.5,side:1,support:true});
-    // Knife: single-handed reverse grip
-    this._arm(this.models.knife,new THREE.Vector3(0,-.045,.05),new THREE.Vector3(.13,-.22,.24),.033,{tilt:.45,side:-1});
+    // UMP-45: right hand on the grip + left hand under the short handguard
+    {
+      const u=this.models.ump45;
+      this._arm(u,new THREE.Vector3(.01,-.078,.062),new THREE.Vector3(.13,-.25,.18),.035,{tilt:.12,side:-1});
+      this._arm(u,new THREE.Vector3(-.005,-.03,-.215),new THREE.Vector3(-.13,-.22,-.02),.037,{tilt:.95,side:1,support:true});
+    }
   }
 
   /* C3: first-person arms recoloured by operator faction / gender (Nova blue-grey / Rogue dark red; female skin tone).
@@ -443,7 +473,7 @@ export class Weapon{
     const list=(Array.isArray(primaryIds)?primaryIds:[primaryIds])
       .map(id=>WEAPON_DEFS[id]).filter(Boolean);
     if(!list.length)list.push(WEAPON_DEFS.m4a4);
-    this.defs=[...list,WEAPON_DEFS.deagle,WEAPON_DEFS.knife];
+    this.defs=[...list,WEAPON_DEFS.deagle,WEAPON_DEFS.ump45];
     this.primaryCount=list.length;
     this.state=this.defs.map(d=>({ammo:d.mag,reserve:d.reserve}));
     this.reloading=false;
@@ -454,8 +484,8 @@ export class Weapon{
   }
 
   /* ================= Switching (slot semantics) =================
-     1 = primary slot: pressing it on a primary cycles through all 4; from the pistol / knife it returns to the last primary
-     2 = Desert Eagle  3 = knife  wheel = cycle through every weapon */
+     1 = primary slot: pressing it on a primary cycles through all 4; from the pistol / SMG it returns to the last primary
+     2 = Desert Eagle  3 = UMP-45  wheel = cycle through every weapon */
   switchTo(idx){
     if(idx<0||idx>=this.defs.length)return;
     if(this.switchT>=0)return;
@@ -479,7 +509,7 @@ export class Weapon{
     if(instant)this.group.position.copy(HIP_POS);
     this.ui.weaponSlots(idx);
     const d=this.defs[idx],s=this.state[idx];
-    this.ui.setAmmo(d.melee?-1:s.ammo,d.melee?0:s.reserve,this.reloading,wName(d));
+    this.ui.setAmmo(s.ammo,s.reserve,this.reloading,wName(d));
     this.recoilIdx=0;this.camKickYaw=0;
     // Weapon weight affects move speed (heavier weapons move slower)
     this.speedCb&&this.speedCb(d.speedMul||1);
@@ -493,7 +523,6 @@ export class Weapon{
   muzzleCameraLocal(target){
     // Accepts a reusable vector: zero allocation on the hot path
     const d=this.def;
-    if(d.melee)return target.copy(this.group.position);
     const tip=this.models[d.id].userData.muzzle;
     return tip?target.copy(this.group.position).add(tip):target.copy(this.group.position);
   }
@@ -509,7 +538,6 @@ export class Weapon{
   }
 
   startReload(){
-    if(this.def.melee)return;
     const s=this.st;
     if(this.reloading||s.ammo>=this.def.mag||s.reserve<=0)return;
     this.reloading=true;this.reloadT=0;this._reloadSnd=0;
@@ -521,14 +549,6 @@ export class Weapon{
     const take=Math.min(need,s.reserve);
     s.ammo+=take;s.reserve-=take;
     this.reloading=false;
-  }
-
-  _swing(heavy,fireCb){
-    const d=this.def;
-    this.fireT=heavy?1.0:60/d.rpm;
-    this.swingT=1;this.swingHeavy=heavy;
-    this.audio.knifeSwing();
-    fireCb(0,{melee:true,heavy});
   }
 
   update(dt,input,player,cam,time,fireCb){
@@ -553,14 +573,14 @@ export class Weapon{
       this.gunKickZ*=Math.max(0,1-9*dt);this.gunKickRX*=Math.max(0,1-9*dt);this.gunKickRY*=Math.max(0,1-7*dt);
       this.camKickYaw*=Math.max(0,1-6*dt);
       this._slide=Math.max(0,this._slide-dt*9);
-      this._trigWasDown=!!input.firing;this._adsWas=!!input.ads;
+      this._trigWasDown=!!input.firing;
       return;
     }
 
     const d=this.def,s=this.st;
 
-    // ADS (the knife cannot aim)
-    const wantAds=input.ads&&!d.melee&&!this.reloading&&!player.sprinting;
+    // ADS
+    const wantAds=input.ads&&!this.reloading&&!player.sprinting;
     this.adsAmt+=((wantAds?1:0)-this.adsAmt)*Math.min(1,10*dt);
 
     // Reload
@@ -585,56 +605,47 @@ export class Weapon{
 
     // Fire
     this.fireT-=dt;
-    if(d.melee){
-      // Knife: left click slash (40) / right click heavy stab (65)
-      const slash=input.firing&&!this._trigWasDown;
-      const stab=input.ads&&!this._adsWas;
-      if(slash&&this.fireT<=0)this._swing(false,fireCb);
-      else if(stab&&this.fireT<=0)this._swing(true,fireCb);
-    }else{
-      const canFire=!this.reloading&&s.ammo>0&&!player.sprinting;
-      const trig=input.firing&&s.ammo>0;
-      const wantFire=d.auto?trig:(trig&&!this._trigWasDown); // semi-auto: fires on the trigger edge
-      if(wantFire&&canFire&&this.fireT<=0){
-        // Carry over last frame's overshoot (at most one frame) so the fire rate is not rounded down by the frame rate (MP5 @60fps back from ~720 to 800 rpm)
-        this.fireT=Math.max(this.fireT,-dt)+60/(d.rpm*(this.rpmMul||1));
-        s.ammo--;
-        this.heat=Math.min(d.heatMax,this.heat+d.heatShot);
-        const ads=this.adsAmt;
-        const rm=this.recoilMul||1;
-        this.camKick+=(ads>.7?d.kickAds:d.kick)*rm;
-        // Recoil pattern: deterministic vertical climb + horizontal drift (learnable spray control)
-        const rec=recoilShot(d,this.recoilIdx,ads>.7);
-        this.camKick+=rec.up*rm;
-        this.camKickYaw+=rec.right*rm;
-        this.recoilIdx=Math.min(40,this.recoilIdx+1);
-        this.recoilReset=.35;
-        this.gunKickZ=Math.min(.07,this.gunKickZ+(d.id==='deagle'?.03:.018));
-        this.gunKickRX=Math.min(.12,this.gunKickRX+(d.id==='deagle'?.05:.03));
-        this.gunKickRY+=(Math.random()-.5)*(d.id==='deagle'?.05:.02); // random horizontal flick
-        this.gunKickRY=Math.max(-.07,Math.min(.07,this.gunKickRY));
-        if(d.id==='deagle')this._slide=1; // slide cycles back
-        this.muzzleFlashT=d.id==='deagle'?.05:.045;
-        this._ejectShell();
-        if(d.id==='deagle')this.audio.deagle();
-        else this.audio.shot();
-        fireCb(this.spreadRad(player));
-      }
-      if(!input.firing&&s.ammo===0&&!this._emptyClicked){
-        this._emptyClicked=true;this.audio.empty();
-        this.startReload();
-      }
-      if(input.firing)this._emptyClicked=false;
-      this.heat=Math.max(0,this.heat-dt*.010);
-      // Reset the recoil pattern once firing stops
-      if(input.firing)this.recoilReset=.35;
-      else{
-        this.recoilReset-=dt;
-        if(this.recoilReset<=0)this.recoilIdx=0;
-      }
+    const canFire=!this.reloading&&s.ammo>0&&!player.sprinting;
+    const trig=input.firing&&s.ammo>0;
+    const wantFire=d.auto?trig:(trig&&!this._trigWasDown); // semi-auto: fires on the trigger edge
+    if(wantFire&&canFire&&this.fireT<=0){
+      // Carry over last frame's overshoot (at most one frame) so the fire rate is not rounded down by the frame rate (MP5 @60fps back from ~720 to 800 rpm)
+      this.fireT=Math.max(this.fireT,-dt)+60/(d.rpm*(this.rpmMul||1));
+      s.ammo--;
+      this.heat=Math.min(d.heatMax,this.heat+d.heatShot);
+      const ads=this.adsAmt;
+      const rm=this.recoilMul||1;
+      this.camKick+=(ads>.7?d.kickAds:d.kick)*rm;
+      // Recoil pattern: deterministic vertical climb + horizontal drift (learnable spray control)
+      const rec=recoilShot(d,this.recoilIdx,ads>.7);
+      this.camKick+=rec.up*rm;
+      this.camKickYaw+=rec.right*rm;
+      this.recoilIdx=Math.min(40,this.recoilIdx+1);
+      this.recoilReset=.35;
+      this.gunKickZ=Math.min(.07,this.gunKickZ+(d.id==='deagle'?.03:.018));
+      this.gunKickRX=Math.min(.12,this.gunKickRX+(d.id==='deagle'?.05:.03));
+      this.gunKickRY+=(Math.random()-.5)*(d.id==='deagle'?.05:.02); // random horizontal flick
+      this.gunKickRY=Math.max(-.07,Math.min(.07,this.gunKickRY));
+      if(d.id==='deagle')this._slide=1; // slide cycles back
+      this.muzzleFlashT=d.id==='deagle'?.05:.045;
+      this._ejectShell();
+      if(d.id==='deagle')this.audio.deagle();
+      else this.audio.shot();
+      fireCb(this.spreadRad(player));
+    }
+    if(!input.firing&&s.ammo===0&&!this._emptyClicked){
+      this._emptyClicked=true;this.audio.empty();
+      this.startReload();
+    }
+    if(input.firing)this._emptyClicked=false;
+    this.heat=Math.max(0,this.heat-dt*.010);
+    // Reset the recoil pattern once firing stops
+    if(input.firing)this.recoilReset=.35;
+    else{
+      this.recoilReset-=dt;
+      if(this.recoilReset<=0)this.recoilIdx=0;
     }
     this._trigWasDown=!!input.firing;
-    this._adsWas=!!input.ads;
 
     // Recoil recovery
     this.camKick*=Math.max(0,1-7*dt);
@@ -659,6 +670,9 @@ export class Weapon{
       rot.z+=(SPRINT_ROT.z-rot.z)*Math.min(1,8*dt);
     }else{
       const target=HIP_POS.clone().lerp(ADS_POS,this.adsAmt);
+      // Optional per-weapon ADS lift: raises the viewmodel so the iron sights (lower than the
+      // M4's tall frame) sit on the crosshair instead of a few centimetres below it.
+      if(d.adsLift)target.y+=d.adsLift*this.adsAmt;
       pos.lerp(target,Math.min(1,12*dt));
       rot.x+=((HIP_ROT.x+(1-this.adsAmt)*-.02)-rot.x)*Math.min(1,12*dt);
       rot.y+=((HIP_ROT.y*(1-this.adsAmt))-rot.y)*Math.min(1,12*dt);
@@ -679,13 +693,6 @@ export class Weapon{
       rot.y+=bell(ph)*.08;            // yaw presenting the well
       rot.x+=bell(ph)*.07+slap*.09;   // tip up + dip on the slap
       pos.y-=slap*.014;               // the slap jolts the gun down a touch
-    }
-    // Knife swing animation
-    if(this.swingT>0){
-      this.swingT=Math.max(0,this.swingT-dt*(this.swingHeavy?1.6:2.6));
-      const a=Math.sin(this.swingT*Math.PI);
-      if(this.swingHeavy){pos.z-=a*.22;rot.x-=a*.5;}
-      else{pos.z-=a*.1;rot.z-=a*.85;rot.x+=a*.18;}
     }
 
     // Muzzle flash (aligned to the real muzzle point, group space)
@@ -721,7 +728,7 @@ export class Weapon{
       sh.mesh.rotation.x+=sh.rot.x*dt;sh.mesh.rotation.y+=sh.rot.y*dt;
     }
 
-    this.ui.setAmmo(d.melee?-1:s.ammo,d.melee?0:s.reserve,this.reloading,wName(d));
+    this.ui.setAmmo(s.ammo,s.reserve,this.reloading,wName(d));
     this.ui.weaponSlots(this.cur);
   }
 
@@ -729,7 +736,7 @@ export class Weapon{
   refreshLang(){
     const d=this.def,s=this.st;
     this.ui.setSlotNames(this.defs.map(wSlot));
-    this.ui.setAmmo(d.melee?-1:s.ammo,d.melee?0:s.reserve,this.reloading,wName(d));
+    this.ui.setAmmo(s.ammo,s.reserve,this.reloading,wName(d));
   }
 
   _ejectShell(){
@@ -747,7 +754,7 @@ export class Weapon{
   }
   addReserve(n){
     this.defs.forEach((d,i)=>{
-      if(!d.melee)this.state[i].reserve=Math.min(999,this.state[i].reserve+n);
+      this.state[i].reserve=Math.min(999,this.state[i].reserve+n);
     });
   }
 }
