@@ -291,7 +291,9 @@ export function t(k,vars){
   }
 })();
 
-/* Async IP probe: non-China IP → English UI; silent on failure (default Chinese) */
+/* Async IP probe: non-China IP → English UI; silent on failure (default Chinese).
+   One CORS-friendly endpoint only: the previous ipapi.co fallback rate-limited and logged
+   cross-origin errors, and the caller now caches the country and skips the probe in e2e. */
 async function tryFetchJSON(url,ms=2200){
   const c=new AbortController();
   const to=setTimeout(()=>c.abort(),ms);
@@ -302,10 +304,8 @@ async function tryFetchJSON(url,ms=2200){
   finally{clearTimeout(to);}
 }
 export async function detectIPCountry(){
-  const j=await tryFetchJSON('https://ipwho.is/');
-  if(j&&j.country_code)return j.country_code;
-  const j2=await tryFetchJSON('https://ipapi.co/json/');
-  if(j2&&j2.country_code)return j2.country_code;
+  const j=await tryFetchJSON('https://ipwho.is/?fields=country_code');
+  if(j&&typeof j.country_code==='string')return j.country_code;
   return null;
 }
 

@@ -44,7 +44,7 @@ const TUTORIAL=[
   {zh:'按 1 循环主武器,2 手枪,3 冲锋枪',en:'Press 1 to cycle primaries, 2 sidearm, 3 SMG'},
   {zh:'按 G / F / V 投掷破片 / 闪光 / 烟雾',en:'Press G / F / V for frag / flash / smoke'},
 ];
-const VERSION='1.10.0';
+const VERSION='1.10.1';
 const _rsO=new THREE.Vector3(); // reused ray-sphere test vector (zero allocation on the hot path)
 
 class Game{
@@ -263,14 +263,17 @@ class Game{
       console.table(PAD_MAP.buttons);
       console.log('[PAD] left stick move · right stick look · RT fire · LT aim · A/B/X/Y actions');
     }
-    // Async IP probe: non-China IP → English UI (result cached for the next first frame); ?ipcc= forces it (test hook)
+    // IP probe: non-China IP → English UI. Cache the result and skip it in e2e mode:
+    // a failed cross-origin probe is logged by the browser even though the game handles it silently.
     const forcedIPCC=new URLSearchParams(location.search).get('ipcc');
-    (forcedIPCC?Promise.resolve(forcedIPCC):detectIPCountry()).then(cc=>{
+    const applyIPCC=cc=>{
       if(!cc)return;
       store.set('o07_ipcc',cc);
       const want=cc==='CN'?'zh':'en';
       if(lang.cur!==want){ setLang(want); this._refreshLang(); }
-    }).catch(()=>{});
+    };
+    if(forcedIPCC)applyIPCC(forcedIPCC);
+    else if(!this.e2eMode&&!store.get('o07_ipcc'))detectIPCountry().then(applyIPCC).catch(()=>{});
 
     const ver=$('m-ver');
     if(ver)ver.textContent=`v${VERSION}`;
@@ -1510,6 +1513,17 @@ class Game{
       assert(s.data.daily.progress.kills===2,'dirty daily progress should be rebuilt, got '+s.data.daily.progress.kills);
       assert(s.data.daily.progress.headshots===1,'headshot daily progress should be awarded, got '+s.data.daily.progress.headshots);
     });
+    await run('daily-pvp',()=>{
+      localStorage.removeItem('o07_save_v2');
+      const s=new SaveSystem();
+      const goals=s.dailyGoals('pvp');
+      assert(goals.length===3&&goals[1].id==='score','PvP daily should use a score goal, got '+goals.map(g=>g.id).join(','));
+      s.data.daily.progress={kills:goals[0].n-1,wave:0,headshots:goals[2].n-1,score:goals[1].n-1};
+      s.data.daily.done=false;
+      s.award({kills:1,wave:0,headshots:1,score:goals[1].n,time:0,opId:'frost'});
+      assert(s.data.daily.progress.score>=goals[1].n,'PvP score daily should persist, got '+s.data.daily.progress.score);
+      assert(s.data.daily.done,'PvP goals should be able to complete the daily');
+    });
     await run('xp-award',()=>{
       const s=new SaveSystem();
       const before=s.levelOf('frost');
@@ -1928,6 +1942,7 @@ class Game{
       b.takeDamage(9999,this.playerName,true); // headshot credited to the player → team A reaches winKills
       assert(this.stats.headshots===1,'hero headshot should count for the daily challenge, got '+this.stats.headshots);
       assert(this.save.data.daily.progress.headshots>=hs0+1,'headshot daily should be awarded at match end');
+      assert(this.save.data.daily.progress.score>=200,'PvP score daily should be awarded at match end, got '+this.save.data.daily.progress.score);
       assert(this.state==='over','reaching winKills should end the match');
       this.startGame();
     });

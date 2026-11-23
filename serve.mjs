@@ -4,7 +4,7 @@ import {readFileSync,existsSync,statSync} from 'fs';
 import {join,extname,resolve,sep} from 'path';
 
 const ROOT=resolve('dist');
-const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css','.png':'image/png','.webmanifest':'application/manifest+json'};
+const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css','.png':'image/png','.svg':'image/svg+xml','.webmanifest':'application/manifest+json'};
 const port=process.env.PORT||8137;
 
 createServer((req,res)=>{

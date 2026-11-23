@@ -3,14 +3,14 @@
 // background); cross-origin requests (IP language probe etc.) bypass the cache.
 // Note: this file is not bundled by esbuild; build.mjs copies it into dist/ and syncs the
 // version with the game VERSION.
-const CACHE='gtg-v1.10.0'; // build.mjs injects the package.json version at build time so it cannot drift from the game VERSION
+const CACHE='gtg-v1.10.1'; // build.mjs injects the package.json version at build time so it cannot drift from the game VERSION
 const PAGE='./gun-to-gun.html';
 // IMPORTANT: './' must NOT be pre-cached. GitHub Pages has no /dist/index.html, so /dist/
 // returns 404 and caches.addAll() rejects the WHOLE install — the SW would never activate
 // and every visit would re-download the large HTML. The page fetched here is normally served
 // straight from the browser HTTP cache (GitHub Pages sends max-age=600), so immediately after
 // the first visit this costs practically zero extra transfer.
-const ASSETS=[PAGE,'./manifest.webmanifest'];
+const ASSETS=[PAGE,'./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 
 self.addEventListener('install',e=>{
   e.waitUntil(

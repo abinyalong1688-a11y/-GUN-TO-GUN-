@@ -1,6 +1,6 @@
 // build.mjs — bundle with esbuild into a single HTML file (all JS/CSS inlined, zero external requests)
 import * as esbuild from 'esbuild';
-import {readFileSync,writeFileSync,mkdirSync,statSync} from 'fs';
+import {readFileSync,writeFileSync,mkdirSync,statSync,copyFileSync} from 'fs';
 
 const result = await esbuild.build({
   entryPoints: ['src/main.js'],
@@ -40,7 +40,7 @@ const html = template
   .replace('/*__CSS__*/', () => css)
   .replace('//__JS__', () => js);
 
-// PWA offline support: service worker + manifest are emitted with dist (the three deploy artifacts)
+// PWA offline support: service worker + manifest + icons are emitted with dist (the deploy artifacts)
 // The SW cache name gets the package.json version so it stays in sync with the game VERSION and old caches do not linger
 const {version} = JSON.parse(readFileSync('package.json', 'utf-8'));
 const sw = readFileSync('src/sw.js', 'utf-8').replace('gtg-v__VERSION__', `gtg-v${version}`);
@@ -50,6 +50,7 @@ mkdirSync('dist', { recursive: true });
 writeFileSync('dist/gun-to-gun.html', html);
 writeFileSync('dist/sw.js', sw);
 writeFileSync('dist/manifest.webmanifest', manifest);
+for(const icon of ['icon.svg','icon-192.png','icon-512.png'])copyFileSync(`src/${icon}`,`dist/${icon}`);
 const mb = statSync('dist/gun-to-gun.html').size / 1024 / 1024;
 console.log(`✓ dist/gun-to-gun.html  ${mb.toFixed(2)} MB  (${SHARED_MODELS.length} shared rigs)  ${mb <= 4 ? '(within the 4 MB single-file budget)' : '(OVER the single-file budget!)'}`);
-console.log('✓ dist/sw.js + dist/manifest.webmanifest  (PWA offline support: all three deploy artifacts)');
+console.log('✓ dist/sw.js + dist/manifest.webmanifest + dist/icon*.png  (PWA offline support)');

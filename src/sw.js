@@ -10,7 +10,7 @@ const PAGE='./gun-to-gun.html';
 // and every visit would re-download the large HTML. The page fetched here is normally served
 // straight from the browser HTTP cache (GitHub Pages sends max-age=600), so immediately after
 // the first visit this costs practically zero extra transfer.
-const ASSETS=[PAGE,'./manifest.webmanifest'];
+const ASSETS=[PAGE,'./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 
 self.addEventListener('install',e=>{
   e.waitUntil(
