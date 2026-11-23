@@ -1,6 +1,6 @@
 # GUN TO GUN
 
-A single-file 3D FPS web game — faction combat · four maps · 7 realistic weapons · real physics (gravity / jumping / crouching / recoil ballistics) · male & female operatives · 4v4 AI deathmatch · endless waves.
+A single-file 3D FPS web game — faction combat · four maps · 8 realistic weapons · real physics (gravity / jumping / crouching / recoil ballistics) · male & female operatives · 4v4 AI deathmatch · endless waves.
 
 Designed and developed end-to-end as an original project: every system — rendering, physics, weapons, characters, AI, audio, UI — is implemented in-house and bundled into one self-contained HTML file.
 
@@ -8,7 +8,7 @@ Designed and developed end-to-end as an original project: every system — rende
 
 **Play online: https://abinyalong1688-a11y.github.io/-GUN-TO-GUN-/**
 
-Or **double-click [`dist/gun-to-gun.html`](dist/gun-to-gun.html)** (~5.6 MB / 3.1 MB gzipped, zero external requests, fully playable offline).
+Or **double-click [`dist/gun-to-gun.html`](dist/gun-to-gun.html)** (~3.1 MB / 1.6 MB gzipped, zero external requests, fully playable offline).
 
 | Key | Action |
 |---|---|
@@ -16,9 +16,9 @@ Or **double-click [`dist/gun-to-gun.html`](dist/gun-to-gun.html)** (~5.6 MB / 3.
 | Space | Jump (gravity / landing physics — hop onto crates, stack-climb to container tops) |
 | Ctrl | Crouch (lower profile, slower movement, tighter spread) |
 | Mouse | Aim (left click to fire) · cursor hidden while aiming (pointer lock), restored whenever a click is needed (menus / pause) · ±89° pitch |
-| Right click | Aim down sights (ADS) · high-magnification scope on AUG / Longbow / SG 553 (scope overlay + zoom-compensated sensitivity) · heavy knife stab |
+| Right click | Aim down sights (ADS) · high-magnification scope on AUG / Longbow / SG 553 (scope overlay + zoom-compensated sensitivity) |
 | R | Reload |
-| 1 / 2 / 3 | Switch weapons: **tap 1 repeatedly to cycle all 4 primaries** / Desert Eagle / combat knife (mouse wheel cycles all 6) |
+| 1 / 2 / 3 | Switch weapons: **tap 1 repeatedly to cycle all 4 primaries** / Desert Eagle / UMP-45 backup SMG (mouse wheel cycles all 6) |
 | TAB | Scoreboard (deathmatch) |
 | ESC | Pause |
 
@@ -33,23 +33,24 @@ Or **double-click [`dist/gun-to-gun.html`](dist/gun-to-gun.html)** (~5.6 MB / 3.
 
 ### v1.9 — rigged-model character pipeline (rigged bodies, procedural fallback)
 
-- **GLB character pipeline**: rigged humanoid models (male 1.80 m / female 1.75 m) load from data URLs embedded in the single file — orientation / scale / ground contact normalised at load, bone names resolved by keyword aliasing (any standard humanoid naming scheme works), `SkeletonUtils` instancing with per-instance material clones (hit flash and corpse fade stay independent). The original procedural builder remains the permanent fallback (`?model=proc` forces it; any load failure auto-falls back with zero regression)
+- **GLB character pipeline**: four shared rigged humanoid models (male 1.80 m / female 1.75 m) load from data URLs embedded in the single file — orientation / scale / ground contact normalised at load, bone names resolved by keyword aliasing (any standard humanoid naming scheme works), `SkeletonUtils` instancing with per-instance material clones (hit flash and corpse fade stay independent). The 8 operators draw from two **cross-shared gender pools** (each of the 4 rigs is used once per faction), so all four operators on a team have a distinct silhouette; baked headgear is shared. The original procedural builder remains the permanent fallback (`?model=proc` forces it; any load failure auto-falls back with zero regression)
+- **Faction identity**: `FACTION_PALETTES` gives every Nova operator blue-grey and every Rogue operator dark red for `jacket / armour / cloth / accent`. `accent` is emissive (armbands, lens glints, headset stripes), so teams read at a distance and in bust portraits. `skin`, `hair` and `addExtrasGLTF` attachments keep per-operator identity. Camos blend the team colour toward a neutral pattern instead of replacing it — a desert-camo Nova still reads as Nova.
 - **Procedural rig animation**: walk cycle with knee bend + ankle compensation stacked on each rig's bind-pose baseline (restE), idle weight shift, locomotion forward lean, rifle turn inertia, two-stage death (stagger → collapse)
-- **Material quality**: neutral three-channel canvas maps (cloth weave / armour panels / leather / skin pores) tinted per operator palette; headgear auto-scales to the rig head radius
+- **Material quality**: neutral three-channel canvas maps (cloth weave / armour panels / leather / skin pores) tinted per faction palette; headgear auto-scales to the rig head radius
 - **Per-map IBL**: the live sky shader is baked to a PMREM on every map switch — metals and outfits reflect real scene colours (sunset orange / aurora green / dock neon / lava glow); each map adds a rim backlight (cool blue / aurora green / neon cyan / lava orange) that lifts character silhouettes
-- **Asset pipeline**: `assets_raw/` (originals) → `scripts/compress_characters.mjs` (dedup + weld + vertex reorder + EXT_meshopt_compression, **no quantization on skinned meshes**) → `assets/characters/` (embedded); ~57 % smaller with lossless bone transforms and vertex colours
+- **Asset pipeline**: `assets_raw/` (originals) → `scripts/compress_characters.mjs` (dedup + weld + vertex reorder + EXT_meshopt_compression, **no quantization on skinned meshes**) → `assets/characters/`; ~57 % smaller with lossless bone transforms and vertex colours. `build.mjs` embeds only the 4 shared rigs; the other 4 stay in the repo so the 8-rig build can be restored by changing `SHARED_MODELS` + `MODEL_MAP`
 
 ## Weapons
 
-7 weapons with real ballistic physics; all 4 faction primaries are carried at once and switchable in-game.
+8 weapons with real ballistic physics; all 4 faction primaries are carried at once and switchable in-game.
 
 - **Primaries**
   - Nova: **M4A4** (31 dmg, stable) / **AUG** (30 dmg, 2.5× scope) / **Longbow** (115 dmg, one-shot kill, 4.7× deep scope, bolt-action) / **MP5** (26 dmg, 800 RPM SMG)
   - Rogue: **AK-47** (36 dmg, heavy recoil) / **SG 553** (32 dmg, 2.2× scope) / **Longbow** / **MP5**
-  - Switching: **tap 1 to cycle the 4 primaries** (from pistol/knife, 1 returns to the last primary); mouse wheel cycles all 6; the menu selection sets the starting weapon
+  - Switching: **tap 1 to cycle the 4 primaries** (from pistol/SMG, 1 returns to the last primary); mouse wheel cycles all 6; the menu selection sets the starting weapon
 - **Sidearm**: Desert Eagle .50 AE (53 dmg, 7 rounds, semi-auto trigger — one click, one shot)
-- **Melee**: tactical combat knife (left-click slash 40 / right-click heavy stab 65, no ammo)
-- **Weapon weight affects movement**: the Longbow is the slowest, the knife the fastest; applied instantly on every switch
+- **Backup SMG**: UMP-45 .45 ACP (34 dmg, 600 RPM, 25 rounds, full-auto) — the third slot replaced the melee knife in v1.10; a two-handed viewmodel with a straight magazine and a folding stock
+- **Weapon weight affects movement**: the Longbow is the slowest, the pistol the lightest; the backup SMG sits between the rifles and the pistol; applied instantly on every switch
 - **Recoil patterns**: deterministic climb + horizontal drift while firing, resets on release — spray control is a learnable skill
 - **Ballistics**: jumping wrecks accuracy, crouching tightens spread, movement increases dispersion, headshots ×2, red-core crits ×2.5
 - ADS sensitivity is automatically compensated by the zoom ratio
@@ -85,15 +86,16 @@ Three self-illuminated **double-sided** billboards (brand face / large URL face 
 src/
   assets.js   Materials — 1024px procedural Canvas PBR textures (sand / snow / basalt / ice / wet asphalt) + normal maps + weapon wood / faction fabrics + neon signage + billboard art; zero image files
   world.js    Scene — parametric sky shaders (sunset / aurora night / rain night / ember) + four distinct per-map layouts + lighting / fog / ambient particles
-  weapon.js   Weapons — three-slot loadout viewmodels + first-person arms (tactical gloves) + semi-auto trigger + slash animations + recoil / ADS / reload / shell ejection
+  weapon.js   Weapons — three-slot loadout viewmodels + first-person arms (tactical gloves) + semi-auto / full-auto triggers + recoil / ADS / reload / shell ejection
+  attach.js   Attachment integrity — connected-island check that every weapon part is welded to the gun body (unit test + ?e2e=1)
   heroes.js   Characters — realistic 3D faction operatives (lathe-surface torsos, facial features, hair physics, faction outfits) and 4v4 AI
   enemies.js  Enemies — three drone classes (sensor windows / guard rings / detail parts) + AI + projectiles + occlusion checks
   player.js   Player — movement / circle-vs-AABB collision / health / regeneration
   waves.js    Gameplay — wave scheduling / spawn throttling / supplies
   effects.js  FX — GPU point particles + dual-layer tracers (white-hot core / weapon-tinted halo / muzzle tip glow, parameterized per weapon) + hit flashes + normal-aligned bullet decals + fireballs / shock rings / debris
-  audio.js    Audio — every sound effect synthesized live via WebAudio (including the Desert Eagle's heavy report and knife swings); zero audio files
+  audio.js    Audio — every sound effect synthesized live via WebAudio (including the Desert Eagle's heavy report); zero audio files
   ui.js       UI — login menu / four-state interface / killfeed / scoreboard (Nova vs Rogue) / weapon bar
-  main.js     Main loop — state machine + raycast hits (statics / drones / character spheres) + knife melee checks + Bloom / ACES
+  main.js     Main loop — state machine + raycast hits (statics / drones / character spheres) + Bloom / ACES
 build.mjs     esbuild bundle into a single HTML file
 ```
 
@@ -102,15 +104,15 @@ build.mjs     esbuild bundle into a single HTML file
 ```bash
 npm install        # three@0.170.0 + esbuild
 npm run build      # produces dist/gun-to-gun.html
-npm test           # unit tests (node --test): utils / weapon stats / movement physics / wave scheduling
+npm test           # unit tests (node --test): utils / weapon stats / weapon attachment integrity / movement physics / wave scheduling
 npm run serve      # local server http://127.0.0.1:8137/ (testing only)
 ```
 
 Built-in verification hooks:
 
 - `?shot=menu|combat|dm|over` — jump straight into a state for screenshot review
-- `?selftest=1` — weapon self-test (primary hit-kill + Desert Eagle semi-auto + knife melee); results in the debug bar and console
-- `?e2e=1` — **system integration test**: 54 end-to-end assertions (loading / ADS / recoil ballistics / gravity jump / crate-top landing / crouch / weight-based speed / **4-primary same-slot cycling** / crits / XSS protection / 360° look); results in `window.__e2e` and the debug bar; deterministic, reproducible in background tabs
+- `?selftest=1` — weapon self-test (primary hit-kill + Desert Eagle semi-auto + UMP-45 full-auto burst); results in the debug bar and console
+- `?e2e=1` — **system integration test**: 56 end-to-end assertions (loading / ADS / recoil ballistics / gravity jump / crate-top landing / crouch / weight-based speed / **4-primary same-slot cycling** / **backup-SMG full-auto** / **attachment integrity** / crits / XSS protection / 360° look); results in `window.__e2e` and the debug bar; deterministic, reproducible in background tabs
 - `?perf=1` — hitch monitor: slow-frame (>25 ms) count and max frame time reported to console periodically
 - `?ipcc=US` / `?ipcc=CN` — force the interface language (default: auto by IP — English overseas / Chinese in China; silent fallback on probe failure)
 
@@ -119,7 +121,7 @@ Built-in verification hooks:
 When hosting in the cloud, **upload the `dist/` trio together**: `gun-to-gun.html` + `sw.js` + `manifest.webmanifest`.
 
 - **Offline mode (PWA)**: a built-in Service Worker caches the game on the first online visit, so it **reopens instantly from cache with no network** (navigation is stale-while-revalidate: the cached copy is served immediately and a fresh copy is fetched in the background for the next visit); also supports browser "install to desktop" for fullscreen play
-- **First-visit loading**: the HTML is ~5.6 MB (3.1 MB gzipped) and ~83 % of it is the eight rigged character GLBs. The main bundle is placed **before** that payload, so the menu becomes interactive after only ~270 KB of transfer; the models live in inert `<script type="application/octet-stream">` tags read on demand once parsing completes (procedural characters cover the gap). On slow links (e.g. GitHub Pages from mainland China) the remaining model bytes still stream in afterwards.
+- **First-visit loading**: the HTML is ~3.1 MB (1.6 MB gzipped) and ~70 % of it is the four shared rigged character GLBs (v1.10 cut the gzipped payload by ~46 %). The main bundle is placed **before** that payload, so the menu becomes interactive after only ~270 KB of transfer; the models live in inert `<script type="application/octet-stream">` tags read on demand once parsing completes (procedural characters cover the gap). On the ~27 KB/s link measured from mainland China, full download drops from ~111 s to ~60 s while time-to-interactive stays unchanged.
 - **Language detection**: the hosted version detects the UI language from the client IP (English overseas / Chinese in China). This is the only optional external call — it fails silently offline and never affects the game itself (the game body remains zero-external-request)
 - Cross-origin probe requests are never cached; the SW cache is purged automatically by version number on updates. The SW pre-cache list must not contain `./` — `/dist/` has no index and returns 404 on GitHub Pages, which makes `caches.addAll()` reject the whole install
 
@@ -148,9 +150,10 @@ Security / stability / performance work done to a ship-ready standard:
 - [x] 3 enemy AI classes: move, attack, die
 - [x] PBR materials + four lighting atmospheres + shadows + Bloom / ACES, no overexposure
 - [x] Menu / combat / deathmatch / end-screen multi-state screenshot verification
-- [x] Raycast hits + cover blocking + red-core crits + character headshots ×2 + knife melee
-- [x] Three-slot weapon system: faction primaries / Desert Eagle (semi-auto) / knife (slash / stab)
+- [x] Raycast hits + cover blocking + red-core crits + character headshots ×2 + backup SMG full-auto
+- [x] Attachment integrity: no floating weapon parts (scopes, butt plates, sights welded — unit + e2e check)
+- [x] Three-slot weapon system: faction primaries / Desert Eagle (semi-auto) / UMP-45 backup SMG (full-auto)
 - [x] Bullet decals conform to surfaces; explosions include fireball + shockwave + debris
 - [x] Shaders precompiled — no freeze on first entry
 - [x] Production hardening: nickname XSS escaping, dirty-storage fallbacks, context-loss recovery, exception circuit breaker, zero-allocation hot paths, map-switch disposal
-- [x] Zero console errors; single-file build ~5.6 MB (3.1 MB gzipped, mostly 8 embedded rigged GLBs); zero external requests; playable offline
+- [x] Zero console errors; single-file build ~3.1 MB (1.6 MB gzipped, 4 shared rigged GLBs); zero external requests; playable offline
