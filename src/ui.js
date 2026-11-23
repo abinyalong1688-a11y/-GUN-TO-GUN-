@@ -324,15 +324,9 @@ export class UI{
     const key=ammo+'|'+reserve+'|'+reloading+'|'+weaponName;
     if(key===this._ammoKey)return;
     this._ammoKey=key;
-    if(ammo<0){ // knife: no ammo
-      this.el.ammo.textContent='—';
-      this.el.reserve.textContent=t('hud_melee');
-      this.el.ammo.classList.remove('low');
-    }else{
-      this.el.ammo.textContent=String(ammo);
-      this.el.reserve.textContent=reloading?t('hud_reloading'):'/ '+reserve;
-      this.el.ammo.classList.toggle('low',ammo<=8&&!reloading);
-    }
+    this.el.ammo.textContent=String(ammo);
+    this.el.reserve.textContent=reloading?t('hud_reloading'):'/ '+reserve;
+    this.el.ammo.classList.toggle('low',ammo<=8&&!reloading);
     if(weaponName)this.el.weapon.textContent=weaponName;
   }
   setSlotNames(names){

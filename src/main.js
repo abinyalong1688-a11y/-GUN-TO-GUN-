@@ -13,6 +13,7 @@ import {MAPS,buildWorld,disposeWorld} from './world.js';
 import {Effects} from './effects.js';
 import {Player} from './player.js';
 import {Weapon,wName,wSlot} from './weapon.js';
+import {attachmentIslands} from './attach.js';
 import {Enemies} from './enemies.js';
 import {Waves} from './waves.js';
 import {HeroTeam} from './heroes.js';
@@ -40,10 +41,10 @@ const TUTORIAL=[
   {zh:'WASD 移动,鼠标瞄准',en:'Move with WASD, aim with the mouse'},
   {zh:'按住右键开镜(ADS),精度更高',en:'Hold right mouse to aim down sights'},
   {zh:'按 R 换弹,避免空仓',en:'Press R to reload before running dry'},
-  {zh:'按 1 循环主武器,2 手枪,3 军刀',en:'Press 1 to cycle primaries, 2 sidearm, 3 knife'},
+  {zh:'按 1 循环主武器,2 手枪,3 冲锋枪',en:'Press 1 to cycle primaries, 2 sidearm, 3 SMG'},
   {zh:'按 G / F / V 投掷破片 / 闪光 / 烟雾',en:'Press G / F / V for frag / flash / smoke'},
 ];
-const VERSION='1.9.4';
+const VERSION='1.10.0';
 const _rsO=new THREE.Vector3(); // reused ray-sphere test vector (zero allocation on the hot path)
 
 class Game{
@@ -501,7 +502,7 @@ class Game{
       this.player.sprintSpeed=this.baseSprint*mul;
     };
     this.weapon.setFaction(op);
-    // Primaries: all 4 faction primaries carried, the menu choice is drawn first (slots: 1 cycle / 2 Desert Eagle / 3 knife)
+    // Primaries: all 4 faction primaries carried, the menu choice is drawn first (slots: 1 cycle / 2 Desert Eagle / 3 UMP-45)
     const CT_P=['m4a4','aug','awp','mp5'],T_P=['ak47','sg553','awp','mp5'];
     const pool=hero==='ct'?CT_P:T_P;
     const first=pool.includes(sel.primary)?sel.primary:pool[0];
@@ -617,7 +618,7 @@ class Game{
     return t>0?t:null;
   }
 
-  fire(spread,opts={}){
+  fire(spread){
     this.stats.shots++;
     const cam=this.camera;
     const def=this.weapon.def;
@@ -625,48 +626,6 @@ class Game{
     const pl=this.player;
     const sy=Math.sin(pl.yaw),cy=Math.cos(pl.yaw),sp=Math.sin(pl.pitch),cp=Math.cos(pl.pitch);
     const dir=this._sd.set(-sy*cp,sp,-cy*cp);
-
-    // Knife: melee range check (slash 40 / stab 65)
-    if(def.melee){
-      const range=opts.heavy?2.4:2.2;
-      const dmg=opts.heavy?65:40;
-      this.ray.set(cam.position,dir);this.ray.far=range;
-      const sHits=this.ray.intersectObjects(this.world.shootStatics,false);
-      let bestT=sHits.length?sHits[0].distance:range;
-      let bestStatic=sHits.length?sHits[0]:null;
-      let bestHero=null,bestEnemy=null,bestEnemyHit=null;
-      for(const h of this.heroes.list){
-        if(!h.alive||h.team===this.playerTeam)continue;
-        for(const s of h.hitSpheres()){
-          const t=this._raySphere(cam.position,dir,s.c,s.r);
-          if(t!==null&&t<bestT){bestT=t;bestHero=h;bestStatic=null;}
-        }
-      }
-      if(this.enemies.list.length){
-        const groups=this.enemies.list.filter(e=>!e.decor).map(e=>e.group);
-        if(groups.length){
-          const eHits=this.ray.intersectObjects(groups,true);
-          if(eHits.length&&eHits[0].distance<bestT){
-            bestT=eHits[0].distance;bestEnemyHit=eHits[0];
-            let o=eHits[0].object;
-            while(o&&!o.userData.enemyRef)o=o.parent;
-            bestEnemy=o?o.userData.enemyRef:null;bestStatic=null;
-          }
-        }
-      }
-      if(bestHero){
-        bestHero.takeDamage(dmg,this.playerName);
-        this.audio.knifeHit();this.ui.hitmark(false);
-        this.effects.impact(this._send.copy(cam.position).addScaledVector(dir,bestT),UP,'metal',{decal:false});
-      }else if(bestEnemy){
-        this.enemies.damage(bestEnemy,'body',dmg,bestEnemyHit.point);
-        this.audio.knifeHit();this.ui.hitmark(false);
-      }else if(bestStatic){
-        const n=bestStatic.face?this._sr.copy(bestStatic.face.normal).transformDirection(bestStatic.object.matrixWorld):UP;
-        this.effects.impact(bestStatic.point,n,bestStatic.object.userData.surface||'concrete');
-      }
-      return;
-    }
 
     const right=this._sr.set(cy,0,-sy);
     const up=this._su.set(sp*sy,cp,sp*cy);
@@ -1034,7 +993,7 @@ class Game{
 
       this._fallbackEdgeRotate(dt);
       this.player.update(dt,this.input,this.keys,this.time,this.audio);
-      this.weapon.update(dt,this.input,this.player,this.camera,this.time,(d,opts)=>this.fire(d,opts));
+      this.weapon.update(dt,this.input,this.player,this.camera,this.time,d=>this.fire(d));
 
       if(this.mode==='dm'||this.mode==='koth'){
         this.heroes.update(dt,this.time,(a,b)=>this._los(a,b));
@@ -1417,9 +1376,32 @@ class Game{
       }
       assert(JSON.stringify(seq)===JSON.stringify(['aug','awp','mp5','m4a4']),'in-slot cycle order: '+seq.join(','));
       this.weapon.switchTo(this.weapon.primaryCount+1);stepW(25);
-      assert(this.weapon.def.id==='knife','should switch to the knife');
+      assert(this.weapon.def.id==='ump45','should switch to the UMP-45 backup SMG');
+      assert(this.weapon.def.auto&&this.weapon.def.mag>0,'the third slot must be a full-auto gun, not melee');
       this.weapon.switchTo(0);stepW(25);
       assert(this.weapon.def.id==='m4a4','pressing 1 should return to the last primary, m4a4');
+    });
+    await run('backup-smg-auto',()=>{
+      this.weapon.setLoadout(['m4a4','aug','awp','mp5'],0);
+      this.weapon.switchTo(this.weapon.primaryCount+1);stepW(40);
+      assert(this.weapon.def.id==='ump45','slot 3 should hold the UMP-45');
+      const a0=this.weapon.st.ammo;
+      this.input.firing=true;
+      for(let i=0;i<10;i++)this.weapon.update(.016,this.input,this.player,this.camera,this.time,()=>{});
+      this.input.firing=false;
+      assert(this.weapon.st.ammo<a0,'holding the trigger should fire the backup SMG automatically: '+a0+' → '+this.weapon.st.ammo);
+      assert(this.weapon.st.ammo>0,'the SMG should still have rounds left after a short burst');
+      for(let i=0;i<30;i++)this.weapon.update(.016,this.input,this.player,this.camera,this.time,()=>{}); // reset the trigger edge
+    });
+    await run('weapon-attach-welded',()=>{
+      // Attachment integrity: every viewmodel must be one welded assembly (detached scope /
+      // butt plate / front sight would show up as a separate island, see src/attach.js)
+      const bad=[];
+      for(const id in this.weapon.models){
+        const r=attachmentIslands(this.weapon.models[id]);
+        if(!r.ok)bad.push(id+' ('+r.count+' islands)');
+      }
+      assert(!bad.length,'floating weapon parts: '+bad.join(', '));
     });
     await run('weapon-speed-weight',()=>{
       this.weapon.setLoadout(['m4a4','aug','awp','mp5'],0);
@@ -1427,10 +1409,13 @@ class Game{
       const awpSpd=this.player.speed;
       this.weapon.switchTo(0);stepW(40); // M4A4
       const m4Spd=this.player.speed;
-      this.weapon.switchTo(this.weapon.primaryCount+1);stepW(40); // knife
-      const knifeSpd=this.player.speed;
+      this.weapon.switchTo(this.weapon.primaryCount+1);stepW(40); // UMP-45
+      const smgSpd=this.player.speed;
+      this.weapon.switchTo(this.weapon.primaryCount);stepW(40); // Desert Eagle
+      const pistolSpd=this.player.speed;
       assert(awpSpd<m4Spd,'Longbow should be slower than M4A4: '+awpSpd.toFixed(2)+' vs '+m4Spd.toFixed(2));
-      assert(knifeSpd>m4Spd,'holding the knife should be fastest: '+knifeSpd.toFixed(2)+' vs '+m4Spd.toFixed(2));
+      assert(smgSpd>m4Spd,'the backup SMG should be lighter than the rifles: '+smgSpd.toFixed(2)+' vs '+m4Spd.toFixed(2));
+      assert(pistolSpd>smgSpd,'the pistol should stay the lightest gun: '+pistolSpd.toFixed(2)+' vs '+smgSpd.toFixed(2));
     });
     await run('crit-damage-x2-5',()=>{
       this.enemies.clearAll();this.scene.updateMatrixWorld(true);
@@ -1839,7 +1824,7 @@ class Game{
     await run('fov-apply',()=>{
       this.baseHFov=90;this._hfovCur=90;this._applyCameraState();
       const want=THREE.MathUtils.radToDeg(2*Math.atan(Math.tan(THREE.MathUtils.degToRad(90)*.5)/this.camera.aspect));
-      assert(Math.abs(this.camera.fov-want)<.5,`FOV should apply: ${this.camera.fov.toFixed(2)} vs ${want.toFixed(2)}`);
+      assert(Math.abs(this.camera.fov-want)<.5,`FOV should apply: ${this.camera.fov.toFixed(2)} vs ${want.toFixed(2)} (adsAmt=${this.weapon.adsAmt.toFixed(2)} inputAds=${this.input.ads} weapon=${this.weapon.def.id||this.weapon.def.name} base=${this.baseHFov})`);
       this.baseHFov=106;this._hfovCur=106;this._applyCameraState();
     });
     await run('operator-camo-persist',()=>{
@@ -2106,23 +2091,26 @@ class Game{
       await new Promise(r=>setTimeout(r,200));
       const deagleOk=e2.dead||e2.hp<hp2;
       log(`deagle hp ${hp2} -> ${e2.dead?'DEAD':e2.hp.toFixed(1)} : ${deagleOk?'PASS':'FAIL'}`);
-      // 3. Knife melee
+      // 3. Backup SMG (slot 3, full-auto): hold the trigger at a drone — ammo and HP must both drop
       this.weapon.switchTo(this.weapon.primaryCount+1);
       for(let i=0;i<40;i++)this.weapon.update(.016,this.input,this.player,this.camera,this.time,()=>{});
       this.enemies.clearAll();
-      const e3=this.enemies.spawn('WASP',this.player.eye.clone().addScaledVector(dir,1.6),{entering:false});
-      e3.pos.y=1.5;
+      const e3=this.enemies.spawn('WASP',this.player.eye.clone().addScaledVector(dir,6),{entering:false});
+      e3.pos.y=1.62;
       e3.group.position.copy(e3.pos);
       this.scene.updateMatrixWorld(true);
       const hp3=e3.hp;
       const to3=e3.pos.clone().sub(this.player.eye);
-      this.player.yaw=Math.atan2(-to3.x,-to3.z);this.player.pitch=-.06;
+      this.player.yaw=Math.atan2(-to3.x,-to3.z);this.player.pitch=0;
       this.player.update(0,this.input,this.keys,this.time,this.audio);
-      this.fire(0,{melee:true,heavy:false});
+      const ammo3=this.weapon.st.ammo;
+      this.input.firing=true;
+      for(let i=0;i<8;i++)this.weapon.update(.02,this.input,this.player,this.camera,this.time,d=>this.fire(d));
+      this.input.firing=false;
       await new Promise(r=>setTimeout(r,200));
-      const knifeOk=e3.dead||e3.hp<hp3;
-      log(`knife hp ${hp3} -> ${e3.dead?'DEAD':e3.hp.toFixed(1)} : ${knifeOk?'PASS':'FAIL'}`);
-      this.ui.debug(`SELFTEST rifle ${ok?'PASS':'FAIL'} / deagle ${deagleOk?'PASS':'FAIL'} / knife ${knifeOk?'PASS':'FAIL'}`);
+      const smgOk=(e3.dead||e3.hp<hp3)&&this.weapon.st.ammo<ammo3;
+      log(`ump45 hp ${hp3} -> ${e3.dead?'DEAD':e3.hp.toFixed(1)} / ammo ${ammo3} -> ${this.weapon.st.ammo} : ${smgOk?'PASS':'FAIL'}`);
+      this.ui.debug(`SELFTEST rifle ${ok?'PASS':'FAIL'} / deagle ${deagleOk?'PASS':'FAIL'} / smg ${smgOk?'PASS':'FAIL'}`);
     }catch(err){
       log('FAIL '+err.message);
       this.ui.debug('SELFTEST FAIL '+err.message,true);

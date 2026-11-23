@@ -94,6 +94,7 @@ export class HeroBot{
        the bot — track progress and open a perpendicular detour when it grinds in place */
     this._stuck=0;this._stuckChk=.4;this._stuckPos=new THREE.Vector3();
     this.detourT=0;this._detourSide=0;
+    this._route=null;this._routeT=0; // corner waypoints around a blocker on the cover path
     this.flankDir=Math.random()>.5?1:-1;
     this.reactionT=0;this._lastTargetId=null; // last target identity — reaction re-arms when it changes
     this.difficulty=(game.settings&&game.settings.get('botDifficulty'))||'normal';
@@ -203,6 +204,7 @@ export class HeroBot{
     this.state='dying';
     this.deathT=0;
     this.respawnT=5.5;
+    this.vel.set(0,0,0); // stop dead — the corpse falls where it dropped, no slide
     this.game.onHeroKill(byName,this);
     this.bark('bark_down',true);
     this.fx.bloodPuff(new THREE.Vector3(this.pos.x,this.pos.y+1.1,this.pos.z));
@@ -268,15 +270,19 @@ export class HeroBot{
     this.ammo=this.magSize;this.burst=0;this.flashT=0;this._lowBarked=false;this.blindT=0;
     this._restoreFlash(); // the killing hit's white flash is never restored in the death branch; restore it on respawn or the bot stays white
     this.coverTarget=null;this.coverT=0;
+    this.vel.set(0,0,0); // don't inherit the death-frame velocity into the new life
+    this.strafeDir=Math.random()>.5?1:-1;this.flankDir=Math.random()>.5?1:-1;this._detourSide=0;
+    this.fireT=1+Math.random();this.burst=0;
     if(this.nameTag&&this.nameTag.bar)this.nameTag.bar.scale.x=1;
     for(const o of this._animParts)poseReset(o);
     this._headPitch=0;this._torsoYaw=0;
-    this.group.rotation.x=0;
+    this.group.rotation.x=0;this.group.rotation.z=0;
     const base=this.team==='A'?new THREE.Vector3(0,0,24):new THREE.Vector3(0,0,-24);
     this.place(base.clone().add(new THREE.Vector3((Math.random()-.5)*8,0,(Math.random()-.5)*8)),
       this.team==='A'?Math.PI:0);
     this._collide(this.game.world.colliders); // jittered spawn can land on map geometry (caldera gate pillars)
     this._stuck=0;this.detourT=0;this._stuckChk=.4;this._stuckPos.copy(this.pos);
+    this._route=null;this._routeT=0;
     this.audio.respawn();
     // Dead bots are skipped by HeroTeam.refreshModels — catch up on the GLB swap here
     if(this.builtWith!==modelAssets.mode())this.setOperator(this.def);
@@ -289,32 +295,77 @@ export class HeroBot{
     }
   }
 
+  /* Collide + slide: separate X and Z so a bot walks *along* a wall face instead of
+     grinding into it. Returns {hitX, hitZ} — which axes were blocked this frame — so the
+     movement code can decide a detour when both are blocked (a corner / dead-end). */
   _collide(colliders){
     const r=.45;
+    let hitX=false,hitZ=false;
     for(const c of colliders){
       if(this.pos.y>c.top)continue;
+      // (1) X axis
       const cx=Math.max(c.minX,Math.min(this.pos.x,c.maxX));
       const cz=Math.max(c.minZ,Math.min(this.pos.z,c.maxZ));
       const dx=this.pos.x-cx,dz=this.pos.z-cz;
-      const d2=dx*dx+dz*dz;
-      if(d2>r*r)continue;
-      if(d2>1e-8){
-        const d=Math.sqrt(d2),push=(r-d)/d;
-        this.pos.x+=dx*push;this.pos.z+=dz*push;
-      }else{
-        /* Center inside (or exactly on) the box: the boundary push-out above is a no-op,
-           so a bot spawned or separation-shoved fully inside would stay embedded — pop it
-           out to the nearest face + r. */
-        const dl=this.pos.x-c.minX,dr=c.maxX-this.pos.x,dn=this.pos.z-c.minZ,df=c.maxZ-this.pos.z;
-        const m=Math.min(dl,dr,dn,df);
-        if(m===dr)this.pos.x=c.maxX+r;
-        else if(m===dl)this.pos.x=c.minX-r;
-        else if(m===df)this.pos.z=c.maxZ+r;
-        else this.pos.z=c.minZ-r;
+      if(dx*dx+dz*dz<r*r){
+        // Centre fully inside the box (clamped to the centre, no direction): pop to the
+        // nearest face + r — the slide logic has no meaningful escape axis from dead-centre.
+        if(Math.abs(dx)<1e-6&&Math.abs(dz)<1e-6){
+          const dl=this.pos.x-c.minX,dr=c.maxX-this.pos.x,dn=this.pos.z-c.minZ,df=c.maxZ-this.pos.z;
+          const m=Math.min(dl,dr,dn,df);
+          if(m===dr){this.pos.x=c.maxX+r;hitX=true;}
+          else if(m===dl){this.pos.x=c.minX-r;hitX=true;}
+          else if(m===df){this.pos.z=c.maxZ+r;hitZ=true;}
+          else{this.pos.z=c.minZ-r;hitZ=true;}
+          continue;
+        }
+        // Slide along the axis of least penetration (the shallowest escape direction)
+        const overlapX=r-Math.abs(dx);
+        const overlapZ=r-Math.abs(dz);
+        if(overlapX<overlapZ){
+          hitX=true;
+          this.pos.x+=Math.sign(dx||1)*overlapX;
+        }else{
+          hitZ=true;
+          this.pos.z+=Math.sign(dz||1)*overlapZ;
+        }
       }
     }
     const dd=Math.hypot(this.pos.x,this.pos.z);
     if(dd>52){const k=52/dd;this.pos.x*=k;this.pos.z*=k;}
+    return {hitX,hitZ};
+  }
+
+  /* Bot-vs-bot separation applied as a steering force (not a post-hoc shove): a bot near a
+     teammate/enemy teammate steers around them instead of piling onto the same target point.
+     This is what breaks the "everyone rushes the player and jams into one spot" deadlock. */
+  _avoidBots(mx,mz){
+    const R=1.15,R2=R*R;
+    for(const h of this.game.heroes.list){
+      if(h===this||!h.alive)continue;
+      const dx=this.pos.x-h.pos.x,dz=this.pos.z-h.pos.z;
+      const d2=dx*dx+dz*dz;
+      if(d2>=R2||d2<1e-6)continue;
+      const d=Math.sqrt(d2);
+      const f=(R-d)/R*2.2; // stronger the closer they are
+      mx+=dx/d*f;mz+=dz/d*f;
+    }
+    return [mx,mz];
+  }
+
+  /* Advance along (mx,mz) with slide collision + stuck recovery. Applies bot avoidance,
+     runs the axis-separated collision, and returns {blocked} so the caller can trigger a
+     detour when the bot is hard up against a corner. */
+  _stepMove(mx,mz,dt){
+    let dx=mx,dz=mz;
+    [dx,dz]=this._avoidBots(dx,dz);
+    const k=Math.min(1,8*dt);
+    this.vel.x+=(dx-this.vel.x)*k;
+    this.vel.z+=(dz-this.vel.z)*k;
+    this.pos.x+=this.vel.x*dt;
+    this.pos.z+=this.vel.z*dt;
+    const res=this._collide(this.game.world.colliders);
+    return res;
   }
 
   update(dt,time,losCheck){
@@ -436,11 +487,29 @@ export class HeroBot{
       const needCover=this.hp/this.maxHp<.4||this.reloadT>0;
       if(!needCover)this.coverTarget=null;
       else if(!this.coverTarget||this.coverT<=0){
+        const prev=this.coverTarget;
         this.coverTarget=this._findCover(tPos,losCheck);
         this.coverT=2.5;
+        if(this.coverTarget!==prev)this._route=null;
       }
       if(this.coverTarget){
-        const cdx=this.coverTarget.x-this.pos.x,cdz=this.coverTarget.z-this.pos.z;
+        // Steer via a corner route when the straight line to the hiding spot is blocked
+        // (a low prop on the path would otherwise pin the bot against it).
+        let wx=this.coverTarget.x,wz=this.coverTarget.z;
+        if(this._route&&this._route.length){
+          wx=this._route[0].x;wz=this._route[0].z;
+          if(Math.hypot(wx-this.pos.x,wz-this.pos.z)<.4)this._route.shift();
+          if(!this._route.length){wx=this.coverTarget.x;wz=this.coverTarget.z;}
+        }
+        this._routeT-=dt;
+        if((!this._route||!this._route.length)&&this._routeT<=0){
+          this._routeT=.35;
+          if(!this._segFree(this.pos.x,this.pos.z,this.coverTarget.x,this.coverTarget.z)){
+            this._route=this._cornerRoute(this.coverTarget);
+            if(this._route&&this._route.length){wx=this._route[0].x;wz=this._route[0].z;}
+          }
+        }
+        const cdx=wx-this.pos.x,cdz=wz-this.pos.z;
         const cd=Math.max(.001,Math.hypot(cdx,cdz));
         mx=cdx/cd*spd;mz=cdz/cd*spd;
       }else{
@@ -459,27 +528,30 @@ export class HeroBot{
         mx=-dz*this._detourSide*spd*1.2;
         mz= dx*this._detourSide*spd*1.2;
       }
-      const k=Math.min(1,8*dt);
-      this.vel.x+=(mx-this.vel.x)*k;
-      this.vel.z+=(mz-this.vel.z)*k;
-      this.pos.x+=this.vel.x*dt;
-      this.pos.z+=this.vel.z*dt;
-      this._collide(this.game.world.colliders);
+      /* Advance with bot-vs-bot steering + slide collision. A corner (both axes blocked)
+         is a hard "dead-end" signal that forces a detour immediately — no grinding. */
+      const res=this._stepMove(mx,mz,dt);
 
       /* Stuck detection: full effort but no progress over a .4 s window (holding an already
-         reached cover spot does not count) — open a perpendicular detour around the blocker */
+         reached cover spot does not count) — open a perpendicular detour around the blocker.
+         A both-axes collision (corner/dead-end) also trips it instantly. */
       this._stuckChk-=dt;
       if(this._stuckChk<=0){
         const atGoal=this.coverTarget&&Math.hypot(this.coverTarget.x-this.pos.x,this.coverTarget.z-this.pos.z)<1;
         if(this.vel.length()>1&&!atGoal&&this.pos.distanceTo(this._stuckPos)<.12)this._stuck+=.4;
         else this._stuck=Math.max(0,this._stuck-.8);
         this._stuckPos.copy(this.pos);this._stuckChk=.4;
-        if(this._stuck>=.8&&this.detourT<=0){
-          this.detourT=.55+Math.random()*.3;
-          if(!this._detourSide)this._detourSide=Math.random()<.5?1:-1;
-          else if(Math.random()<.35)this._detourSide*=-1; // a failed detour may try the other side
-          this._stuck=0;
-        }
+      }
+      const hardBlocked=res.hitX&&res.hitZ&&this.vel.length()>1;
+      if((hardBlocked||this._stuck>=.8)&&this.detourT<=0){
+        this.detourT=.55+Math.random()*.3;
+        if(!this._detourSide)this._detourSide=Math.random()<.5?1:-1;
+        else if(Math.random()<.35)this._detourSide*=-1; // a failed detour may try the other side
+        // Slide bias: if only one axis is blocked, favor the free axis so the detour opens
+        // *away* from the wall instead of random-jittering into it.
+        if(res.hitX&&!res.hitZ)this._detourSide=Math.sign(mz)||this._detourSide;
+        else if(res.hitZ&&!res.hitX)this._detourSide=Math.sign(mx)||this._detourSide;
+        this._stuck=0;
       }
 
       // Bursts / spray (no firing while reloading). The pause branch only opens the
@@ -504,7 +576,10 @@ export class HeroBot{
     this.group.rotation.y=this.yaw;
   }
 
-  /* M3-G6: sample a hiding spot behind cover (LOS blocked and closest to the bot) */
+  /* M3-G6: sample a hiding spot behind cover (LOS blocked and closest to the bot).
+     The candidate is pushed to the cover's *outer edge* (a full 1.4 m + half-extent out from
+     the centre along the threat→cover axis), and rejected if it would land inside any other
+     collider — so a bot never routes itself straight into a wall it cannot reach. */
   _findCover(threat,losCheck){
     let best=null,bestD=1e9;
     const tx=threat.x,ty=threat.y||1.4,tz=threat.z;
@@ -518,11 +593,65 @@ export class HeroBot{
       const px=cx+dx/d*(hw+1.4),pz=cz+dz/d*(hz+1.4);
       // The spot must be inside the arena
       if(Math.hypot(px,pz)>50)continue;
+      // Reject a spot that would collide with any cover (incl. the sampled one): only
+      // genuinely standable, reachable hiding spots count.
+      let inside=false;
+      for(const o of this.game.world.colliders){
+        if(o.top<1)continue;
+        if(px>=o.minX-.45&&px<=o.maxX+.45&&pz>=o.minZ-.45&&pz<=o.maxZ+.45){inside=true;break;}
+      }
+      if(inside)continue;
       if(losCheck(this._coverFrom.set(px,1.4,pz),this._coverTo.set(tx,ty,tz)))continue;
       const dd=Math.hypot(px-this.pos.x,pz-this.pos.z);
       if(dd<bestD){bestD=dd;best=this._coverBest.set(px,0,pz);}
     }
     return best?best.clone():null;
+  }
+
+  /* Segment clearance: true when a bot-sized disc (.42 m, slightly under the .45 collide
+     radius so grazing an edge still counts as passable) swept along a→b touches no collider. */
+  _segFree(ax,az,bx,bz){
+    const len=Math.hypot(bx-ax,bz-az);
+    const n=Math.max(1,Math.ceil(len/.25));
+    for(let i=1;i<=n;i++){
+      const t=i/n,px=ax+(bx-ax)*t,pz=az+(bz-az)*t;
+      for(const c of this.game.world.colliders){
+        if(this.pos.y>c.top)continue;
+        const cx=Math.max(c.minX,Math.min(px,c.maxX)),cz=Math.max(c.minZ,Math.min(pz,c.maxZ));
+        if(Math.hypot(px-cx,pz-cz)<.42)return false;
+      }
+    }
+    return true;
+  }
+
+  /* Corner route around a blocking box: when the straight line to the goal is blocked, try
+     one- and two-corner paths along the expanded edges (both sides) and return the shortest
+     waypoint list. Deterministic — no random side picks, no grinding at corners. */
+  _cornerRoute(goal){
+    if(this._segFree(this.pos.x,this.pos.z,goal.x,goal.z))return null;
+    const e=.55;
+    let best=null,bestLen=1e9;
+    for(const c of this.game.world.colliders){
+      if(this.pos.y>c.top)continue;
+      const xs=[c.minX-e,c.maxX+e],zs=[c.minZ-e,c.maxZ+e];
+      const corners=[[xs[0],zs[0]],[xs[0],zs[1]],[xs[1],zs[0]],[xs[1],zs[1]]];
+      const adj=[[0,1],[1,3],[3,2],[2,0]];
+      const px=this.pos.x,pz=this.pos.z;
+      const tryPath=(pts)=>{
+        let ax=px,az=pz,total=0;
+        for(const [x,z] of pts){
+          if(!this._segFree(ax,az,x,z))return;
+          total+=Math.hypot(x-ax,z-az);ax=x;az=z;
+        }
+        if(!this._segFree(ax,az,goal.x,goal.z))return;
+        total+=Math.hypot(goal.x-ax,goal.z-az);
+        if(total<bestLen){bestLen=total;best=pts.map(([x,z])=>({x,z}));}
+      };
+      for(const [x,z] of corners)tryPath([[x,z]]);
+      for(const [a,b] of adj){const A=corners[a],B=corners[b];tryPath([A,B]);tryPath([B,A]);}
+      if(best)break; // the first blocking box produced a route
+    }
+    return best;
   }
 
   /* M2-A2: radio barks (6 s cooldown per bot; muting is handled by the audio bus) */
