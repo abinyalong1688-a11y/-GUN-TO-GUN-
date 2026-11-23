@@ -79,7 +79,7 @@ class Game{
     this.volume=this.settings.get('volume');
     this.quality=this.touchMode?'low':this.settings.get('quality');
     this.score=0;this.shake=0;this.dyingT=0;this.time=0;
-    this.stats={shots:0,hits:0,kills:0,critKills:0,time:0,bestCombo:0};
+    this.stats={shots:0,hits:0,kills:0,critKills:0,headshots:0,time:0,bestCombo:0};
     this.comboKills=0;this.comboT=0;
     this.playerName='Guard-07';
     this.playerTeam='A';
@@ -516,7 +516,7 @@ class Game{
     this.enemies.clearAll();
     this.heroes.clear();
     this.comboKills=0;this.comboT=0;
-    this.stats={shots:0,hits:0,kills:0,critKills:0,time:0,bestCombo:0};
+    this.stats={shots:0,hits:0,kills:0,critKills:0,headshots:0,time:0,bestCombo:0};
     this.score=0;this.shake=0;this.dyingT=0;
     this.startTime=performance.now()/1000;
 
@@ -677,7 +677,7 @@ class Game{
       this.stats.hits++;
       const head=bestHeroPart==='head';
       const dmg=def.dmg*(head?this.playerCritMul():1)*this.playerDamageMul();
-      bestHero.takeDamage(dmg,this.playerName);
+      bestHero.takeDamage(dmg,this.playerName,head);
       this.audio.hit(head);
       this.ui.hitmark(head);
       this.effects.impact(end,UP,'metal',{decal:false});
@@ -749,7 +749,7 @@ class Game{
 
   _onKill(e,crit){
     this.stats.kills++;
-    if(crit)this.stats.critKills++;
+    if(crit){this.stats.critKills++;this.stats.headshots++;} // daily headshot goal: drone core crits count too (waves has no human heads)
     this.comboT=4;this.comboKills++;
     if(this.comboKills>=2)this.ui.combo(this.comboKills);
     const comboMul=[1,1.25,1.5,2,2.5][Math.min(4,this.comboKills-1)];
@@ -800,7 +800,7 @@ class Game{
   }
 
   /* ================= Deathmatch hits ================= */
-  onHeroKill(killerName,victimHero){
+  onHeroKill(killerName,victimHero,headshot=false){
     if(!this.dm||(this.mode!=='dm'&&this.mode!=='koth'))return;
     const k=this.dm.scores.get(killerName);
     if(k)k.kills++;
@@ -810,6 +810,7 @@ class Game{
     this.ui.killFeed(killerName,victimHero.name,t('kill_verb'),mine);
     if(mine){
       this.stats.kills++;
+      if(headshot)this.stats.headshots++;
       this.addScore(200,victimHero.pos.clone().add(new THREE.Vector3(0,1.4,0)));
       this.audio.kill();
     }
@@ -880,6 +881,7 @@ class Game{
     const best=parseInt(store.get('o07_best','0'))||0;
     if(this.score>best)store.set('o07_best',this.score);
     this.audio.gameOver();
+    const award=this._awardProgress(); // award before the results screen so LV/XP is current
     this.ui.showOver({
       title:win?t('win'):t('lose'),
       win,kicker:t('dm_over_kicker'),
@@ -887,7 +889,7 @@ class Game{
       board:`<table><tr><th>${t('sb_role')}</th><th>${t('sb_faction')}</th><th>${t('sb_kills')}</th><th>${t('sb_deaths')}</th></tr>${rows}</table>`,
     });
     if(document.pointerLockElement)document.exitPointerLock();
-    this._awardProgress();
+    this._announceProgress(award);
   }
 
   /* M4-P5: award XP / progression at the end of a match */
@@ -895,12 +897,17 @@ class Game{
     const op=this.playerOperator||byId(DEFAULT_OP);
     const r=this.save.award({
       kills:this.stats.kills,wave:this.mode==='waves'?this.waves.n:0,
+      headshots:this.stats.headshots||0,
       score:this.score,time:this.stats.time,opId:op.id,
     });
     this.ui.showBest(this.save.data.stats.bestScore);
+    return r;
+  }
+  /* Shown after the results screen so it is not covered by the overlay */
+  _announceProgress(r){
+    if(!r)return;
     if(r.leveled)this.ui.banner(`${t('level_up')} LV.${r.level}`,'');
     else if(this.save.data.daily.done)this.ui.banner(t('daily_ready'),'');
-    return r;
   }
 
   /* M4-P4: generic mode result (KOTH timeout / capture complete) */
@@ -916,6 +923,7 @@ class Game{
     const best=parseInt(store.get('o07_best','0'))||0;
     if(this.score>best)store.set('o07_best',this.score);
     this.audio.gameOver();
+    const award=this._awardProgress(); // award before the results screen so LV/XP is current
     this.ui.showOver({
       title:win?t('win'):t('lose'),win,kicker:t('mode_koth'),
       stats:{...this.stats,waveLabel:t('dur_label'),wave:t('dur_fmt',{m:Math.floor(this.stats.time/60),s:Math.floor(this.stats.time%60)}),
@@ -923,7 +931,7 @@ class Game{
       board:`<table><tr><th>${t('sb_role')}</th><th>${t('sb_faction')}</th><th>${t('sb_kills')}</th><th>${t('sb_deaths')}</th></tr>${rows}</table>`,
     });
     if(document.pointerLockElement)document.exitPointerLock();
-    this._awardProgress();
+    this._announceProgress(award);
     if(this.leaderboard.enabled&&this.leaderboard.endpoint)
       this.leaderboard.submit(this.playerName,this.score);
   }
@@ -955,10 +963,12 @@ class Game{
         this.state='over';
         const best=parseInt(store.get('o07_best','0'))||0;
         if(this.score>best)store.set('o07_best',this.score);
+        const award=this._awardProgress(); // waves death is a match end: persist XP / stats / daily
         this.ui.showOver({
           title:t('fail_title'),win:false,kicker:t('kicker_lost'),
           stats:{...this.stats,wave:this.waves.n,score:this.score,best:Math.max(best,this.score)},
         });
+        this._announceProgress(award);
       }
     }
     const active=this.state==='playing'||this.state==='dying';
@@ -1490,6 +1500,16 @@ class Game{
       const s2=new SaveSystem();
       assert(s2.data.stats.bestScore===12345,'migrated data should read back');
     });
+    await run('save-dirty-daily',()=>{
+      const date=new Date().toISOString().slice(0,10);
+      localStorage.setItem('o07_save_v2',JSON.stringify({v:2,daily:{date,progress:null,done:false}}));
+      const s=new SaveSystem();
+      let err=null;
+      try{s.award({kills:2,wave:1,headshots:1,score:100,time:10,opId:'frost'});}catch(e){err=e;}
+      assert(!err,'dirty daily progress must not break the match award: '+(err&&err.message||''));
+      assert(s.data.daily.progress.kills===2,'dirty daily progress should be rebuilt, got '+s.data.daily.progress.kills);
+      assert(s.data.daily.progress.headshots===1,'headshot daily progress should be awarded, got '+s.data.daily.progress.headshots);
+    });
     await run('xp-award',()=>{
       const s=new SaveSystem();
       const before=s.levelOf('frost');
@@ -1498,6 +1518,21 @@ class Game{
       assert(s.data.daily.date&&new SaveSystem().dailyGoals().length===3,'3 daily challenges should be generated');
       const s3=new SaveSystem();
       assert(s3.data.operators.frost.xp===s.data.operators.frost.xp,'XP should persist');
+    });
+    await run('waves-award',()=>{
+      this.ui.sel.mode='waves';this.ui.sel.operator='frost';
+      this.startGame();
+      const before=JSON.parse(JSON.stringify(this.save.data));
+      this.stats.kills=4;this.stats.headshots=2;this.stats.time=40;this.score=1200;this.waves.n=6;
+      this.state='dying';this.dyingT=0;
+      this.tick(); // dying → over must persist the match exactly like DM/KOTH
+      const d=this.save.data;
+      assert(d.stats.kills===before.stats.kills+4,'waves kills should persist, got '+d.stats.kills);
+      assert(d.stats.playtime===before.stats.playtime+40,'waves playtime should persist, got '+d.stats.playtime);
+      assert(d.stats.bestScore>=1200,'waves score should update bestScore, got '+d.stats.bestScore);
+      assert(d.daily.progress.kills>=before.daily.progress.kills+4,'kill daily should progress, got '+d.daily.progress.kills);
+      assert(d.daily.progress.headshots>=before.daily.progress.headshots+2,'headshot daily should progress, got '+d.daily.progress.headshots);
+      assert(d.daily.progress.wave>=6,'wave daily should progress, got '+d.daily.progress.wave);
     });
     await run('koth-score',()=>{
       this.ui.sel.mode='koth';this.startGame();
@@ -1889,7 +1924,10 @@ class Game{
       assert(this.dm&&this.dm.winKills,'deathmatch should initialise scores');
       for(const s of this.dm.scores.values())if(s.team==='A')s.kills=this.dm.winKills-1;
       const b=this.heroes.list.find(h=>h.team==='B');
-      b.takeDamage(9999,this.playerName); // credited to the player → team A reaches winKills
+      const hs0=this.save.data.daily.progress.headshots;
+      b.takeDamage(9999,this.playerName,true); // headshot credited to the player → team A reaches winKills
+      assert(this.stats.headshots===1,'hero headshot should count for the daily challenge, got '+this.stats.headshots);
+      assert(this.save.data.daily.progress.headshots>=hs0+1,'headshot daily should be awarded at match end');
       assert(this.state==='over','reaching winKills should end the match');
       this.startGame();
     });

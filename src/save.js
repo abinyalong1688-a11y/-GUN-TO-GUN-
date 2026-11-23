@@ -5,6 +5,34 @@
 const KEY='o07_save_v2';
 const OPERATOR_IDS=['frost','snowwolf','swift','thunder','raven','fox','vulture','viper'];
 
+const todayKey=()=>new Date().toISOString().slice(0,10);
+const nonNegInt=v=>Math.max(0,Number.isFinite(+v)?(+v|0):0);
+
+/* Daily goals are date-seeded; ids are persisted, so keep the id set stable. */
+const dailyGoalsFor=date=>{
+  const seed=String(date||'').split('-').reduce((a,c)=>a*31+(+c||0),7);
+  return [
+    {id:'kills',n:8+(seed%7)},
+    {id:'wave',n:3+(seed%3)},
+    {id:'headshots',n:4+(seed%5)},
+  ];
+};
+
+/* localStorage is untrusted: rebuild the daily record instead of spreading it in.
+   A null / string / NaN progress field must never reach award() or the save file. */
+const cleanDaily=(raw,today)=>{
+  const src=raw&&typeof raw==='object'?raw:{};
+  const p=src.progress&&typeof src.progress==='object'?src.progress:{};
+  const date=typeof src.date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(src.date)?src.date:today;
+  const daily={
+    date,
+    progress:{kills:nonNegInt(p.kills),wave:nonNegInt(p.wave),headshots:nonNegInt(p.headshots)},
+    done:src.done===true,
+  };
+  daily.done=dailyGoalsFor(date).every(g=>daily.progress[g.id]>=g.n);
+  return daily;
+};
+
 const fresh=()=>({
   v:2,
   operators:Object.fromEntries(OPERATOR_IDS.map(id=>[id,{level:1,xp:0,camo:'default'}])),
@@ -37,7 +65,7 @@ export class SaveSystem{
           for(const k of ['bestScore','bestWave','kills','playtime'])
             if(typeof j.stats?.[k]==='number')d.stats[k]=Math.max(0,j.stats[k]|0);
           if(Array.isArray(j.unlocks))d.unlocks=[...new Set([...d.unlocks,...j.unlocks.filter(x=>typeof x==='string')])];
-          if(j.daily&&typeof j.daily==='object')d.daily={...d.daily,...j.daily};
+          if(j.daily)d.daily=cleanDaily(j.daily,todayKey());
         }
       }catch(e){}
     }else{
@@ -48,9 +76,11 @@ export class SaveSystem{
       }catch(e){}
     }
     // Daily challenges reset by date
-    const today=new Date().toISOString().slice(0,10);
+    const today=todayKey();
     if(d.daily.date!==today){
       d.daily={date:today,progress:{kills:0,wave:0,headshots:0},done:false};
+    }else{
+      d.daily=cleanDaily(d.daily,today);
     }
     this.data=d;
     return d;
@@ -65,9 +95,9 @@ export class SaveSystem{
   }
 
   /* Match rewards: returns XP earned and level-up info */
-  award({kills=0,wave=0,score=0,time=0,opId='frost'}={}){
+  award({kills=0,wave=0,headshots=0,score=0,time=0,opId='frost'}={}){
     const d=this.data;
-    const xp=Math.round(kills*12+wave*30+score/100+time/20);
+    const xp=Math.max(0,Math.round(kills*12+wave*30+score/100+time/20));
     const op=d.operators[opId]||(d.operators[opId]={level:1,xp:0,camo:'default'});
     const before=op.level;
     op.xp+=xp;
@@ -80,12 +110,13 @@ export class SaveSystem{
     }
     d.stats.bestScore=Math.max(d.stats.bestScore,score|0);
     d.stats.bestWave=Math.max(d.stats.bestWave,wave|0);
-    d.stats.kills+=Math.max(0,kills|0);
+    d.stats.kills+=nonNegInt(kills);
     d.stats.playtime+=Math.max(0,Math.round(time));
     // Daily progress
     const p=d.daily.progress;
-    p.kills+=Math.max(0,kills|0);
-    p.wave=Math.max(p.wave,wave|0);
+    p.kills+=nonNegInt(kills);
+    p.wave=Math.max(p.wave,nonNegInt(wave));
+    p.headshots+=nonNegInt(headshots);
     const goals=this.dailyGoals();
     d.daily.done=goals.every(g=>p[g.id]>=g.n);
     this.save();
@@ -93,12 +124,7 @@ export class SaveSystem{
   }
 
   dailyGoals(){
-    const seed=this.data.daily.date.split('-').reduce((a,c)=>a*31+(+c||0),7);
-    return [
-      {id:'kills',n:8+(seed%7)},
-      {id:'wave',n:3+(seed%3)},
-      {id:'headshots',n:4+(seed%5)},
-    ];
+    return dailyGoalsFor(this.data.daily.date);
   }
 }
 

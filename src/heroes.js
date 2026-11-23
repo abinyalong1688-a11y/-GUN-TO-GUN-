@@ -181,7 +181,7 @@ export class HeroBot{
     ];
   }
 
-  takeDamage(n,fromName){
+  takeDamage(n,fromName,headshot=false){
     if(!this.alive)return -1;
     this.hp-=n;
     if(this.nameTag&&this.nameTag.bar)
@@ -191,21 +191,21 @@ export class HeroBot{
     if(this.hp/this.maxHp<.35&&!this._lowBarked&&this.bark('bark_low'))this._lowBarked=true;
     for(const m of this.flashable){m.emissive.setHex(0xffffff);m.emissiveIntensity=.6;}
     if(this.hp<=0){
-      this.die(fromName);
+      this.die(fromName,headshot);
       return -1;
     }
     return this.hp;
   }
 
   /* C2: death — fall over in 0.7 s with the limbs landing flat, corpse gone ≈0.8 s later; respawn after 5.5 s */
-  die(byName){
+  die(byName,headshot=false){
     if(!this.alive)return;
     this.alive=false;
     this.state='dying';
     this.deathT=0;
     this.respawnT=5.5;
     this.vel.set(0,0,0); // stop dead — the corpse falls where it dropped, no slide
-    this.game.onHeroKill(byName,this);
+    this.game.onHeroKill(byName,this,headshot);
     this.bark('bark_down',true);
     this.fx.bloodPuff(new THREE.Vector3(this.pos.x,this.pos.y+1.1,this.pos.z));
     this.dropRifle();
