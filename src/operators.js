@@ -5,12 +5,21 @@
 
 export const DEFAULT_OP='frost';
 
-/* Camo override: only clothing colours change; skin / hair / accent keep the operator's identity */
+/* Faction identity: one shared outfit colour per team. skin / hair stay per-operator;
+   jacket / armour / cloth / accent are team-coloured so friend-foe reads at a glance
+   (accent is emissive and drives armbands / lens glints / headset stripes). */
+export const FACTION_PALETTES={
+  ct:{jacket:0x46536b,armor:0x2b3140,cloth:0x39465c,accent:0x7fd4ff},
+  t:{jacket:0x7e2620,armor:0x1e1c1c,cloth:0x2f2c2c,accent:0xff7a52},
+};
+
+/* Camos blend the team colour toward a neutral pattern instead of replacing it: the team
+   hue survives every camo, so a desert-camo Nova still reads as Nova. */
 export const CAMOS={
-  default:{},
-  desert:{jacket:0x6a5a42,armor:0x3a3226,cloth:0x8a7a5a},
-  snow:{jacket:0xc8d4e0,armor:0x8a9aaa,cloth:0xe8eef4},
-  urban:{jacket:0x4a4a52,armor:0x2a2a30,cloth:0x6a6a72},
+  default:{mix:0,target:0x808080},
+  desert:{mix:.55,target:0x9c8763},
+  snow:{mix:.62,target:0xd8e2ec},
+  urban:{mix:.50,target:0x3a3a42},
 };
 
 /* Palette convention (60-30-10):
@@ -104,8 +113,21 @@ export const OPERATORS=[
 export const byId=id=>OPERATORS.find(o=>o.id===id)||null;
 export const byFaction=f=>OPERATORS.filter(o=>o.faction===f);
 
-/* Operator base palette + camo override; unknown camos silently fall back to default */
+/* Team base palette + camo blend; unknown camos silently fall back to default.
+   Pure-data module: colour maths is inline, no three.js dependency. */
+function blendTo(hex,target,k){
+  if(!k)return hex;
+  const ch=(h,s)=>(h>>s)&255, mix=(a,b)=>Math.round(a+(b-a)*k);
+  return (mix(ch(hex,16),ch(target,16))<<16)|(mix(ch(hex,8),ch(target,8))<<8)|mix(ch(hex,0),ch(target,0));
+}
 export function paletteFor(def,camo='default'){
+  const team=FACTION_PALETTES[def.faction]||FACTION_PALETTES.ct;
   const c=CAMOS[camo]||CAMOS.default;
-  return {...def.palette,...c};
+  return {
+    ...def.palette,
+    jacket:blendTo(team.jacket,c.target,c.mix),
+    armor:blendTo(team.armor,c.target,c.mix),
+    cloth:blendTo(team.cloth,c.target,c.mix),
+    accent:team.accent, // emissive team ID stays fully saturated under every camo
+  };
 }

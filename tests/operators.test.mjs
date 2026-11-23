@@ -1,7 +1,7 @@
 // operators.test.mjs — operator registry data integrity (M1-S1.1 acceptance)
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {OPERATORS,byId,byFaction,DEFAULT_OP,CAMOS,paletteFor} from '../src/operators.js';
+import {OPERATORS,byId,byFaction,DEFAULT_OP,CAMOS,FACTION_PALETTES,paletteFor} from '../src/operators.js';
 import {WEAPON_DEFS} from '../src/weapon.js';
 
 test('operator count and faction split',()=>{
@@ -38,12 +38,24 @@ test('operator required fields are complete',()=>{
   }
 });
 
-test('camo override and unknown camo fallback',()=>{
-  const frost=byId('frost');
-  assert.deepEqual(paletteFor(frost,'default'),frost.palette);
+test('faction palettes are shared and camo blends without losing team identity',()=>{
+  const frost=byId('frost'),raven=byId('raven');
+  for(const o of OPERATORS){
+    const P=paletteFor(o,'default'),team=FACTION_PALETTES[o.faction];
+    assert.equal(P.jacket,team.jacket,`${o.id}: jacket should be the team colour`);
+    assert.equal(P.armor,team.armor,`${o.id}: armour should be the team colour`);
+    assert.equal(P.cloth,team.cloth,`${o.id}: cloth should be the team colour`);
+    assert.equal(P.accent,team.accent,`${o.id}: accent should be the team colour`);
+    assert.equal(P.skin,o.palette.skin,`${o.id}: skin keeps operator identity`);
+    assert.equal(P.hair,o.palette.hair,`${o.id}: hair keeps operator identity`);
+  }
+  assert.notEqual(paletteFor(frost,'default').accent,paletteFor(raven,'default').accent,'teams must differ');
+
   const snow=paletteFor(frost,'snow');
-  assert.notEqual(snow.jacket,frost.palette.jacket,'snow camo should override the jacket colour');
-  assert.equal(snow.accent,frost.palette.accent,'camo must not override the accent colour');
-  assert.equal(paletteFor(frost,'nope').jacket,frost.palette.jacket,'unknown camo should fall back to default');
+  assert.notEqual(snow.jacket,paletteFor(frost,'default').jacket,'snow camo should shift the jacket colour');
+  assert.equal(snow.accent,paletteFor(frost,'default').accent,'camo must not override the accent colour');
+  assert.notEqual(snow.jacket,paletteFor(raven,'snow').jacket,'team hue must survive a camo');
+  assert.notEqual(paletteFor(frost,'desert').jacket,paletteFor(frost,'urban').jacket,'different camos must look different');
+  assert.deepEqual(paletteFor(frost,'nope'),paletteFor(frost,'default'),'unknown camo should fall back to default');
   assert.ok(Object.keys(CAMOS).includes('desert')&&Object.keys(CAMOS).includes('urban'));
 });

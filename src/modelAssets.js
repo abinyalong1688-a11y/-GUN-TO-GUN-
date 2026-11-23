@@ -1,6 +1,6 @@
 // modelAssets.js — GLB character asset pipeline (rigged models):
-//   preloadCharacters()  start loading male/female GLB once at boot; embedded data URLs in
-//                        the single-file build (window.__GTG_GLB__), relative fetch in dev.
+//   preloadCharacters()  start loading the shared rigs once at boot; inert data-URL tags in
+//                        the single-file build (window.__GTG_GLB__ legacy), relative fetch in dev.
 //   cloneCharacter(g)    instance a normalized template via SkeletonUtils.clone, with
 //                        per-instance cloned materials (hit flash / corpse fade stay independent).
 //   mode()               'gltf' when models are ready and not forced off → character.js
@@ -30,7 +30,7 @@ if(typeof location!=='undefined'){
 /* ---- load state ---- */
 const state={
   ready:false,failed:false,loading:false,
-  models:{},                 // gender → {root,bones,headY,profile}
+  models:{},                 // shared model key → {root,bones,headY,profile}
   props:{},                  // 'helmet_m' / 'helmet_f' → normalized rigid template (optional)
   onReadyCbs:[],
 };
@@ -48,7 +48,7 @@ export const modelAssets={
     if(!m)throw new Error(`[modelAssets] model not loaded: ${key}`);
     return cloneInstance(m);
   },
-  /* opId → that operator's own rig (one unique generated model per operator) */
+  /* opId → shared rig key for that operator's faction + gender */
   modelFor(opId){return MODEL_MAP[opId]||MODEL_KEYS[0];},
   template(key){return state.models[key]||null;}, // dev: inspect the pre-clone template
   debug(){ // console helper: dump bone mapping (?model=gltf + this in devtools)
@@ -60,9 +60,9 @@ export const modelAssets={
 };
 
 /* ---- GLB sources: inert embedded tags (single-file build) → legacy global → dev fetch ----
-   The build writes each model into its own <script type="application/octet-stream"> tag.
-   Reading only the tag we need avoids materialising a ~4.5 MB JS object literal at parse
-   time, and lets the main bundle start while the payload is still streaming in. */
+   The build writes each shared rig into its own <script type="application/octet-stream"> tag.
+   Reading only the tag we need avoids materialising a multi-megabyte JS object literal at
+   parse time, and lets the main bundle start while the payload is still streaming in. */
 function glbSource(name){
   if(typeof document!=='undefined'){
     const el=document.getElementById('gtg-glb-'+name);
@@ -105,10 +105,20 @@ function loader(){
   return _loaderP;
 }
 
-/* Per-operator model files (one unique rig each; the baked texture/headgear IS the look) */
-const MODEL_KEYS=['male1','male2','male11','male22','female1','female2','female11','female22'];
-const MODEL_MAP={frost:'female1',swift:'female2',snowwolf:'male1',thunder:'male2',
-  raven:'male11',fox:'female11',vulture:'male22',viper:'female22'};
+/* Cross-shared gender pools: 4 rigs, each used once per faction, so all four operators on
+   a team have a different silhouette. Team identity now comes from FACTION_PALETTES
+   (jacket / armour / cloth / accent), not from which rig a faction owns.
+     female pool: female1  → frost (Nova), viper (Rogue)
+                  female11 → swift (Nova), fox   (Rogue)
+     male   pool: male1    → snowwolf (Nova), vulture (Rogue)
+                  male11   → thunder  (Nova), raven   (Rogue)
+   Unused source rigs stay in assets/ so the 8-rig build can be restored by changing
+   this map + build.mjs SHARED_MODELS. */
+const MODEL_KEYS=['female1','male1','male11','female11'];
+const MODEL_MAP={
+  frost:'female1',swift:'female11',snowwolf:'male1',thunder:'male11',
+  raven:'male11',fox:'female11',vulture:'male1',viper:'female1',
+};
 
 export function preloadCharacters(){
   if(state.loading||state.ready)return;

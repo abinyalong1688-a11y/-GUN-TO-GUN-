@@ -222,7 +222,7 @@ function makeLeg(group,M,mat,side,{x,y,thigh,shin,tr,sr,boot}){
 }
 
 /* ============ Rifle silhouettes (C6) ============ */
-function makeRifle(kind,M){
+export function makeRifle(kind,M){
   const g=new THREE.Group();
   let first=true;
   // Only the receiver (first piece) casts a shadow; the rest are detail meshes
@@ -248,7 +248,7 @@ function makeRifle(kind,M){
     B(cyl(.012,.012,.16,10),dark,0,.018,.27,Math.PI/2);
     B(box(.045,.05,.12),poly,0,-.005,-.26);
     mag=B(box(.03,.11,.055),dark,0,-.078,.03,.18);
-    B(box(.04,.04,.16),dark,0,.075,-.01);
+    B(box(.04,.04,.16),dark,0,.065,-.01);
     B(cyl(.024,.024,.13,12),dark,0,.10,-.01,Math.PI/2);
     B(cyl(.032,.032,.02,12),dark,0,.10,.07,Math.PI/2);
     tipZ=.37;
@@ -258,7 +258,7 @@ function makeRifle(kind,M){
     B(cyl(.011,.011,.20,10),dark,0,.018,-.42,Math.PI/2);
     B(box(.042,.055,.14),poly,0,-.01,-.30);
     mag=B(box(.028,.11,.055),dark,0,-.078,.02,.3);
-    B(box(.04,.04,.15),dark,0,.072,-.02);
+    B(box(.04,.04,.15),dark,0,.062,-.02);
     B(cyl(.022,.022,.12,12),dark,0,.098,-.02,Math.PI/2);
     B(box(.016,.06,.012),dark,0,.05,-.52);
     tipZ=.54;
@@ -268,7 +268,7 @@ function makeRifle(kind,M){
     B(cyl(.026,.026,.14,12),poly,0,.006,.15,Math.PI/2);
     B(cyl(.01,.01,.10,10),dark,0,.018,.27,Math.PI/2);
     mag=B(box(.028,.13,.045),dark,0,-.085,.02,.05);
-    B(box(.038,.05,.12),poly,0,-.006,-.22);
+    B(box(.038,.05,.16),poly,0,-.006,-.20);
     B(box(.03,.05,.10),poly,0,.005,-.30);
     B(box(.014,.045,.012),dark,0,.045,.32);
     tipZ=.35;
@@ -279,11 +279,11 @@ function makeRifle(kind,M){
     B(cyl(.018,.018,.06,12),dark,0,.018,.50,Math.PI/2);
     B(box(.05,.075,.16),poly,0,.0,-.28);
     mag=B(box(.034,.10,.055),dark,0,-.075,.0);
-    B(box(.03,.02,.18),poly,0,.085,-.02);
+    B(box(.03,.06,.18),poly,0,.065,-.02);
     B(cyl(.028,.028,.16,12),dark,0,.115,-.02,Math.PI/2);
     B(cyl(.036,.036,.025,12),dark,0,.115,.065,Math.PI/2);
     B(cyl(.036,.036,.025,12),dark,0,.115,-.105,Math.PI/2);
-    B(box(.01,.01,.07),dark,.045,.03,-.06,0,0,.3); // bolt handle
+    B(box(.01,.01,.07),dark,.032,.03,-.06,0,0,.3); // bolt handle
     tipZ=.53;
   }else{
     // M4A4: carry rail + triangular handguard + curved magazine
@@ -293,7 +293,7 @@ function makeRifle(kind,M){
     B(box(.014,.05,.012),dark,0,.045,.34);
     B(box(.04,.06,.13),poly,0,-.008,-.24);
     mag=B(box(.028,.10,.05),dark,0,-.075,.02,.15);
-    B(box(.035,.018,.12),dark,0,.058,-.02);
+    B(box(.035,.018,.12),dark,0,.046,-.02);
     tipZ=.44;
   }
   // The AK47 / SG553 pieces are modelled muzzle-toward -Z while every other rifle (and gunTip)
