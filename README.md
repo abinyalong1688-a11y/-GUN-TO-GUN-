@@ -73,7 +73,7 @@ Four hand-built arenas, each a distinct scene with its own layout, sky, lighting
 ## Game Modes
 
 - **Endless Waves**: defend the outpost against three drone classes with detailed silhouettes — WASP (kamikaze) / REAPER (roaming shooter) / WARDEN (heavy: glowing sensor windows, core guard rings, wing plates / claw feet / gun shields, rotor hubs, breathing red-core pulse). Red-core crits ×2.5
-- **8-Player Deathmatch (4v4)**: you + 3 same-faction AI teammates vs 4 enemy AI. Nova fires controlled bursts, Rogue sprays. First to 25 kills wins, with killfeed, TAB scoreboard and respawns
+- **8-Player Deathmatch (4v4)**: you + 3 same-faction AI teammates vs 4 enemy AI. Nova fires controlled bursts, Rogue sprays. 3-minute matches; first to 25 kills ends it early, otherwise the higher kill count wins. Killfeed, TAB scoreboard and respawns — a human death counts on the board and credits the killing bot
   - Note: true networked multiplayer requires a persistent server, which conflicts with the "single file, offline-playable" goal — deathmatch delivers the same arena experience with AI combatants
 
 ## Sponsorship Placements
