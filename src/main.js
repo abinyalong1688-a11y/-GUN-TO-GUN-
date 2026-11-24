@@ -44,7 +44,7 @@ const TUTORIAL=[
   {zh:'按 1 循环主武器,2 手枪,3 冲锋枪',en:'Press 1 to cycle primaries, 2 sidearm, 3 SMG'},
   {zh:'按 G / F / V 投掷破片 / 闪光 / 烟雾',en:'Press G / F / V for frag / flash / smoke'},
 ];
-const VERSION='1.10.1';
+const VERSION='1.10.2';
 const _rsO=new THREE.Vector3(); // reused ray-sphere test vector (zero allocation on the hot path)
 
 class Game{
@@ -526,7 +526,7 @@ class Game{
     if(this.mode==='dm'){
       this.ui.setDmMode(true);
       this.waves.state='idle';
-      this.dm={scores:new Map(),timer:240,winKills:25};
+      this.dm={scores:new Map(),timer:180,winKills:25}; // 3-minute matches; first to 25 kills ends early
       this.dm.scores.set(this.playerName,{name:this.playerName,team:'A',kills:0,deaths:0,me:true,op:this.playerOperator});
       this.heroes.setup(this.playerFaction,this.playerName,op.id);
       for(const h of this.heroes.list)
@@ -833,11 +833,21 @@ class Game{
       const killer=this.heroes.list.find(h=>h.name===fromName);
       if(killer)this.lastKiller=killer;
     }
-    if(this.player.health<=0){
-      if((this.mode==='dm'||this.mode==='koth')&&fromName){
-        const killer=this.heroes.list.find(h=>h.name===fromName);
-        if(killer&&killer.alive)this.spectate={target:killer,t:2.5};
+    if(this.player.health<=0&&(this.mode==='dm'||this.mode==='koth')){
+      // The player is a full participant: their death goes on the board and the bot that dealt the
+      // killing blow gets the kill (bots only credited each other before, so a human death was
+      // invisible in both columns). This runs exactly once per death — the guard at the top of
+      // this method bails out while the player is already dead.
+      const me=this.dm&&this.dm.scores.get(this.playerName);
+      if(me)me.deaths++;
+      if(fromName){
+        const k=this.dm&&this.dm.scores.get(fromName);
+        if(k)k.kills++;
+        this.ui.killFeed(fromName,this.playerName,t('kill_verb'),false);
+        this._checkDmWin(); // the killing bot can reach winKills too
       }
+      const killer=fromName?this.heroes.list.find(h=>h.name===fromName):null;
+      if(killer&&killer.alive)this.spectate={target:killer,t:2.5};
     }
   }
   /* U2: world position → screen direction (0 straight ahead, positive clockwise), fades out over 0.8 s */
@@ -986,6 +996,7 @@ class Game{
       if((this.mode==='dm'||this.mode==='koth')&&this.dmRespawnT>0){
         this.dmRespawnT-=dtRaw;
         if(this.dmRespawnT<=0){
+          this.dmRespawnT=-1;
           this.player.pos.set((Math.random()-.5)*6,0,24);
           this.player.yaw=0;this.player.pitch=0;
           this.player.vel.set(0,0,0);
@@ -1065,12 +1076,17 @@ class Game{
         (!document.pointerLockElement&&!this.fallbackAim?t('hint_lock'):''));
       if(this.player.alive===false&&this.state==='playing'){
         if(this.mode==='dm'||this.mode==='koth'){
-          this.dmRespawnT=2.5;
-          if(this.lastKiller&&this.lastKiller.alive)this.spectate={target:this.lastKiller,t:2.5};
-          this.ui.deathFlash();
-          this.audio.hurt();
-          this._suppressPauseOnce=true; // this unlock is the game's own (spectate window) — it must not auto-pause
-          if(document.pointerLockElement)document.exitPointerLock();
+          // Arm the respawn ONCE per death (dmRespawnT minutes is reset in the line above every frame
+          // otherwise): re-arming it every frame kept the countdown pinned at 2.5 s and re-fired the
+          // death flash, so the player never respawned and the screen stayed washed white.
+          if(this.dmRespawnT<0){
+            this.dmRespawnT=2.5;
+            if(this.lastKiller&&this.lastKiller.alive)this.spectate={target:this.lastKiller,t:2.5};
+            this.ui.deathFlash();
+            this.audio.hurt();
+            this._suppressPauseOnce=true; // this unlock is the game's own (spectate window) — it must not auto-pause
+            if(document.pointerLockElement)document.exitPointerLock();
+          }
         }else{
           this.state='dying';this.dyingT=1.5;
           this.ui.deathFlash();
@@ -1582,6 +1598,46 @@ class Game{
       assert(this.spectate.target===killer,'after death the killer should be spectated');
       this.player.alive=true;this.player.health=this.player.maxHealth;this.player.god=true;
       this.spectate.target=null;
+    });
+    await run('dm-player-death-scored',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const killer=this.heroes.list.find(h=>h.team==='B'&&h.alive);
+      this.player.god=false;this.invulnT=0;this.player.health=1;this.player.alive=true;
+      const me=this.dm.scores.get(this.playerName),k=killer&&this.dm.scores.get(killer.name);
+      const d0=me.deaths,k0=k.kills;
+      const origFeed=this.ui.killFeed;let feeds=0;this.ui.killFeed=()=>feeds++;
+      try{this.damagePlayerFromBot(999,killer.name,killer.pos);}finally{this.ui.killFeed=origFeed;}
+      assert(!this.player.alive,'the player should be dead');
+      assert(me.deaths===d0+1,'the player death should count on the board, deaths='+me.deaths);
+      assert(k.kills===k0+1,'the killing bot should be credited, kills='+k.kills);
+      assert(feeds===1,'the player death should post a killfeed entry, got '+feeds);
+      this.damagePlayerFromBot(999,killer.name,killer.pos); // already dead: must not double count
+      assert(me.deaths===d0+1&&k.kills===k0+1,'a dead player must not be scored twice');
+      assert(this.dm.timer===180,'the deathmatch clock should start at 3 minutes, got '+this.dm.timer);
+      this.player.alive=true;this.player.health=this.player.maxHealth;this.player.god=true;
+      this.spectate.target=null;this.dmRespawnT=-1;
+    });
+    await run('dm-respawn',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      this.fallbackAim=true;
+      const killer=this.heroes.list.find(h=>h.team==='B'&&h.alive);
+      this.player.god=false;this.invulnT=0;this.player.health=1;this.player.alive=true;
+      this.damagePlayerFromBot(999,killer.name,killer.pos);
+      const clock=this.clock;
+      this.clock={getDelta:()=>.05}; // deterministic 20 fps: the loop under test is the real tick()
+      const origFlash=this.ui.deathFlash;let flashes=0;
+      this.ui.deathFlash=()=>{flashes++;return origFlash.call(this.ui);};
+      try{
+        let t=0,respawned=false;
+        for(let i=0;i<120;i++){this.tick();t+=.05;if(this.player.alive){respawned=true;break;}}
+        assert(respawned,'the player should respawn after the 2.5 s countdown, alive after '+t.toFixed(2)+' s');
+        assert(this.dmRespawnT<0,'the countdown should be cleared after the respawn, got '+this.dmRespawnT);
+        assert(this.player.health===this.player.maxHealth,'respawn should restore full health');
+        // The death and respawn flashes fire once each. Re-arming them every frame kept the white
+        // overlay pinned on screen (the death screen never faded), which is what this guards.
+        assert(flashes===2,'death and respawn should flash exactly once each, got '+flashes);
+      }finally{this.clock=clock;this.ui.deathFlash=origFlash;}
+      this.spectate.target=null;this.dmRespawnT=-1;this.player.god=true;
     });
     await run('gamepad-map',()=>{
       const pad=this.inputMgr.adapters.find(a=>a instanceof GamepadAdapter);
