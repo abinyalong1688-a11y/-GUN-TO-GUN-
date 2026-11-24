@@ -85,10 +85,10 @@ Three self-illuminated **double-sided** billboards (brand face / large URL face 
 ```
 src/
   assets.js   Materials — 1024px procedural Canvas PBR textures (sand / snow / basalt / ice / wet asphalt) + normal maps + weapon wood / faction fabrics + neon signage + billboard art; zero image files
-  world.js    Scene — parametric sky shaders (sunset / aurora night / rain night / ember) + four distinct per-map layouts + lighting / fog / ambient particles
+  world.js    Scene — parametric sky shaders (sunset / aurora night / rain night / ember) + four distinct per-map layouts + lighting / fog / ambient particles + a 2 m spatial grid over the static colliders (`SpatialGrid` / `ColliderGrid`)
   weapon.js   Weapons — three-slot loadout viewmodels + first-person arms (tactical gloves) + semi-auto / full-auto triggers + recoil / ADS / reload / shell ejection
   attach.js   Attachment integrity — connected-island check that every weapon part is welded to the gun body (unit test + ?e2e=1)
-  heroes.js   Characters — realistic 3D faction operatives (lathe-surface torsos, facial features, hair physics, faction outfits) and 4v4 AI
+  heroes.js   Characters — realistic 3D faction operatives (lathe-surface torsos, facial features, hair physics, faction outfits) and 4v4 AI, incl. the bot navigation stack (velocity-level separation + simplified RVO, normal-projection wall slide, stuck escape, local-grid A* + corner routing, squad fan-out)
   enemies.js  Enemies — three drone classes (sensor windows / guard rings / detail parts) + AI + projectiles + occlusion checks
   player.js   Player — movement / circle-vs-AABB collision / health / regeneration
   waves.js    Gameplay — wave scheduling / spawn throttling / supplies
@@ -104,7 +104,7 @@ build.mjs     esbuild bundle into a single HTML file
 ```bash
 npm install        # three@0.170.0 + esbuild
 npm run build      # produces dist/gun-to-gun.html
-npm test           # unit tests (node --test): utils / weapon stats / weapon attachment integrity / movement physics / wave scheduling
+npm test           # unit tests (node --test): utils / weapon stats / weapon attachment integrity / movement physics / wave scheduling / bot combat AI and navigation (103 tests)
 npm run serve      # local server http://127.0.0.1:8137/ (testing only)
 ```
 
@@ -142,6 +142,8 @@ Security / stability / performance work done to a ship-ready standard:
 | Performance | HUD hot-path DOM write deduplication (ammo / crosshair unchanged → no write) |
 | Performance | Full resource disposal on map switch: geometries (incl. ambient Points) + per-map materials (sky shaders / bulbs / beacons / lava cracks / cooling towers) |
 | Performance | Hitch monitor counters (`?perf=1`): slow-frame (>25 ms) ratio and max frame time |
+| Performance | Bot navigation is O(local density), not O(bots × colliders): a 2 m collider grid, one neighbour grid per frame, path planning on every third frame per bot, and 20 bots cost ~0.2 ms per frame of AI |
+| Behaviour | Bot crowd control: no clustering / back-and-forth jitter on a shared target, no wall grinding — velocity-level separation + RVO, one position write per frame, wall slide along the contact normal, sideways stuck escape, local-grid A* around cover; right of way goes to the bot in a firing stance |
 | Hygiene | Dead code removed; version shown in the menu footer and console banner; `npm test` unit suite + `?e2e=1` integration suite |
 
 ## Feature Checklist
@@ -155,5 +157,6 @@ Security / stability / performance work done to a ship-ready standard:
 - [x] Three-slot weapon system: faction primaries / Desert Eagle (semi-auto) / UMP-45 backup SMG (full-auto)
 - [x] Bullet decals conform to surfaces; explosions include fireball + shockwave + debris
 - [x] Shaders precompiled — no freeze on first entry
+- [x] Bot navigation: spread out on a shared target, slide along cover, route around boxes (23 unit scenarios in `tests/nav.test.mjs`)
 - [x] Production hardening: nickname XSS escaping, dirty-storage fallbacks, context-loss recovery, exception circuit breaker, zero-allocation hot paths, map-switch disposal
 - [x] Zero console errors; single-file build ~3.1 MB (1.6 MB gzipped, 4 shared rigged GLBs); zero external requests; playable offline

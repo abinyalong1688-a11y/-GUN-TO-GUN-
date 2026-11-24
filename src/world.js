@@ -58,6 +58,51 @@ export const MAPS={
   },
 };
 
+/* Spatial hash grid with 2 m cells — nearby queries for the bot navigation (collision slide,
+   route clearance, local-grid A*). An object is filed in every cell its footprint overlaps, so a
+   range query over the cells under a disc or segment returns everything that can touch it.
+   Query cost follows the local density instead of the total count of colliders / bots. */
+export class SpatialGrid{
+  constructor(cell=2){this.cell=cell;this.map=new Map();this._stamp=0;this._mark=new Map();this.size=0;}
+  clear(){this.map.clear();this.size=0;this._mark.clear();} // _mark keys are object refs: keep them from outliving the grid contents
+  insertBox(minX,minZ,maxX,maxZ,obj){
+    const cs=this.cell;
+    for(let ix=Math.floor(minX/cs);ix<=Math.floor(maxX/cs);ix++)
+      for(let iz=Math.floor(minZ/cs);iz<=Math.floor(maxZ/cs);iz++){
+        const k=(ix+2048)*8192+(iz+2048); // cell key, valid for ±2048 cells about the origin
+        const a=this.map.get(k);
+        if(a)a.push(obj);else this.map.set(k,[obj]);
+      }
+    this.size++;
+  }
+  /* Fills `out` with the objects filed in the cells overlapping the square (x±r, z±r), each once */
+  query(x,z,r,out){
+    out.length=0;
+    const cs=this.cell,s=++this._stamp;
+    const x0=Math.floor((x-r)/cs),x1=Math.floor((x+r)/cs),z0=Math.floor((z-r)/cs),z1=Math.floor((z+r)/cs);
+    for(let ix=x0;ix<=x1;ix++)for(let iz=z0;iz<=z1;iz++){
+      const a=this.map.get((ix+2048)*8192+(iz+2048));
+      if(!a)continue;
+      for(const o of a)if(this._mark.get(o)!==s){this._mark.set(o,s);out.push(o);}
+    }
+    return out;
+  }
+}
+
+/* The map's static colliders in a grid. Rebuilt on the next query if the collider list grew
+   (or was swapped for another array) since the last build. */
+export class ColliderGrid extends SpatialGrid{
+  constructor(colliders,cell=2){super(cell);this.colliders=colliders;this.n=-1;}
+  query(x,z,r,out){
+    if(this.n!==this.colliders.length){
+      this.clear();
+      for(const c of this.colliders)this.insertBox(c.minX,c.minZ,c.maxX,c.maxZ,c);
+      this.n=this.colliders.length;
+    }
+    return super.query(x,z,r,out);
+  }
+}
+
 function addBox(scene,shootStatics,colliders,{w,h,d,mat,x,y,z,ry=0,surface='concrete',collide=true,shadow=true}){
   const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
   m.position.set(x,y,z);m.rotation.y=ry;
@@ -304,7 +349,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
 
   // Ray list for line-of-sight / projectiles: drops the 24k-triangle ground mesh (the ray origin is always inside its bounds, so nothing early-outs and every triangle is tested each frame)
   const losStatics=shootStatics.filter(o=>o!==ground);
-  return {group:world,colliders,shootStatics,losStatics,spawnPoints,sunDir,mapKey,map,worldAnim,ownMats,sky};
+  return {group:world,colliders,colliderGrid:new ColliderGrid(colliders),shootStatics,losStatics,spawnPoints,sunDir,mapKey,map,worldAnim,ownMats,sky};
 }
 
 /* Street lamp (shared shape, per-map palette from MAPS[mapKey].lamp) */
