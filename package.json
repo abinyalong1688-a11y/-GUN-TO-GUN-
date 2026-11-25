@@ -4,14 +4,16 @@
     "three": "^0.170.0"
   },
   "name": "gun-to-gun",
-  "version": "1.11.4",
+  "version": "1.12.1",
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
     "test": "node --test",
     "test:e2e": "node scripts/e2e.mjs",
     "evolve": "node scripts/evolve-bots.mjs",
-    "serve": "node serve.mjs"
+    "serve": "node serve.mjs",
+    "server:dev": "npx wrangler dev --local --config server/wrangler.toml",
+    "server:deploy": "npx wrangler deploy --config server/wrangler.toml"
   },
   "devDependencies": {
     "@gltf-transform/core": "^4.5.1",

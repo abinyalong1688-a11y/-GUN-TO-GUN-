@@ -17,6 +17,7 @@ import {attachmentIslands} from './attach.js';
 import {Enemies} from './enemies.js';
 import {Waves} from './waves.js';
 import {HeroTeam} from './heroes.js';
+import {circleOverlapsCollider} from './collision.js';
 import {UI} from './ui.js';
 import {SaveSystem} from './save.js';
 import {Leaderboard} from './leaderboard.js';
@@ -33,6 +34,12 @@ import {applyUpgrade,rollUpgrades} from './upgrades.js';
 import {Radar} from './radar.js';
 import {OPERATORS,byId,byFaction,DEFAULT_OP,CAMOS} from './operators.js';
 import {store,num,escHTML} from './util.js';
+import {NetMatch,PHASE} from './netMatch.js';
+import {NetLobby} from './netLobby.js';
+import {LoopbackTransport} from './net.js';
+import {C,S,ROOM_CODE_RE} from './netProtocol.js';
+import {auditFeet} from './footAudit.js';
+import {terrainHeight} from './terrain.js';
 
 const $=id=>document.getElementById(id);
 const UP=new THREE.Vector3(0,1,0);
@@ -44,8 +51,9 @@ const TUTORIAL=[
   {zh:'按 1 循环主武器,2 手枪,3 冲锋枪',en:'Press 1 to cycle primaries, 2 sidearm, 3 SMG'},
   {zh:'按 G / F / V 投掷破片 / 闪光 / 烟雾',en:'Press G / F / V for frag / flash / smoke'},
 ];
-const VERSION='1.11.4';
+const VERSION='1.12.1';
 const _rsO=new THREE.Vector3(); // reused ray-sphere test vector (zero allocation on the hot path)
+const DEBUG=typeof DEBUG_HOOKS!=='undefined'?DEBUG_HOOKS:true; // production build sets DEBUG_HOOKS=false
 
 class Game{
   constructor(){
@@ -58,12 +66,13 @@ class Game{
     this.bossMode=new URLSearchParams(location.search).get('boss')==='1';
     this.mapOverride=new URLSearchParams(location.search).get('map'); // ?map= test hook (validated against MAPS before use)
     this.padMode=new URLSearchParams(location.search).has('pad');
+    this.debugExpose=new URLSearchParams(location.search).has('debug'); // ?debug=1 exposes window.__GTG_DEBUG__
     this.touchMode=new URLSearchParams(location.search).has('touch')||
       (typeof matchMedia==='function'&&matchMedia('(pointer:coarse)').matches);
-    if(this.shotMode||this.selftestMode||this.e2eMode||this.rosterMode||this.portraitsMode||this.padMode)window.__game=this; // debug probe: exposed only under test hooks
+    if(DEBUG&&(this.shotMode||this.selftestMode||this.e2eMode||this.rosterMode||this.portraitsMode||this.padMode))window.__game=this; // debug probe: stripped in production
     this.perf={frames:0,slow:0,maxDt:0}; // hitch monitor: slow frame (>25ms) count
     this.dynScale=1;this._perfAt=0;
-    this.state='menu'; // menu | playing | paused | dying | over
+    this.state='menu'; // menu | playing | paused | dying | over | tutorial | upgrade
     this.keys=new Set();
     this.input={firing:false,ads:false};
     this.fallbackAim=false;
@@ -82,8 +91,14 @@ class Game{
     this.stats={shots:0,hits:0,kills:0,critKills:0,headshots:0,time:0,bestCombo:0};
     this.comboKills=0;this.comboT=0;
     this.playerName='Guard-07';
-    this.playerTeam='A';
+    this.playerTeam='A';                       // derived in startGame(); online A=NOVA / B=ROGUE
+    this.spawns={A:new THREE.Vector3(0,0,24),B:new THREE.Vector3(0,0,-24)};
+    this.netMatch=null;this.netLobby=null;
+    this._uiLock=false;                        // online pause / 3 s countdown freezes local input only
+    this._netReady=false;
+    this.t=t;                                  // shared by NetMatch killfeed
     this.invulnT=0;this.dmRespawnT=-1;
+    this._deathHandled=false;                  // ensures death side-effects run once per life
     this.spectate={target:null,t:0};this.lastKiller=null;
     this._specWant=new THREE.Vector3();this._specFrom=new THREE.Vector3();this._specDir=new THREE.Vector3();
     this._boot();
@@ -94,6 +109,15 @@ class Game{
     applyStatic(); // swap in static copy right after first-frame language detection (script blocks parsing, so no flash)
     this.ui=new UI();
     this.ui._save=this.save;
+    // One NetMatch for the whole page. No socket opens until the player picks the online mode.
+    const netOpts={};
+    if(DEBUG&&new URLSearchParams(location.search).get('net')==='loopback'){
+      const loop=new LoopbackTransport();
+      window.__loopback=loop;
+      window.__game=this; // debug probe for ?net=loopback (same single Game instance)
+      netOpts.client=loop.createClient();
+    }
+    this.netMatch=new NetMatch(this,netOpts);
     window.addEventListener('error',e=>{
       const st=(e.error&&e.error.stack||'').split('\n').slice(0,4).join('\n');
       this.ui.debug('ERR '+e.message+'\n'+st,true);
@@ -112,13 +136,27 @@ class Game{
     this.renderer.shadowMap.autoUpdate=false;
     this.renderer.toneMapping=THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure=1.18;
-    // WebGL context loss: show a visible notice after a driver crash / GPU switch / sleep, reload automatically once restored
+    // WebGL context loss: try a real in-place restore first; reload only as a last resort.
     this.renderer.domElement.addEventListener('webglcontextlost',e=>{
       e.preventDefault();
       this.renderer.setAnimationLoop(null);
-      this.ui.debug('ERR WebGL context lost · the page will recover automatically…',true);
-      setTimeout(()=>location.reload(),1200);
+      this.ui.debug('ERR WebGL context lost · recovering…',true);
+      clearTimeout(this._ctxLostTimer);
+      this._ctxLostTimer=setTimeout(()=>location.reload(),5000);
     },false);
+    this.renderer.domElement.addEventListener('webglcontextrestored',()=>{
+      clearTimeout(this._ctxLostTimer);
+      try{this.rebuildAfterContextRestore();}
+      catch(err){console.error(err);location.reload();}
+    },false);
+    // Background tabs: pointer-lock loss covers desktop, but fallbackAim / touch need this.
+    document.addEventListener('visibilitychange',()=>{
+      if(document.hidden&&(this.state==='playing'||this.state==='dying')){
+        this.input.firing=false;this.input.ads=false;this.keys.clear();
+        if(this.mode==='online'&&this.netMatch&&this.netMatch.active)this.netMenu();
+        else this.pause();
+      }
+    });
     $('gl').appendChild(this.renderer.domElement);
 
     this.scene=new THREE.Scene();
@@ -175,7 +213,7 @@ class Game{
     this.losRay=new THREE.Raycaster();
     // Reusable vector pool for shooting: avoids a new Vector3 per bullet and the resulting GC jitter
     this._sd=new THREE.Vector3();this._sr=new THREE.Vector3();this._su=new THREE.Vector3();
-    this._send=new THREE.Vector3();this._muzzle=new THREE.Vector3();this._losV=new THREE.Vector3();this._pierceO=new THREE.Vector3();this._smokeM=new THREE.Vector3();
+    this._send=new THREE.Vector3();this._muzzle=new THREE.Vector3();this._losV=new THREE.Vector3();this._losDir=new THREE.Vector3();this._pierceO=new THREE.Vector3();this._smokeM=new THREE.Vector3();
     this._shotGroups=[];
     /* Gunfire cue: enemy bots hear the player's shots within their hearing radius (botBrain.js) */
     this.playerShotT=-99;
@@ -187,11 +225,43 @@ class Game{
     this.ui.bindMenu(()=>{ // map / mode change → rebuild the world preview
       if(this.ui.sel.map!==this.world.mapKey)this.buildWorldFor(this.ui.sel.map);
     });
+    this.netLobby=new NetLobby(this,{
+      create:()=>this.netMatch.createRoom(),
+      join:code=>this.netMatch.joinRoom(code),
+      ready:()=>{
+        this._netReady=!this._netReady;
+        this.netLobby.setMyReady(this._netReady);
+        this.netMatch.setReady(this._netReady);
+        this.netLobby.render(this.netMatch.room,this.netMatch.me?.id);
+      },
+      side:team=>this.netMatch.setSide(team),
+      start:()=>this.netMatch.start(),
+      leave:()=>{this.netMatch.leave();this.ui.showOnly('menu');},
+      solo:()=>this._startSoloOnline(),
+    });
+    this.ui._netLobby=this.netLobby;
     $('m-quality').value=this.quality;
     $('m-quality').addEventListener('change',e=>{
       this.settings.set('quality',e.target.value);location.reload();
     });
-    $('m-start').addEventListener('click',()=>{this.audio.init();this.audio.resume();this._applyAudioSettings();this.audio.uiClick();this.ui.saveName();this.startGame();});
+    $('m-start').addEventListener('click',()=>{
+      this.audio.init();this.audio.resume();this._applyAudioSettings();this.audio.uiClick();this.ui.saveName();
+      // Online-only entry: the Friends 5v5 chip opens the lobby and the room carries the mode.
+      // Every other mode (waves / dm / koth) is offline and deploys directly, as before.
+      if(this.ui.sel.mode==='online'){
+        this.ui.showOnly('lobby');
+        this.netLobby.show();
+        // No room yet: validate the server address here, but only open a socket once the
+        // player actually creates or joins a room (the Worker routes on /rooms/{code}/ws).
+        this.netMatch.openLobby();
+        return;
+      }
+      this.startGame();
+    });
+    const pl=$('p-leave');
+    if(pl)pl.addEventListener('click',()=>{this.audio.uiClick();this.netMatch.leave();this.toMenu();});
+    const orm=$('o-rematch');
+    if(orm)orm.addEventListener('click',()=>{this.audio.uiClick();this.netMatch.rematch();});
     $('p-resume').addEventListener('click',()=>{this.audio.uiClick();this.resume();});
     $('p-restart').addEventListener('click',()=>{this.audio.uiClick();this.startGame();});
     $('p-menu').addEventListener('click',()=>{this.audio.uiClick();this.toMenu();});
@@ -243,16 +313,36 @@ class Game{
       this.ui.buildOperators();
     }
 
+    // Online deep link: ...?room=CODE auto-fills and joins without touching the main menu flow.
+    const roomCode=qs.get('room');
+    if(roomCode&&ROOM_CODE_RE.test(roomCode.toUpperCase())){
+      // A deep link joins whatever mode the room was created with.
+      this.ui.refreshMenu&&this.ui.refreshMenu();
+      this.ui.saveName();
+      if(this.netLobby){
+        this.netLobby.el.code.value=roomCode.toUpperCase();
+        this.ui.showOnly('lobby');
+        this.netLobby.show();
+      }
+      this.netMatch.openLobby({code:roomCode.toUpperCase()});
+    }
+    if(this.shotMode==='online')this._shotOnline(false);
+    else if(this.shotMode==='online-remotes')this._shotOnline(true);
+
     if(this.shotMode==='combat')this._shotCombat();
     else if(this.shotMode==='dm')this._shotDm();
     else if(this.shotMode==='over')this._shotOver();
     else if(this.shotMode==='mvp')this._shotMvp();
     else if(this.shotMode==='tutorial')this._shotTutorial();
     else if(this.shotMode==='spectate')this._shotSpectate();
-    if(this.selftestMode)this.selftest();
-    if(this.e2eMode)this.e2e();
-    if(this.rosterMode)this._debugRoster();
-    if(this.portraitsMode)this._debugPortraits();
+    // Debug suites are dev-only: `?selftest` / `?e2e` write to localStorage (save + best score),
+    // so they must not be reachable in a production build.
+    if(DEBUG){
+      if(this.selftestMode)this.selftest();
+      if(this.e2eMode)this.e2e();
+      if(this.rosterMode)this._debugRoster();
+      if(this.portraitsMode)this._debugPortraits();
+    }
     if(this.bossMode){
       this.ui.sel.mode='waves';this.startGame();
       this.waves.n=4;this.waves.queue.length=0;
@@ -280,7 +370,7 @@ class Game{
     console.log(`%cGUN TO GUN v${VERSION}`,'color:#f0a860;font-weight:bold','· single file, playable offline');
     // Dev capture hook (?shot=/* and ?portraits pages): expose the game instance so browser
     // automation can grab frames (captureFrame) and dump the rig bone map
-    if(this.shotMode||this.portraitsMode){
+    if(DEBUG&&(this.shotMode||this.portraitsMode||this.debugExpose)){
       window.__GTG_DEBUG__=this;
       window.__modelAssets=modelAssets;
       window.__GTG_OPS__=OPERATORS; // roster lineup captures (portraits.renderSheet)
@@ -365,10 +455,15 @@ class Game{
   }
 
   _applyQuality(){
-    const base=Math.min(devicePixelRatio||1,this.quality==='high'?2:1);
-    const pr=base*(this.dynScale||1);
+    // Fill-rate is the main GPU cost; 2x DPR on phones buys little but doubles every pass.
+    const coarse=typeof matchMedia==='function'&&matchMedia('(pointer:coarse)').matches;
+    const cap=coarse?1.5:(this.quality==='high'?2:1);
+    const pr=Math.min(devicePixelRatio||1,cap)*(this.dynScale||1);
     this.renderer.setPixelRatio(pr);
     this.composer.setPixelRatio(pr);
+    // Bloom is low-frequency: render it at half resolution and upsample (~75% less fill).
+    const w=Math.max(1,Math.round(innerWidth*pr/2)),h=Math.max(1,Math.round(innerHeight*pr/2));
+    this.bloom.setSize(w,h);
     this.bloom.strength=this.quality==='high'?.42:.26;
   }
 
@@ -380,6 +475,7 @@ class Game{
     this.viewCam.aspect=innerWidth/innerHeight;this.viewCam.updateProjectionMatrix();
     this.renderer.setSize(innerWidth,innerHeight);
     this.composer.setSize(innerWidth,innerHeight);
+    this._applyQuality();               // re-apply DPR cap and half-res bloom after a resize
   }
 
   /* ================= Input ================= */
@@ -470,20 +566,76 @@ class Game{
     return this.ui&&this.ui.camoOf?this.ui.camoOf(op):'default';
   }
 
+  /* Every arena mode is played online now: dm and koth are team arenas. Endless waves is
+     single-player only; a solo-training session (server unreachable) runs it locally. */
+  isArena(){ return this.mode==='dm'||this.mode==='koth'; }
+  /* True while a networked match is running (the DO is authoritative). */
+  online(){ return !!(this.netMatch&&this.netMatch.active); }
+
+  /* Solo training: the offline fallback. Every real mode is online, but if the room server is
+     unreachable this runs the same waves rule set locally (drone AI, no socket, never scored). */
+  _startSoloOnline(){
+    if(this.netLobby)this.netLobby.hide();
+    this._pendingNet=null;
+    this._soloTraining=true;
+    this.ui.sel.mode='dm'; // solo 5v5 training uses the DM rule set with AI-filled teams
+    this.startGame();
+  }
+
+  /* ?shot=online / online-remotes: deterministic 5v5 staging for visual verification. */
+  _shotOnline(remotes){
+    this.ui.sel.mode='dm';
+    const roster=remotes?[
+      {id:'r1',name:'Frost-2',op:'frost',camo:'default',team:'A'},
+      {id:'r2',name:'Raven-2',op:'raven',camo:'default',team:'B'},
+      {id:'r3',name:'Swift',op:'swift',camo:'snow',team:'A'},
+    ]:[];
+    const humans={A:roster.filter(r=>r.team==='A').length,B:roster.filter(r=>r.team==='B').length};
+    this._pendingNet={
+      mode:'dm', team:'A',faction:'ct',map:this.ui.sel.map,
+      rows:[{name:this.playerName,team:'A',kills:0,deaths:0,me:true,id:'me',op:this.ui.sel.operator},
+        ...roster.map(r=>({name:r.name,team:r.team,kills:0,deaths:0,me:false,id:r.id,op:r.op}))],
+      timer:180,winKills:25,isHost:!remotes,
+      setup:{sizes:{A:5,B:5},humans,playerTeam:'A',roster,bots:[],isHost:!remotes,online:true},
+    };
+    this.mode='dm';
+    this.startGame();
+    for(const h of this.heroes.list)if(h.netDriven&&h.netBuf)
+      h.netBuf.push(performance.now()/1000,{x:h.pos.x,y:h.pos.y,z:h.pos.z,
+        yaw:h.yaw,pitch:0,hp:h.hp,alive:true,crouch:false});
+  }
+
   /* ================= State switching ================= */
   startGame(){
     const sel=this.ui.sel;
     this.mode=sel.mode;
     this.playerName=this.ui.playerName;
-    if(sel.map!==this.world.mapKey)this.buildWorldFor(sel.map);
+    const pm=this.mode==='online'?this._pendingNet:null;
+    if(this.mode==='online'&&!pm){this.toMenu();return;}  // bail before any state is cleared
+    // The room's mode (waves / koth / dm) decides the rules. Solo training (server unreachable)
+    // runs the waves rule set locally with no socket.
+    // The room's mode decides online rules; offline the menu chip does (waves / koth / dm).
+    const soloTraining=this._soloTraining;
+    this.matchMode=soloTraining?'dm':((pm&&pm.mode)||(this.mode==='online'?'dm':this.mode));
+    this.mode=this.matchMode;
+    this._soloTraining=false;
+    this.playerTeam=pm?pm.team:'A';
+    const mapKey=pm?pm.map:sel.map;
+    if(mapKey!==this.world.mapKey)this.buildWorldFor(mapKey);
     // C5: player operator = roster selection; stats / weapons / first-person arms all follow the operator definition
-    const op=byId(sel.operator)||byId(DEFAULT_OP);
+    let op=byId(sel.operator)||byId(DEFAULT_OP);
+    if(pm&&op.faction!==pm.faction){
+      const pool=byFaction(pm.faction);
+      if(!pool.length){this.toMenu();return;}                 // malformed roster faction
+      op=pool[0];                                             // online side is fixed by the server roster
+    }
     const hero=op.faction;
     this.playerOperator=op;
     this.ui.shareOp=op;
     this.playerFaction=hero;
     this.playerCamo=sel.camo||this.camoFor(op);
     this.player.god=false;this.invulnT=0;this.dmRespawnT=-1;
+    this._deathHandled=false;
     this.spectate.target=null;this.lastKiller=null;
     this.grenades.reset();this.pickups.clear();
     this.damageBoostT=0;this.damageBoostMul=1;
@@ -525,33 +677,70 @@ class Game{
     this.playerShotT=-99; // a shot from the previous match must not alert the new bots
     this.startTime=performance.now()/1000;
 
-    if(this.mode==='dm'){
-      this.ui.setDmMode(true);
-      this.waves.state='idle';
-      this.dm={scores:new Map(),timer:180,winKills:25}; // 3-minute matches; first to 25 kills ends early
-      this.dm.scores.set(this.playerName,{name:this.playerName,team:'A',kills:0,deaths:0,me:true,op:this.playerOperator});
-      this.heroes.setup(this.playerFaction,this.playerName,op.id);
-      for(const h of this.heroes.list)
-        this.dm.scores.set(h.name,{name:h.name,team:h.team,kills:0,deaths:0,me:false,op:h.def});
-      this.ui.banner(t('dm_start'),t('dm_sub'));
+    if(this.matchMode==='waves'){
+      // Single-player waves: drones are simulated locally, no networking involved.
+      this.ui.setDmMode(false);
+      this.dm=null;
+      this.koth.end();
+      this.waves.reset();
+      this.enemies.authoritative=true;
+      this.enemies.mirror=false;
+      this.ui.banner(t('mode_waves'),t('wave_sub'));
       this.audio.waveStart();
-      this.ui.setScore(0);
-    }else if(this.mode==='koth'){
+      this.ui.setWave(0);
+    }else if(this.matchMode==='koth'){
       this.ui.setDmMode(true);
       this.waves.state='idle';
-      this.dm={scores:new Map(),timer:300,winKills:999};
-      this.dm.scores.set(this.playerName,{name:this.playerName,team:'A',kills:0,deaths:0,me:true,op:this.playerOperator});
-      this.heroes.setup(this.playerFaction,this.playerName,op.id);
-      for(const h of this.heroes.list)
-        this.dm.scores.set(h.name,{name:h.name,team:h.team,kills:0,deaths:0,me:false,op:h.def});
+      const timer=pm?(pm.timer||240):240;
+      this.dm={scores:new Map(),timer,winKills:pm?(pm.winKills||200):0,score:{A:0,B:0}};
+      this.dm.scores.set(this.playerName,{name:this.playerName,team:this.playerTeam||'A',kills:0,deaths:0,me:true,op:this.playerOperator});
+      for(const r of (pm&&pm.rows)||[])
+        this.dm.scores.set(r.name,{name:r.name,id:r.id,team:r.team,kills:0,deaths:0,
+          me:!!r.me,op:byId(r.op)||byId(DEFAULT_OP)});
+      if(pm){
+        if(this.netMatch)this.netMatch.sendWorld(this.world.mapKey,this.world.losGeo);
+        this.heroes.setup(hero,this.playerName,op.id,pm.setup);
+        // The host is the only node that evaluates the capture; the DO is the only score writer.
+        this.koth.online=true;
+        this._uiLock=true;
+      }else{
+        this.heroes.setup(this.playerFaction,this.playerName,op.id);   // solo training vs AI
+        for(const h of this.heroes.list)
+          this.dm.scores.set(h.name,{name:h.name,team:h.team,kills:0,deaths:0,me:false,op:h.def});
+        this.koth.online=false;
+      }
+      this.koth.reset();
       this.koth.start();
       this.ui.banner(t('mode_koth'),t('koth_name'));
       this.audio.waveStart();
       this.ui.setScore(0);
     }else{
-      this.ui.setDmMode(false);
-      this.waves.reset();
-      this.ui.banner(t('deployed'),t('hold_sub'));
+      this.ui.setDmMode(true);
+      this.waves.state='idle';
+      const timer=pm?(pm.timer||300):180; // offline bot DM is a 3-minute match; online uses the room timer
+      const winKills=pm?(pm.winKills||25):25;
+      this.dm={scores:new Map(),timer,winKills,score:{A:0,B:0}};
+      this.dm.scores.set(this.playerName,{name:this.playerName,team:this.playerTeam||'A',kills:0,deaths:0,me:true,op:this.playerOperator});
+      for(const r of (pm&&pm.rows)||[])
+        this.dm.scores.set(r.name,{name:r.name,id:r.id,team:r.team,kills:0,deaths:0,
+          me:!!r.me,op:byId(r.op)||byId(DEFAULT_OP)});
+      if(pm){
+        // Upload the authoritative map geometry so the DO can reject wall shots this match.
+        if(this.netMatch)this.netMatch.sendWorld(this.world.mapKey,this.world.losGeo);
+        this.heroes.setup(hero,this.playerName,op.id,pm.setup);
+        this.ui.banner(t('online_start'),t('online_sub'));
+        // 3 s countdown: local input is frozen but remote avatars keep interpolating.
+        this._uiLock=true;
+      }else{
+        // 5v5 solo training (lobby fallback) fields a full AI 5v5; plain offline DM is 3v3.
+        const setup=soloTraining?{sizes:{A:5,B:5},humans:{A:0,B:0},playerTeam:'A',roster:[],bots:[],isHost:true,online:false}:undefined;
+        this.heroes.setup(this.playerFaction,this.playerName,op.id,setup);
+        for(const h of this.heroes.list)
+          this.dm.scores.set(h.name,{name:h.name,team:h.team,kills:0,deaths:0,me:false,op:h.def});
+        this.ui.banner(t('dm_start'),t('dm_sub',{a:soloTraining?5:3,b:soloTraining?5:3,m:3,k:winKills}));
+      }
+      this.audio.waveStart();
+      this.ui.setScore(0);
     }
 
     this.state='playing';
@@ -560,10 +749,15 @@ class Game{
     this.ui.showOnly(null);
     this.ui.setScore(this.score);
     this.ui.setHealth(this.player.health,this.player.maxHealth);
+    // The camera only follows the player inside player.update() (active states). While the
+    // first-run tutorial pauses simulation, it would otherwise stay on the menu's orbit
+    // position — the player "deploys into the sky". Snap it to the spawn eye at once.
+    this.camera.position.copy(this.player.eye);
+    this.camera.rotation.set(this.player.pitch,this.player.yaw,0,'YXZ');
     this.fallbackAim=false;
     this._requestLock();
     // M3-G7: show onboarding on first entry
-    if(!this.shotMode&&!this.e2eMode&&!store.get('o07_tutorial_done')){
+    if(this.mode!=='online'&&!this.shotMode&&!this.e2eMode&&!store.get('o07_tutorial_done')){
       this.state='tutorial';
       if(document.pointerLockElement)document.exitPointerLock();
       this.ui.showTutorial(TUTORIAL,()=>{
@@ -579,6 +773,7 @@ class Game{
 
   pause(){
     if(this.state!=='playing')return;
+    if(this.mode==='online'&&this.netMatch&&this.netMatch.active){this.netMenu();return;}
     this.state='paused';
     this.input.firing=false;this.input.ads=false;
     this._mouseFire=false;this._mouseAds=false; // a mouse-up lost during pause must not leave fire stuck on after resuming
@@ -587,13 +782,32 @@ class Game{
     this.ui.showOnly('pause');
     if(document.pointerLockElement)document.exitPointerLock();
   }
+  /* Online ESC: freeze only local input. The world, bots and damage keep running server-side,
+     so the player cannot pause the match for everyone else. */
+  netMenu(){
+    this.state='paused';
+    this._uiLock=true;
+    this.input.firing=false;this.input.ads=false;
+    this._mouseFire=false;this._mouseAds=false;
+    this.keys.clear();
+    this.audio.musicSet(.2);
+    this.ui.showOnly('pause');
+    this.ui.setNetMode(true);
+    if(document.pointerLockElement)document.exitPointerLock();
+  }
   resume(){
     this.state='playing';
+    this._uiLock=false;
+    this.ui.setNetMode(false);
     this.audio.musicSet(.7);
     this.ui.showOnly(null);
     this._requestLock();
   }
   toMenu(){
+    if(this.netMatch&&this.netMatch.phase!==PHASE.IDLE)this.netMatch.leave();
+    this._uiLock=false;
+    this.ui.setNetMode(false);
+    if(this.netLobby)this.netLobby.hide();
     this.enemies.clearAll();
     this.heroes.clear();
     this.grenades.clear();
@@ -614,11 +828,40 @@ class Game{
     this.enemies.spawn('WASP',new THREE.Vector3(-10,2.6,-28),{entering:false,decor:true});
   }
 
+  /* Rebuild GPU-side state after a WebGL context restore without losing the match. */
+  rebuildAfterContextRestore(){
+    this.composer?.dispose?.();
+    this.bloom?.dispose?.();
+    this._setupComposer();
+    this._applyQuality();
+    this.renderer.compile(this.scene,this.camera);
+    this.renderer.setAnimationLoop(()=>{
+      try{this.tick();}
+      catch(err){
+        this.renderer.setAnimationLoop(null);
+        console.error(err);
+        this.ui.debug('ERR '+(err&&err.message||err),true);
+      }
+    });
+    this.ui.debug('WebGL context restored',true);
+  }
+
+  /* Spawn safety: jittered respawn points must not overlap any collider. */
+  _spawnClear(){
+    const p=this.player.pos,r=this.player.radius+.05;
+    for(const c of this.world.colliders){
+      if(p.y>=c.top-.01)continue;
+      if(p.x>c.minX-r&&p.x<c.maxX+r&&p.z>c.minZ-r&&p.z<c.maxZ+r)return false;
+    }
+    return true;
+  }
+
   /* ================= Shooting ================= */
   _raySphere(origin,dir,c,r){
     const oc=_rsO.copy(origin).sub(c);
     const b=oc.dot(dir);
     const cc=oc.dot(oc)-r*r;
+    if(cc<=0)return 0;                 // ray origin inside the sphere: point-blank hit
     const disc=b*b-cc;
     if(disc<0)return null;
     const t=-b-Math.sqrt(disc);
@@ -626,13 +869,20 @@ class Game{
   }
 
   fire(spread){
+    // Hard guard: dead players / post-match input must never produce a shot, even if a
+    // direct caller (touch, gamepad, test hook) bypasses weapon.update().
+    if(!this.player || !this.player.alive)return;
     this.stats.shots++;
+    const killerId=this.netMatch&&this.netMatch.active?this.netMatch.me?.id:null;
     const cam=this.camera;
     const def=this.weapon.def;
     this.playerShotT=this.time;
     // Industry standard: the shot uses the authoritative yaw/pitch at the moment of firing, not last frame's render camera (fast flicks neither lag nor drift)
     const pl=this.player;
-    const sy=Math.sin(pl.yaw),cy=Math.cos(pl.yaw),sp=Math.sin(pl.pitch),cp=Math.cos(pl.pitch);
+    const kick=this.weapon.camKick||0, kickY=this.weapon.camKickYaw||0;
+    const pitch=Math.max(-1.553,Math.min(1.553,pl.pitch+kick));
+    const yaw=pl.yaw+kickY;
+    const sy=Math.sin(yaw),cy=Math.cos(yaw),sp=Math.sin(pitch),cp=Math.cos(pitch);
     const dir=this._sd.set(-sy*cp,sp,-cy*cp);
 
     const right=this._sr.set(cy,0,-sy);
@@ -641,9 +891,9 @@ class Game{
     dir.addScaledVector(right,Math.cos(a)*r).addScaledVector(up,Math.sin(a)*r).normalize();
 
     // 1. Statics
-    this.ray.set(cam.position,dir);this.ray.far=400;
+    this.ray.set(cam.position,dir);this.ray.far=120;   // arena radius is 56 m; 400 m only wasted work
     const sHits=this.ray.intersectObjects(this.world.shootStatics,false);
-    let bestT=sHits.length?sHits[0].distance:400;
+    let bestT=sHits.length?sHits[0].distance:120;
     let bestStatic=sHits.length?sHits[0]:null;
     // 2. Drones (waves)
     let bestEnemy=null,bestEnemyHit=null;
@@ -685,7 +935,7 @@ class Game{
       this.stats.hits++;
       const head=bestHeroPart==='head';
       const dmg=def.dmg*(head?this.playerCritMul():1)*this.playerDamageMul();
-      bestHero.takeDamage(dmg,this.playerName,head);
+      bestHero.takeDamage(dmg,this.playerName,head,killerId);
       this.audio.hit(head);
       this.ui.hitmark(head);
       this.effects.impact(end,UP,'metal',{decal:false});
@@ -700,7 +950,7 @@ class Game{
       this.effects.impact(bestStatic.point,n,bestStatic.object.userData.surface||'concrete');
     }
     // M3-G3: armor-piercing rounds — 60% damage to the second target along the ray
-    if(this.upgrades&&this.upgrades.pierce>0&&(bestEnemy||bestHero)&&bestT<399){
+    if(this.upgrades&&this.upgrades.pierce>0&&(bestEnemy||bestHero)&&bestT<119){
       const org=this._pierceO.copy(cam.position).addScaledVector(dir,bestT+.15);
       this.ray.set(org,dir);this.ray.far=60;
       const s2=this.ray.intersectObjects(this.world.shootStatics,false);
@@ -724,7 +974,7 @@ class Game{
       }
       const pd=def.dmg*.6*this.playerDamageMul();
       if(second)this.enemies.damage(second,'body',pd,org);
-      if(secondHero)secondHero.takeDamage(pd,this.playerName);
+      if(secondHero)secondHero.takeDamage(pd,this.playerName,false,killerId);
     }
 
     // Explosive-round AoE
@@ -739,7 +989,7 @@ class Game{
       for(const h of this.heroes.list){
         if(h.team===this.playerTeam||!h.alive)continue;
         const d=h.pos.distanceTo(end);
-        if(d<def.blastR)h.takeDamage(def.blastDmg*(1-d/def.blastR),this.playerName);
+        if(d<def.blastR)h.takeDamage(def.blastDmg*(1-d/def.blastR),this.playerName,false,killerId);
       }
       this.shake=Math.max(this.shake,def.shake||.1);
     }
@@ -808,8 +1058,15 @@ class Game{
   }
 
   /* ================= Deathmatch hits ================= */
-  onHeroKill(killerName,victimHero,headshot=false){
-    if(!this.dm||(this.mode!=='dm'&&this.mode!=='koth'))return;
+  onHeroKill(killerName,victimHero,headshot=false,fromId=null){
+    if(this.netMatch&&this.netMatch.active){
+      // The DO owns online scoring; the host reports bot deaths so all clients agree.
+      // fromId can be an id *object* ({id,name}); the DO needs the bare id string.
+      const kid=(fromId&&typeof fromId==='object')?fromId.id:fromId;
+      this.netMatch.reportBotDeath(victimHero,kid||this.netMatch.me?.id);
+      return;
+    }
+    if(!this.dm||!this.isArena())return;
     const k=this.dm.scores.get(killerName);
     if(k)k.kills++;
     const v=this.dm.scores.get(victimHero.name);
@@ -827,34 +1084,41 @@ class Game{
   botDamageFx(hero,pos){
     this.effects.impact(pos,UP,'metal',{decal:false});
   }
-  damagePlayerFromBot(dmg,fromName,fromPos){
+  /* Single entry point for all incoming damage. `from = {id,name,pos}`; older callers pass a name. */
+  damagePlayer(dmg,from,head=false,weapon){
     if(this.player.god||this.invulnT>0||!this.player.alive)return;
+    const fromName=typeof from==='string'?from:from?.name;
+    const fromPos=typeof from==='string'?(head&&typeof head==='object'?head:null):from?.pos;
+    const fromId=typeof from==='string'?null:from?.id;
     this.player.damage(dmg,this.time);
     this.ui.damageFlash(.55);
     this.shake=Math.max(this.shake,.1);
     this.audio.hurt();
     this._showDamageDirection(fromPos);
-    if(fromName){
-      const killer=this.heroes.list.find(h=>h.name===fromName);
+    if(fromName||fromId){
+      const killer=(fromId&&this.heroes.byNetId(fromId))||this.heroes.list.find(h=>h.name===fromName);
       if(killer)this.lastKiller=killer;
     }
-    if(this.player.health<=0&&(this.mode==='dm'||this.mode==='koth')){
-      // The player is a full participant: their death goes on the board and the bot that dealt the
-      // killing blow gets the kill (bots only credited each other before, so a human death was
-      // invisible in both columns). This runs exactly once per death — the guard at the top of
-      // this method bails out while the player is already dead.
-      const me=this.dm&&this.dm.scores.get(this.playerName);
-      if(me)me.deaths++;
-      if(fromName){
-        const k=this.dm&&this.dm.scores.get(fromName);
-        if(k)k.kills++;
-        this.ui.killFeed(fromName,this.playerName,t('kill_verb'),false);
-        this._checkDmWin(); // the killing bot can reach winKills too
+    if(this.player.health<=0){
+      if(this.netMatch&&this.netMatch.active){
+        this.netMatch.reportLocalDeath(fromId||'',weapon||this.weapon.def?.id,head);
+      }else if(this.isArena()){
+        // Offline/local arena: the human is a full participant, so the death goes on the board and
+        // the killing bot is credited exactly once (the caller's _deathHandled guard prevents repeats).
+        const me=this.dm&&this.dm.scores.get(this.playerName);
+        if(me)me.deaths++;
+        if(fromName){
+          const k=this.dm&&this.dm.scores.get(fromName);
+          if(k)k.kills++;
+          this.ui.killFeed(fromName,this.playerName,t('kill_verb'),false);
+          this._checkDmWin();
+        }
       }
       const killer=fromName?this.heroes.list.find(h=>h.name===fromName):null;
       if(killer&&killer.alive)this.spectate={target:killer,t:2.5};
     }
   }
+  damagePlayerFromBot(dmg,fromName,fromPos){ return this.damagePlayer(dmg,{name:fromName,pos:fromPos}); }
   /* U2: world position → screen direction (0 straight ahead, positive clockwise), fades out over 0.8 s */
   _showDamageDirection(fromPos){
     if(!fromPos||!this.player)return;
@@ -901,9 +1165,11 @@ class Game{
   }
   _factionLabels(){
     const ct=t('faction_ct'),tt=t('faction_t');
+    if(this.mode==='online')return {A:ct,B:tt}; // online sides are fixed: A = Nova, B = Rogue
     return this.playerFaction==='ct'?{A:ct,B:tt}:{A:tt,B:ct};
   }
   _checkDmWin(){
+    if(this.netMatch&&this.netMatch.active)return; // the DO decides the winner online
     let a=0,b=0;
     for(const s of this.dm.scores.values()){
       if(s.team==='A')a+=s.kills;else b+=s.kills;
@@ -935,15 +1201,55 @@ class Game{
     this._announceProgress(award);
   }
 
+  _resultBoard(rows,labels){
+    return `<table><tr><th>${t('sb_role')}</th><th>${t('sb_faction')}</th><th>${t('sb_kills')}</th><th>${t('sb_deaths')}</th></tr>`+
+      rows.map(r=>`<tr class="${r.me?'me':''}"><td>${escHTML(r.name)}</td>`+
+        `<td><span class="${r.team==='A'?'tA':'tB'}">${r.team==='A'?labels.A:labels.B}</span></td>`+
+        `<td>${r.kills}</td><td>${r.deaths}</td></tr>`).join('')+'</table>';
+  }
+  /* Online result is rendered from the DO's s:end payload. No local best score, no leaderboard. */
+  _endOnline(m={}){
+    if(this.state==='over')return;
+    this.state='over';
+    this._uiLock=false;
+    const score=m.score||this.dm?.score||{A:0,B:0};
+    const win=m.win===this.playerTeam;
+    const raw=(m.rows&&m.rows.length)?m.rows:[...(this.dm?.scores?.values()||[])];
+    const rows=raw.map(r=>({
+      name:r.name,team:r.team,kills:r.kills||0,deaths:r.deaths||0,
+      me:r.id===this.netMatch?.me?.id||!!r.me,op:r.op,
+    })).sort((x,y)=>y.kills-x.kills);
+    const top=rows[0];
+    const mvp=top?{name:top.name,op:byId(top.op)||this.playerOperator,kills:top.kills,deaths:top.deaths}:null;
+    this.ui.setDmScore(score.A,score.B,0);
+    this.audio.gameOver();
+    const award=this._awardProgress({score:score.A+score.B,skipBest:true});
+    this.ui.showOver({
+      title:win?t('win'):t('lose'),win,kicker:t('online_over_kicker'),
+      stats:{...this.stats,waveLabel:t('dur_label'),
+        wave:t('dur_fmt',{m:Math.floor(this.stats.time/60),s:Math.floor(this.stats.time%60)}),
+        score:score.A,best:0,mvp},
+      board:this._resultBoard(rows,this._factionLabels()),
+    });
+    const restart=$('o-restart'),rematch=$('o-rematch'),share=$('o-share');
+    if(restart)restart.classList.add('hidden');
+    if(share)share.classList.add('hidden');
+    if(rematch)rematch.classList.toggle('hidden',!this.netMatch?.isHost);
+    if(document.pointerLockElement)document.exitPointerLock();
+    this._announceProgress(award);
+  }
+
   /* M4-P5: award XP / progression at the end of a match */
-  _awardProgress(){
+  _awardProgress(opts){
+    const o=opts&&typeof opts==='object'?opts:{};
+    const score=o.score??this.score;
     const op=this.playerOperator||byId(DEFAULT_OP);
     const r=this.save.award({
       kills:this.stats.kills,wave:this.mode==='waves'?this.waves.n:0,
       headshots:this.stats.headshots||0,
-      score:this.score,time:this.stats.time,opId:op.id,
+      score,time:this.stats.time,opId:op.id,
     });
-    this.ui.showBest(this.save.data.stats.bestScore);
+    if(!o.skipBest)this.ui.showBest(this.save.data.stats.bestScore);
     return r;
   }
   /* Shown after the results screen so it is not covered by the overlay */
@@ -1000,11 +1306,19 @@ class Game{
       this.perf.slow=0;this._perfAt=this.perf.frames;
     }
     this.inputMgr&&this.inputMgr.update(dtRaw);
+    // The network session runs even while the local player is in the online pause menu.
+    if(this.netMatch&&this.netMatch.active){
+      this.netMatch.tick(dt);
+      const remain=this.netMatch.startAt/1000-this.netMatch.clock.serverNow(performance.now());
+      if(remain>0)this._uiLock=true;
+      else if(this._uiLock&&this.state==='playing')this._uiLock=false;
+    }
     if(this.state==='dying'){
       dt*=.3;
       this.dyingT-=dtRaw;
       if(this.dyingT<=0){
         this.state='over';
+        // Waves is single-player: one death ends the run and shows the results screen.
         const best=parseInt(store.get('o07_best','0'))||0;
         if(this.score>best)store.set('o07_best',this.score);
         const award=this._awardProgress(); // waves death is a match end: persist XP / stats / daily
@@ -1024,15 +1338,23 @@ class Game{
     if(active){
       this.stats.time+=dt;
       // Deathmatch respawn
-      if((this.mode==='dm'||this.mode==='koth')&&this.dmRespawnT>0){
+      if(this.isArena()&&this.dmRespawnT>0){
         this.dmRespawnT-=dtRaw;
         if(this.dmRespawnT<=0){
           this.dmRespawnT=-1;
-          this.player.pos.set((Math.random()-.5)*6,0,24);
+          const base=this.spawns[this.playerTeam]||new THREE.Vector3(0,0,24);
+          // Jittered spawns can land inside map geometry (e.g. caldera gate pillars).
+          // Retry a few times and always run the collision push-out before releasing control.
+          for(let i=0;i<8;i++){
+            this.player.pos.set(base.x+(Math.random()-.5)*6,0,base.z+(Math.random()-.5)*6);
+            this.player._collide(this.world.colliders);
+            if(this._spawnClear())break;
+          }
           this.player.yaw=0;this.player.pitch=0;
           this.player.vel.set(0,0,0);
           this.player.velY=0;this.player.grounded=true;this.player.airborne=false;
           this.player.alive=true;
+          this._deathHandled=false;             // allow the next death to run side-effects once
           this.player.health=this.player.maxHealth;
           this.player.god=true;this.invulnT=2;
           this.audio.respawn();
@@ -1046,35 +1368,53 @@ class Game{
         if(this.invulnT<=0)this.player.god=false;
       }
 
-      this._fallbackEdgeRotate(dt);
-      this.player.update(dt,this.input,this.keys,this.time,this.audio);
-      this.weapon.update(dt,this.input,this.player,this.camera,this.time,d=>this.fire(d));
+      if(!this._uiLock && this.player.alive){
+        this._fallbackEdgeRotate(dt);
+        this.player.update(dt,this.input,this.keys,this.time,this.audio);
+        this.weapon.update(dt,this.input,this.player,this.camera,this.time,d=>this.fire(d));
+      }
 
-      if(this.mode==='dm'||this.mode==='koth'){
-        this.heroes.update(dt,this.time,(a,b)=>this._los(a,b));
-        if(this.mode==='koth')this.koth.update(dt);
+      if(this.isArena()){
+        this._losLeft=16;                      // AI LOS budget for this frame (firing + cover sampling)
+        this.heroes.update(dt,this.time,(a,b)=>this._losCapped(a,b));
+        if(this.mode==='koth'){
+          const online=this.netMatch&&this.netMatch.active;
+          this.koth.update(dt);
+          // Only the host evaluates the capture; the DO adds the points so both clients agree.
+          if(online&&this.netMatch.isHost&&this.koth.lastTickTeam)
+            this.netMatch.reportPoint(this.koth.lastTickTeam,1);
+        }
         if(this.dm&&this.state==='playing'){
-          this.dm.timer-=dt;
-          if(this.dm.timer<=0){
-            let a=0,b=0;
-            for(const s of this.dm.scores.values()){if(s.team==='A')a+=s.kills;else b+=s.kills;}
-            if(this.mode==='dm')this._endDm(a,b);
-            else{
-              const win=this.koth.score.A>=this.koth.score.B;
-              this._endMode(win);
+          const online=this.netMatch&&this.netMatch.active;
+          if(!online){
+            this.dm.timer-=dt;
+            if(this.dm.timer<=0){
+              let a=0,b=0;
+              for(const s of this.dm.scores.values()){if(s.team==='A')a+=s.kills;else b+=s.kills;}
+              if(this.mode==='dm')this._endDm(a,b);
+              else{
+                const win=this.koth.score.A>=this.koth.score.B;
+                this._endMode(win);
+              }
             }
-          }
+          }else this.dm.timer=this.netMatch.left;   // read-only mirror for the HUD (netMatch owns it)
           let a=0,b=0;
           for(const s of this.dm.scores.values()){if(s.team==='A')a+=s.kills;else b+=s.kills;}
           this.ui.setDmScore(a,b,this.dm.timer);
         }
       }else{
+        // Single-player waves: drones are simulated and drawn locally.
+        this._losLeft=16;
+        this.heroes.update(dt,this.time,(a,b)=>this._losCapped(a,b));   // teammate avatars
         this.enemies.update(dt,this.player,this.world.colliders,this.time,this);
         this.waves.update(dt);
         const boss=this.enemies.list.find(e=>e.boss);
         if(boss)this.ui.setBoss(boss.hp/boss.maxHp,t('boss_name'));
         else this.ui.hideBoss();
       }
+      // Bot separation pushes the player after player.update() has already resolved collisions.
+      // Re-run the player collision once so a bot cannot shove them into a wall for the frame.
+      if(this.player.alive)this.player._collide(this.world.colliders);
 
       if(this.comboT>0){this.comboT-=dt;if(this.comboT<=0)this.comboKills=0;}
 
@@ -1105,20 +1445,19 @@ class Game{
         this.camera.fov,innerHeight,this.weapon.adsAmt);
       this.ui.hint(this.weapon.ammo<=8&&!this.weapon.reloading&&this.weapon.st.reserve>0?t('hint_reload'):
         (!document.pointerLockElement&&!this.fallbackAim?t('hint_lock'):''));
-      if(this.player.alive===false&&this.state==='playing'){
-        if(this.mode==='dm'||this.mode==='koth'){
-          // Arm the respawn ONCE per death (dmRespawnT minutes is reset in the line above every frame
-          // otherwise): re-arming it every frame kept the countdown pinned at 2.5 s and re-fired the
-          // death flash, so the player never respawned and the screen stayed washed white.
-          if(this.dmRespawnT<0){
-            this.dmRespawnT=2.5;
-            if(this.lastKiller&&this.lastKiller.alive)this.spectate={target:this.lastKiller,t:2.5};
-            this.ui.deathFlash();
-            this.audio.hurt();
-            this._suppressPauseOnce=true; // this unlock is the game's own (spectate window) — it must not auto-pause
-            if(document.pointerLockElement)document.exitPointerLock();
-          }
+      if(this.player.alive===false&&!this._deathHandled&&this.state==='playing'){
+        this._deathHandled=true;          // death side-effects must not re-run every frame
+        this.input.firing=false;this.input.ads=false;
+        this._mouseFire=false;this._mouseAds=false;
+        if(this.isArena()){
+          this.dmRespawnT=2.5;
+          if(this.lastKiller&&this.lastKiller.alive)this.spectate={target:this.lastKiller,t:2.5};
+          this.ui.deathFlash();
+          this.audio.hurt();
+          this._suppressPauseOnce=true; // this unlock is the game's own (spectate window) — it must not auto-pause
+          if(document.pointerLockElement)document.exitPointerLock();
         }else{
+          // Waves is single-player: one death ends the run.
           this.state='dying';this.dyingT=1.5;
           this.ui.deathFlash();
           this.audio.gameOver();
@@ -1132,7 +1471,7 @@ class Game{
       // M4-P3: after death, spectate the killer for 2.5 s (raycast keeps the camera out of walls)
       if(this.spectate.target){
         const s=this.spectate,t=s.target;
-        if(t&&t.alive&&this.mode==='dm'){
+        if(t&&t.alive&&this.isArena()){
           const want=this._specWant.set(t.pos.x,t.pos.y+2.2,t.pos.z-3.5);
           const from=this._specFrom.set(t.pos.x,t.pos.y+1.2,t.pos.z);
           const dir=this._specDir.copy(want).sub(from);
@@ -1186,8 +1525,12 @@ class Game{
     const scoping=this.weapon.def.scope&&this.weapon.adsAmt>.8&&this.player.alive;
     this.ui.setScope(scoping);
     this.weapon.group.visible=!scoping;
-    this.viewCam.fov=75+(58-75)*this.weapon.adsAmt;
-    this.viewCam.updateProjectionMatrix();
+    const viewFov=75+(58-75)*this.weapon.adsAmt;
+    if(Math.abs(viewFov-(this._lastViewFov??-1))>.01){
+      this._lastViewFov=viewFov;
+      this.viewCam.fov=viewFov;
+      this.viewCam.updateProjectionMatrix();   // only recompute when ADS actually changes
+    }
     // Scope/ADS zoom keeps the original vertical FOV ratio (scopeFov or 62 vs 75), applied to the horizontal FOV
     const zoomH=this.weapon.def.scope?(this.weapon.def.scopeFov||30)/75:62/75;
     const hFov=(this.baseHFov||FOV_H)*(1-(1-zoomH)*this.weapon.adsAmt);
@@ -1202,11 +1545,21 @@ class Game{
     // Accepts plain {x,y,z} as well as Vector3: the bot cover code passes cheap object
     // literals, and this is called many times per second by eight bots.
     const dir=this._losV.set((b.x||0)-(a.x||0),(b.y||0)-(a.y||0),(b.z||0)-(a.z||0));
+
     const len=dir.length();
     if(len<.5)return true;
-    this.losRay.set(a,dir.normalize());this.losRay.far=len-.3;
+    this.losRay.set(a,dir.multiplyScalar(1/len));this.losRay.far=len-.3;
     const hits=this.losRay.intersectObjects(this.world.losStatics||this.world.shootStatics,false);
     return hits.length===0;
+  }
+  /* Budget AI line-of-sight rays so a room full of bots cannot create a ray storm.
+     Over-budget frames optimistically return "clear"; the next frame re-checks. */
+  _losCapped(a,b){
+    // Budget is conservative: when exhausted the bot assumes the shot is blocked (holds fire)
+    // rather than assuming it is clear, so a tight budget can never produce wall-bang shots.
+    if(this._losLeft<=0)return false;
+    this._losLeft--;
+    return this._los(a,b);
   }
 
   /* ================= Verification hooks ================= */
@@ -2351,8 +2704,8 @@ class Game{
           assert(Math.hypot(h.pos.x,h.pos.z-baseZ)<=7,k+' respawn strayed from the base: '+h.name+' at '+h.pos.x.toFixed(1)+','+h.pos.z.toFixed(1));
           for(const c of this.world.colliders){
             if(h.pos.y>c.top)continue;
-            const cx=Math.max(c.minX,Math.min(h.pos.x,c.maxX)),cz=Math.max(c.minZ,Math.min(h.pos.z,c.maxZ));
-            assert(Math.hypot(h.pos.x-cx,h.pos.z-cz)>=.44,`${h.name} respawned inside map geometry on ${k}`);
+            // OBB-aware test: the old AABB corner check false-positives on rotated cover.
+            assert(!circleOverlapsCollider(h.pos.x,h.pos.z,.44,c),`${h.name} respawned inside map geometry on ${k}`);
           }
         }
       }
@@ -2368,6 +2721,143 @@ class Game{
       assert(after.heroMats===before.heroMats,`character material count should stay stable: ${before.heroMats} → ${after.heroMats}`);
       assert(after.textures<=before.textures+5,`textures should not keep growing: ${before.textures} → ${after.textures}`);
     });
+
+    /* ---------------- Foot-vs-ground clearance (rendered sole vertices, not capsules) ---------------- */
+    await run('foot-ground-flat',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      this.scene.updateMatrixWorld(true);
+      const ray=new THREE.Raycaster(),down=new THREE.Vector3(0,-1,0),from=new THREE.Vector3();
+      for(const h of this.heroes.list){
+        ray.set(from.set(h.pos.x,30,h.pos.z),down);
+        const hit=ray.intersectObject(this.world.ground,false)[0];
+        assert(hit,'the ground mesh must exist under '+h.name);
+        assert(Math.abs(hit.point.y)<.002,`${h.name}: rendered ground is ${hit.point.y.toFixed(3)} m at the feet, expected 0`);
+        assert(Math.abs(terrainHeight(h.pos.x,h.pos.z))<.002,`${h.name}: terrain height field drifted from the flat arena`);
+        const r=auditFeet(h,()=>0);
+        assert(r.count>=20,`${h.name}: expected rendered foot vertices, got ${r.count}`);
+        assert(r.maxPenetration<=.002,`${h.name}: sole penetrates the flat ground by ${(r.maxPenetration*100).toFixed(1)} cm`);
+      }
+    });
+    await run('foot-anim-sweep',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const heroes=this.heroes.list.slice(0,4);
+      let worst={pen:-Infinity,name:''};
+      const check=(h,label)=>{
+        this.scene.updateMatrixWorld(true);
+        const r=auditFeet(h,()=>0);
+        if(r.maxPenetration>worst.pen)worst={pen:r.maxPenetration,name:h.name+' '+label};
+      };
+      for(const h of heroes){
+        h.pos.y=0;h.group.position.y=0;h.yaw=0;
+        h.moveK=0;h.walkT=0;h._animate(0,0,0);
+        check(h,'idle');
+        for(const spd of [2.5,5.2,7.8]){
+          for(let k=0;k<12;k++){
+            h.moveK=1;h.walkT=k/12*Math.PI*2;h.yaw=k*.3;
+            h._animate(0,k*.17,spd);
+            check(h,`walk ${spd} m/s phase ${k}`);
+          }
+        }
+      }
+      assert(worst.pen<=.003,`a moving sole dipped ${(worst.pen*100).toFixed(1)} cm below the ground (${worst.name})`);
+    });
+    await run('foot-platform',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const c=this.world.colliders.find(c=>c.top>1&&c.top<2.5&&(c.maxX-c.minX)>2&&(c.maxZ-c.minZ)>1.5);
+      assert(c,'a standable crate/container top should exist');
+      const h=this.heroes.list[0];
+      h.place(new THREE.Vector3((c.minX+c.maxX)/2,c.top,(c.minZ+c.maxZ)/2),0);
+      h.moveK=0;h.walkT=0;h._animate(0,0,0);
+      this.scene.updateMatrixWorld(true);
+      const r=auditFeet(h,()=>c.top);
+      assert(r.count>=20,'expected rendered foot vertices on the platform');
+      assert(r.maxPenetration<=.002,`sole penetrates the ${c.top.toFixed(2)} m platform by ${(r.maxPenetration*100).toFixed(1)} cm`);
+    });
+
+    /* ---------------- Friends 5v5 online ---------------- */
+    await run('net-zero-offline',()=>{
+      assert(this.netMatch.client.stats.socketsOpened===0,
+        'no socket may open until the player enters the online lobby, got '+this.netMatch.client.stats.socketsOpened);
+    });
+    await run('online-5v5-ai',()=>{
+      this.ui.sel.mode='online';
+      this._startSoloOnline();
+      assert(this.heroes.list.length===9,'5v5 should field 9 bots + the player, got '+this.heroes.list.length);
+      assert(this.heroes.list.filter(h=>h.team==='A').length===4,'team A has 4 bots + player');
+      assert(this.heroes.list.filter(h=>h.team==='B').length===5,'team B has 5 bots');
+      assert(new Set(this.heroes.list.map(h=>h.name)).size===9,'bot names must be unique');
+      assert(this.dm.scores.size>=10,'scoreboard should list all combatants');
+      this.toMenu();
+    });
+    await run('online-rogue-side',()=>{
+      this.ui.sel.mode='online';
+      this._pendingNet={team:'B',faction:'t',map:this.ui.sel.map,
+        rows:[{name:this.playerName,team:'B',me:true,id:'me',op:'raven'}],timer:180,winKills:25,isHost:true,
+        setup:{sizes:{A:5,B:5},humans:{A:0,B:0},playerTeam:'B',roster:[],bots:[],isHost:true,online:true}};
+      this.startGame();
+      assert(this.playerTeam==='B','local player should be on team B');
+      assert(this.playerFaction==='t','team B is Rogue online');
+      const a=this.heroes.list.find(h=>h.team==='A'),b=this.heroes.list.find(h=>h.team==='B');
+      assert(a&&a.faction==='ct'&&b&&b.faction==='t','online sides are fixed A=NOVA / B=ROGUE');
+      this.toMenu();
+    });
+    if(window.__loopback){
+      const wait=ms=>new Promise(r=>setTimeout(r,ms));
+      const peer=window.__loopback.createClient();
+      const seen=[];
+      for(const k of [S.HELLO,S.ROOM,S.START,S.KILL,S.HOST,S.END])
+        peer.on(k,m=>seen.push({t:k,m}));
+      await run('net-loopback-room',async()=>{
+        this.ui.sel.mode='online';this.ui.sel.map='desert';
+        this.netMatch.client.connect('ws://loopback');
+        this.netMatch.createRoom();
+        await wait(15);
+        assert(this.netMatch.me&&this.netMatch.me.id,'host should receive s:hello');
+        assert(this.netMatch.room&&this.netMatch.room.code==='LOOP1','room code should be LOOP1');
+        assert(this.netMatch.isHost,'creator is host');
+        peer.connect('ws://loopback',{t:C.JOIN,code:'LOOP1',name:'Guest',op:'raven',ver:1});
+        await wait(15);
+        assert(this.netMatch.room.roster.length===2,'two humans in the room, got '+this.netMatch.room.roster.length);
+      });
+      await run('net-loopback-start',async()=>{
+        this.netMatch.setReady(true);peer.send(C.READY,{r:1});
+        await wait(15);
+        this.netMatch.start();
+        await wait(20);
+        this.player.god=true;this.invulnT=99; // keep the deterministic kill-relay test unambiguous
+        assert(this.mode==='online'&&this.netMatch.active,'both clients should enter the online match');
+        assert(this.heroes.list.length===9,'2 humans + 1 AI fill to 9 combatants, got '+this.heroes.list.length);
+        assert(this.heroes.list.filter(h=>h.netDriven&&h.kind==='human').length===1,'one remote human proxy');
+        assert(this.heroes.list.filter(h=>h.netId&&String(h.netId).startsWith('b')).length===8,'8 replicated bots');
+      });
+      await run('net-peer-moves',async()=>{
+        const guestId=seen.find(x=>x.t===S.HELLO)?.m.id;
+        const h=guestId&&this.heroes.byNetId(guestId);
+        assert(h&&h.netBuf,'remote human proxy should exist');
+        peer.send(C.SNAP,{s:[guestId,350,0,-240,0,0,100,1]});
+        await wait(15);
+        assert(h.netBuf.n>0,'remote snapshot should land in the interpolation buffer');
+        const s=h.netBuf.sample(this.netMatch.renderTime(),'human');
+        assert(s&&Math.abs(s.x-3.5)<.02,'interpolated x should match the snapshot, got '+(s&&s.x));
+      });
+      await run('net-kill-relayed',async()=>{
+        const guestId=seen.find(x=>x.t===S.HELLO)?.m.id;
+        const before=[...this.dm.scores.values()].find(r=>r.id===this.netMatch.me.id)?.kills||0;
+        peer.send(C.DIED,{killer:this.netMatch.me.id,w:'m4a4',seq:99});
+        await wait(15);
+        const after=[...this.dm.scores.values()].find(r=>r.id===this.netMatch.me.id)?.kills||0;
+        assert(after===before+1,'DO kill broadcast should increment the local player score, '+before+'→'+after);
+        assert(this.ui.errors.length===0||!this.ui.errors.some(e=>e.startsWith('ERR')),'no runtime errors');
+      });
+      await run('net-host-migration',async()=>{
+        let promoted=false;
+        peer.on(S.HOST,()=>{promoted=true;});
+        this.netMatch.client.close();
+        await wait(15);
+        assert(promoted,'the remaining client should be promoted to host');
+        peer.close();
+      });
+    }
 
     const fail=results.length-pass;
     window.__e2e={pass,fail,results};

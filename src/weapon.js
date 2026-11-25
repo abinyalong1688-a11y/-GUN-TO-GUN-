@@ -8,6 +8,10 @@ const HIP_ROT=new THREE.Euler(0,-.07,0);
 const ADS_POS=new THREE.Vector3(0,-.098,-.34);
 const ADS_ROT=new THREE.Euler(0,0,0);
 const SPRINT_POS=new THREE.Vector3(.18,-.3,-.4);
+/* Hot-path scratch: the view-model pose/muzzle run every frame and used to allocate a
+   Vector3 per frame (HIP_POS.clone(), tip.clone()), which fed the GC on long sessions. */
+const _hipPos=new THREE.Vector3();
+const _muzzleWorld=new THREE.Vector3();
 const SPRINT_ROT=new THREE.Euler(.32,-.5,.18);
 const LOWER_POS=new THREE.Vector3(.16,-.42,-.42); // lowered while switching
 
@@ -46,6 +50,9 @@ export const WEAPON_DEFS={
    kick:.0078,kickAds:.0044,recoilV:.0102,recoilH:.0042,auto:true,
    tracer:0xffd7a2,tracerW:.027,tracerSpeed:440,reloadDur:2.9,speedMul:.97,adsLift:.043},
 };
+// Static balance table must not be mutable from the console; clones made by setLoadout stay editable.
+for(const d of Object.values(WEAPON_DEFS))Object.freeze(d);
+Object.freeze(WEAPON_DEFS);
 
 /* Weapon / slot name for the current language (the other weapon names are already English) */
 export const wName=d=>isEN()&&d.nameEn?d.nameEn:d.name;
@@ -496,9 +503,16 @@ export class Weapon{
       if(target===this.cur)return;
     }
     if(target===this.cur)return;
+    // Switching cancels an in-progress reload on the CURRENT weapon (CS-style): ammo is
+    // not transferred to the new weapon, and re-selecting does not grant an instant mag.
+    if(this.reloading){
+      this.reloading=false;
+      this.reloadT=0;
+      this._reloadSnd=0;
+      this.ui.reloadRing(-1);
+    }
     this.switchT=0;
     this._pending=target;
-    this.reloading=false;
     this.audio.reload(2);
   }
   _equip(idx,instant){
@@ -510,6 +524,12 @@ export class Weapon{
     this.ui.weaponSlots(idx);
     const d=this.defs[idx],s=this.state[idx];
     this.ui.setAmmo(s.ammo,s.reserve,this.reloading,wName(d));
+    // Reset reload-pose leftovers when a reload was interrupted by a switch.
+    for(const key in this.models){
+      const ud=this.models[key].userData;
+      if(ud&&ud.mag&&ud.magBase){ud.mag.position.y=ud.magBase.y;ud.mag.rotation.z=ud.magBase.rz;}
+      if(ud&&ud.armSupport){ud.armSupport.position.set(0,0,0);ud.armSupport.rotation.z=0;}
+    }
     this.recoilIdx=0;this.camKickYaw=0;
     // Weapon weight affects move speed (heavier weapons move slower)
     this.speedCb&&this.speedCb(d.speedMul||1);
@@ -538,6 +558,7 @@ export class Weapon{
   }
 
   startReload(){
+    if(this.switchT>=0)return;            // never start a reload during the switch animation
     const s=this.st;
     if(this.reloading||s.ammo>=this.def.mag||s.reserve<=0)return;
     this.reloading=true;this.reloadT=0;this._reloadSnd=0;
@@ -633,11 +654,11 @@ export class Weapon{
       else this.audio.shot();
       fireCb(this.spreadRad(player));
     }
-    if(!input.firing&&s.ammo===0&&!this._emptyClicked){
+    if(s.ammo===0&&!this.reloading&&this.switchT<0&&!this._emptyClicked){
       this._emptyClicked=true;this.audio.empty();
-      this.startReload();
+      this.startReload();                    // auto-reload even while the trigger is held
     }
-    if(input.firing)this._emptyClicked=false;
+    if(s.ammo>0)this._emptyClicked=false;
     this.heat=Math.max(0,this.heat-dt*.010);
     // Reset the recoil pattern once firing stops
     if(input.firing)this.recoilReset=.35;
@@ -669,7 +690,7 @@ export class Weapon{
       rot.y+=(SPRINT_ROT.y-rot.y)*Math.min(1,8*dt);
       rot.z+=(SPRINT_ROT.z-rot.z)*Math.min(1,8*dt);
     }else{
-      const target=HIP_POS.clone().lerp(ADS_POS,this.adsAmt);
+      const target=_hipPos.copy(HIP_POS).lerp(ADS_POS,this.adsAmt);
       // Optional per-weapon ADS lift: raises the viewmodel so the iron sights (lower than the
       // M4's tall frame) sit on the crosshair instead of a few centimetres below it.
       if(d.adsLift)target.y+=d.adsLift*this.adsAmt;
@@ -709,7 +730,7 @@ export class Weapon{
         const fs=(0.85+Math.random()*.5)*sc;
         this.flash.scale.set(fs,fs,1);
         this.flash.material.color.setHex(0xfff2dc);
-        this.flashLight.position.copy(this.group.localToWorld(tip.clone()));
+        this.flashLight.position.copy(this.group.localToWorld(_muzzleWorld.copy(tip)));
         this.flashLight.intensity=d.id==='deagle'?10:8;
       }else this.flash.visible=false;
     }else{
@@ -750,7 +771,10 @@ export class Weapon{
 
   resetAmmo(){
     this.state.forEach((st,i)=>{st.ammo=this.defs[i].mag;st.reserve=this.defs[i].reserve;});
-    this.reloading=false;this._equip(0,true);
+    this.reloading=false;
+    this.switchT=-1;this._pending=undefined;   // no ghost slot after restarting mid-switch
+    this.fireT=0;this.camKick=0;this.camKickYaw=0;this.heat=0;
+    this._equip(0,true);
   }
   addReserve(n){
     this.defs.forEach((d,i)=>{

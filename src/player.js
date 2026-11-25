@@ -1,6 +1,7 @@
 // player.js — first-person movement: gravity / jumping / crouching / climbing (hop onto crates and containers)
 // Real-world physics: constant gravity, jump impulse, reduced air control, natural falls off edges
 import * as THREE from 'three';
+import { pushCircleOut, circleOverlapsCollider } from './collision.js';
 
 const GRAVITY=14;        // gravity in m/s² (a bit stronger than 9.8 for game feel)
 const JUMP_V=5.7;        // jump take-off speed in m/s (≈1.16 m jump, enough for a 1.15 m crate)
@@ -44,22 +45,21 @@ export class Player{
   }
   damage(n,now){
     if(!this.alive||this.god)return;
-    this.health=Math.max(0,this.health-n);
+    // Network input is untrusted: NaN / Infinity / negative values must never poison health
+    if(typeof n!=='number'||!Number.isFinite(n)||n<=0)return;
+    this.health=Math.max(0,this.health-Math.min(400,n));
     this.lastHurt=now;
-    if(this.health<=0)this.alive=false;
+    if(this.health<=0)this.health=0,this.alive=false;
   }
   heal(n){this.health=Math.min(this.maxHealth,this.health+n);}
 
   /* Highest standable support surface under the feet (≤limit, includes the 0.32 m step-up) */
   _supportY(limit){
     let s=0;
-    const r2=(this.radius*.85)*(this.radius*.85);
+    const r=this.radius*.85;
     for(const c of this.colliders){
       if(c.top>limit)continue;
-      const cx=Math.max(c.minX,Math.min(this.pos.x,c.maxX));
-      const cz=Math.max(c.minZ,Math.min(this.pos.z,c.maxZ));
-      const dx=this.pos.x-cx,dz=this.pos.z-cz;
-      if(dx*dx+dz*dz<r2 && c.top>s)s=c.top;
+      if(circleOverlapsCollider(this.pos.x,this.pos.z,r,c) && c.top>s)s=c.top;
     }
     return s;
   }
@@ -67,13 +67,10 @@ export class Player{
   /* Fall-through test: highest crate top below this frame's starting foot height that still overlaps in XZ */
   _landingY(prevFeet){
     let s=0;
-    const r2=(this.radius*.85)*(this.radius*.85);
+    const r=this.radius*.85;
     for(const c of this.colliders){
       if(c.top>prevFeet)continue;
-      const cx=Math.max(c.minX,Math.min(this.pos.x,c.maxX));
-      const cz=Math.max(c.minZ,Math.min(this.pos.z,c.maxZ));
-      const dx=this.pos.x-cx,dz=this.pos.z-cz;
-      if(dx*dx+dz*dz<r2 && c.top>s)s=c.top;
+      if(circleOverlapsCollider(this.pos.x,this.pos.z,r,c) && c.top>s)s=c.top;
     }
     return s;
   }
@@ -82,22 +79,7 @@ export class Player{
     const r=this.radius;
     for(const c of this.colliders){
       if(this.pos.y>=c.top-.01)continue; // already standing on top: no horizontal push
-      const cx=Math.max(c.minX,Math.min(this.pos.x,c.maxX));
-      const cz=Math.max(c.minZ,Math.min(this.pos.z,c.maxZ));
-      const dx=this.pos.x-cx,dz=this.pos.z-cz;
-      const d2=dx*dx+dz*dz;
-      if(d2<r*r){
-        if(d2>1e-8){
-          const d=Math.sqrt(d2),push=(r-d)/d;
-          this.pos.x+=dx*push;this.pos.z+=dz*push;
-        }else{
-          // Centre inside the box: push out along the shallowest axis
-          const l=this.pos.x-c.minX,rr=c.maxX-this.pos.x,t=this.pos.z-c.minZ,b=c.maxZ-this.pos.z;
-          const m=Math.min(l,rr,t,b);
-          if(m===l)this.pos.x=c.minX-r;else if(m===rr)this.pos.x=c.maxX+r;
-          else if(m===t)this.pos.z=c.minZ-r;else this.pos.z=c.maxZ+r;
-        }
-      }
+      pushCircleOut(this.pos,r,c);      // OBB-aware push-out (no invisible corner walls)
     }
     // Arena boundary
     const d=Math.hypot(this.pos.x,this.pos.z);
@@ -107,11 +89,23 @@ export class Player{
     }
   }
 
+  /* Standing up must not put the camera inside overhead geometry. */
+  canStand(){
+    const r=this.radius;
+    for(const c of this.colliders){
+      if(c.top<=this.pos.y+.05)continue;              // below our feet
+      if(c.top>=this.pos.y+EYE_STAND-.1)continue;     // above our head
+      if(circleOverlapsCollider(this.pos.x,this.pos.z,r,c))return false;
+    }
+    return true;
+  }
+
   update(dt,input,keys,time,audio){
     if(!this.alive)return;
 
     /* --- Crouch: lower stance / slower / steadier (eye height eases between states) --- */
-    this.crouching=keys.has('ControlLeft')||keys.has('ControlRight');
+    const wantCrouch=keys.has('ControlLeft')||keys.has('ControlRight');
+    if(wantCrouch||this.canStand())this.crouching=wantCrouch;  // blocked overhead: stay crouched
     this.eyeHCur+=((this.crouching?EYE_CROUCH:EYE_STAND)-this.eyeHCur)*Math.min(1,12*dt);
 
     /* --- Jump (when grounded) --- */

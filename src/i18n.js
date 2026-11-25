@@ -37,7 +37,10 @@ const STR={
     map_snowtown:'霓虹雨港 · 雨夜',
     map_ember:'熔岩火山口 · 烈焰',
     mode_waves:'无尽波次 · 单人守卫哨站',
-    mode_dm:'团队死斗 · 3v3 对战',
+    mode_koth:'占点争夺 · 3v3',
+    mode_dm:'团队死斗 · 3v3',
+    mode_online:'五五开黑 5v5 · 在线',   // online-only: DEPLOY opens the friends lobby
+    room_dm:'五五开黑 · 团队死斗',room_koth:'五五开黑 · 占点争夺',
     quality_high:'画质:高',
     quality_low:'画质:流畅',
     deploy:'▶ 开始部署',
@@ -101,7 +104,7 @@ const STR={
     hud_reloading:'装填中…',hud_ready:'就绪',rotate_hint:'请横屏游玩',no_webgl:'当前浏览器不支持 WebGL2<br>请使用 Edge / Chrome 等现代浏览器打开',
     supply_sub:'补给投放中 · 弹药 +90 生命 +25 · 奖励 +{n}',
     dm_start:'对局开始',
-    dm_sub:'新星 vs 浪人 · 3v3 · 3 分钟 · 先到 25 击杀获胜',
+    dm_sub:'新星 vs 浪人 · {a}v{b} · {m} 分钟 · 先到 {k} 击杀',
     fail_title:'哨站失守',
     kicker_lost:'信号中断 · SIGNAL LOST',
     win:'胜利 · VICTORY',
@@ -126,6 +129,20 @@ const STR={
     over_score:'本局得分',
     over_best:' · 历史最佳 <b>{n}</b>',
     best_score:'本局得分',
+    /* Friends 5v5 online */
+    lobby_title:'好友对战 · 5v5',lobby_tip:'房间码制 · 空位由 AI 补满',
+    lobby_create:'创建房间',lobby_join:'加入',lobby_code:'房间码',lobby_code_ph:'5 位房间码',
+    lobby_copy:'复制邀请链接',lobby_copied:'已复制',lobby_ready:'已准备',lobby_unready:'取消准备',
+    lobby_start:'开始对局',lobby_leave:'离开房间',lobby_rematch:'再战一局',
+    lobby_solo:'单人训练 (AI 5v5)',lobby_host:'房主',lobby_waiting:'等待中',
+    net_connecting:'连接中…',net_connected:'已连接',net_reconnecting:'重连中…',net_lost:'连接中断',
+    net_server_unset:'尚未配置联机服务器。请在 URL 加 ?server=wss://… 或使用构建常量。仍可进行单人训练。',
+    net_full:'房间已满',net_bad_code:'房间码无效 (5 位，不含 0/O/1/I)',net_proto:'版本不匹配，请刷新页面',
+    net_err:'网络错误',net_rate:'操作过快',net_kicked:'已被移出房间',
+    net_create_fail:'建房失败，请稍后重试',net_connect_fail:'无法连接服务器，请检查地址与网络',
+    pause_net_note:'联机对局仍在继续 · 你的角色原地待命',pause_leave:'离开对局',sb_ping:'延迟',
+    online_start:'好友对战',online_sub:'5v5 · 5 分钟 · 先到 25 击杀',
+    online_over_kicker:'在线对局结束',online_countdown:'{s} 秒后开始 · 准备战斗',
   },
   en:{
     title:'GUN TO GUN · Tactical Faction Shooter',
@@ -161,7 +178,10 @@ const STR={
     map_snowtown:'Neon Docklands · Rain',
     map_ember:'Volcano Caldera',
     mode_waves:'Wave Survival · Solo Outpost Defense',
+    mode_koth:'King of the Hill · 3v3',
     mode_dm:'Team Deathmatch · 3v3',
+    mode_online:'Friends 5v5 · Online',   // online-only: DEPLOY opens the friends lobby
+    room_dm:'FRIENDS 5V5 · TEAM DEATHMATCH',room_koth:'FRIENDS 5V5 · KING OF THE HILL',
     quality_high:'Quality: High',
     quality_low:'Quality: Smooth',
     deploy:'▶ DEPLOY',
@@ -225,7 +245,7 @@ const STR={
     hud_reloading:'RELOADING…',hud_ready:'READY',rotate_hint:'Rotate your device to landscape',no_webgl:'This browser does not support WebGL2<br>Please open the game in a modern browser such as Edge or Chrome',
     supply_sub:'Supply drop · Ammo +90 HP +25 · Bonus +{n}',
     dm_start:'MATCH START',
-    dm_sub:'NOVA vs ROGUE · 3v3 · 3 min · First to 25 kills',
+    dm_sub:'NOVA vs ROGUE · {a}v{b} · {m} min · First to {k} kills',
     fail_title:'MISSION FAILED',
     kicker_lost:'CONNECTION LOST',
     win:'VICTORY',
@@ -250,6 +270,20 @@ const STR={
     over_score:'SCORE',
     over_best:' · BEST <b>{n}</b>',
     best_score:'SCORE',
+    /* Friends 5v5 online */
+    lobby_title:'FRIENDS 5v5',lobby_tip:'Room-code only · empty slots filled by AI',
+    lobby_create:'CREATE ROOM',lobby_join:'JOIN',lobby_code:'ROOM CODE',lobby_code_ph:'5-character code',
+    lobby_copy:'COPY LINK',lobby_copied:'COPIED',lobby_ready:'READY',lobby_unready:'UNREADY',
+    lobby_start:'START',lobby_leave:'LEAVE',lobby_rematch:'REMATCH',
+    lobby_solo:'SOLO TRAINING (AI 5v5)',lobby_host:'HOST',lobby_waiting:'WAITING',
+    net_connecting:'Connecting…',net_connected:'Connected',net_reconnecting:'Reconnecting…',net_lost:'Disconnected',
+    net_server_unset:'No online server configured. Add ?server=wss://… to the URL or set the build constant. Solo training still works.',
+    net_full:'Room is full',net_bad_code:'Invalid room code (5 chars, no 0/O/1/I)',net_proto:'Version mismatch — please refresh',
+    net_err:'Network error',net_rate:'Too many actions',net_kicked:'Removed from room',
+    net_create_fail:'Could not create a room — please retry',net_connect_fail:'Cannot reach the server — check the address and network',
+    pause_net_note:'Online match continues · your character holds position',pause_leave:'LEAVE MATCH',sb_ping:'PING',
+    online_start:'FRIENDS MATCH',online_sub:'5v5 · 5 min · First to 25 kills',
+    online_over_kicker:'ONLINE MATCH OVER',online_countdown:'Starting in {s}s · get ready',
   },
 };
 
@@ -315,7 +349,7 @@ export async function detectIPCountry(){
    字典缺 key 时保留原内容不回写——防止 data-i 与其他业务属性(如槽位序号)碰撞时抹掉结构 */
 export function applyStatic(){
   if(typeof document==='undefined')return;
-  if(typeof window!=='undefined')window.__i18n={lang,t,applyStatic}; // debug probe
+  if(typeof window!=='undefined'&&(typeof DEBUG_HOOKS==='undefined'||DEBUG_HOOKS))window.__i18n={lang,t,applyStatic}; // stripped in production
   document.title=t('title');
   document.documentElement.lang=lang.cur==='en'?'en':'zh-CN';
   const zh=STR.zh;
@@ -326,6 +360,8 @@ export function applyStatic(){
   });
   const name=document.getElementById('m-name');
   if(name)name.placeholder=t('name_ph');
+  const rc=document.getElementById('lobby-code');
+  if(rc)rc.placeholder=t('lobby_code_ph');
   const q=document.getElementById('m-quality');
   if(q&&q.options.length>=2){q.options[0].text=t('quality_high');q.options[1].text=t('quality_low');}
   // Map / mode chips (looked up by data attribute)

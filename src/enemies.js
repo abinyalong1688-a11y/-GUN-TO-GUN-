@@ -59,6 +59,14 @@ export class Enemies{
     this.scene=scene;this.A=assets;this.fx=effects;this.audio=audio;this.ui=ui;
     this.list=[];this.projectiles=[];
     this.onKill=null;this.onPlayerHit=null;
+    /* Co-op networking: the host simulates every drone. Each drone gets a wire id (`d:<n>`) so a
+       client can ask the host to apply a hit (C.HIT target `d:<n>`), and the host mirrors the
+       roster to the room. `authoritative=false` turns local damage into a request. */
+    this.authoritative=true;
+    this.mirror=false;      // true on a co-op guest: drones are drawn, never simulated here
+    this.onSpawn=null;      // (descriptor) => void, host only
+    this.onKillNet=null;    // (descriptor) => void, host only
+    this.netIdSeq=0;
     this.ray=new THREE.Raycaster();
     this._tmp=new THREE.Vector3();
     this._t1=new THREE.Vector3();this._t2=new THREE.Vector3();this._t3=new THREE.Vector3();
@@ -89,6 +97,10 @@ export class Enemies{
     if(e.decor){e.decorA=Math.atan2(pos.z,pos.x);e.decorR=Math.max(20,Math.hypot(pos.x,pos.z));}
     this.scene.add(e.group);
     this.list.push(e);
+    if(!decor){
+      e.netId='d:'+(++this.netIdSeq);
+      if(this.authoritative&&this.onSpawn)this.onSpawn(this.describe(e));
+    }
     return e;
   }
 
@@ -170,6 +182,12 @@ export class Enemies{
   /* Hit entry point, returns {killed, crit} */
   damage(e,part,dmg,hitPos){
     if(e.dead)return{dead:true};
+    // Co-op client (not the host): forward the hit instead of settling HP locally, otherwise the
+    // two clients would disagree about which drones are alive.
+    if(!this.authoritative){
+      this.requestDamage(e,part,dmg,hitPos);
+      return{forwarded:true,crit:part==='core'};
+    }
     const crit=part==='core';
     const d=dmg*(crit?2.5:1);
     e.hp-=d;
@@ -184,9 +202,22 @@ export class Enemies{
     return{killed:false,crit,dmg:d};
   }
 
+  /* Wire descriptor for a drone: enough for a remote client to draw it without simulating it. */
+  describe(e){
+    return [e.netId,e.type,Math.round(e.pos.x*100),Math.round(e.pos.y*100),Math.round(e.pos.z*100),
+      Math.round(e.maxHp),e.decor?1:0];
+  }
+  /* Non-host clients draw drones from the host's roster; damage is a request, never applied. */
+  requestDamage(e,part,dmg,hitPos){
+    if(e.dead||this.authoritative)return false;
+    if(this.onRequestHit)this.onRequestHit(e.netId,part,dmg);
+    this.fx.impact(hitPos,UP,'metal',{decal:false});
+    return true;
+  }
   kill(e,crit,noScore=false){
     if(e.dead)return;
     e.dead=true;
+    if(this.authoritative&&this.onKillNet&&!e.decor)this.onKillNet(this.describe(e));
     this.fx.explosion(e.pos,e.T.scale*1.1);
     // Volume falls off with distance to the player (camera), not to the world origin
     this.audio.explosion(this.camPos?e.pos.distanceTo(this.camPos):e.pos.length());
@@ -276,6 +307,14 @@ export class Enemies{
         this._steer(e,ta,dt,e.T.speed*.55);
         e.group.position.set(e.pos.x,e.pos.y+bob,e.pos.z);
         for(const r of e.rotors)r.rotation.z+=dt*24;
+        continue;
+      }
+      // Mirrored (co-op guest): the host owns position, HP and firing. Animate only.
+      if(this.mirror){
+        e.group.position.set(e.pos.x,e.pos.y+bob,e.pos.z);
+        for(const r of e.rotors)r.rotation.z+=dt*38;
+        if(e.fireT>0)e.fireT-=dt;
+        if(e.flashT>0){e.flashT-=dt;if(e.flashT<=0)for(const m of e.bodyMats)m.emissiveIntensity=0;}
         continue;
       }
       const toPlayer=e.pos.distanceTo(eye);
@@ -378,7 +417,8 @@ export class Enemies{
         this.audio.whineSet(Math.max(0,1-diveNearest/16),420+(16-Math.min(16,diveNearest))*38);
     }
 
-    // Bolts
+    // Bolts (host/offline only — a mirrored client takes bolt damage through the host's s:hit)
+    if(this.mirror){this.projectiles.length&&this.clearBolts();return;}
     const seg=this._seg;
     for(let i=this.projectiles.length-1;i>=0;i--){
       const b=this.projectiles[i];
@@ -414,6 +454,8 @@ export class Enemies{
       }
     }
   }
+
+  clearBolts(){ for(const b of this.projectiles)this.scene.remove(b.mesh); this.projectiles.length=0; }
 
   clearAll(){
     for(const e of [...this.list]){

@@ -14,15 +14,17 @@ import {join, extname, resolve, sep} from 'path';
 import {tmpdir} from 'os';
 import {spawn, execFileSync} from 'child_process';
 
-const ROOT = resolve('dist');
+const ROOT = resolve('dist/e2e'); // isolated debug bundle: never overwrite the production dist
 const HTML = join(ROOT, 'gun-to-gun.html');
 const args = new Set(process.argv.slice(2));
 const TIMEOUT_MS = Number(process.env.E2E_TIMEOUT_MS || 180000);
 
-if (!existsSync(HTML) || args.has('--build')) {
-  console.log('[e2e] building dist…');
-  execFileSync(process.execPath, ['build.mjs'], {stdio: 'inherit'});
-}
+rmSync(ROOT, {recursive: true, force: true});
+console.log('[e2e] building isolated debug bundle…');
+execFileSync(process.execPath, ['build.mjs'], {
+  stdio: 'inherit',
+  env: {...process.env, GTG_DEBUG: '1', GTG_OUT: 'dist/e2e', GTG_SERVER: process.env.GTG_SERVER || 'wss://game.agents100.com'},
+});
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',
@@ -93,6 +95,7 @@ function send(method, params = {}) {
 
 function cleanup() {
   try { server.close(); } catch {}
+try { rmSync(ROOT, {recursive: true, force: true}); } catch {}
   try { ws && ws.close(); } catch {}
   try {
     if (process.platform === 'win32') execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {stdio: 'ignore'});

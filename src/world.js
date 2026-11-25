@@ -5,6 +5,12 @@
 //   ember    = Volcano Caldera           (lava pools, basalt columns, obsidian)
 // Keys are stable (menu chips / save / i18n depend on them); only layouts and dressing differ per map.
 import * as THREE from 'three';
+import {terrainHeight} from './terrain.js';
+
+/* Scratch buffer for baking the authoritative LOS geometry (box = [0,cx,cz,hw,hd,ry,y0,y1],
+   cyl/rock/plane → axis-aligned box [0,cx,cz,hw,hd,0,y0,y1]). buildWorld is synchronous and
+   single-flight, so a module-level scratch is safe. addBox emits its exact OBB here. */
+let _losGeo = [];
 
 export const MAPS={
   desert:{
@@ -108,12 +114,16 @@ function addBox(scene,shootStatics,colliders,{w,h,d,mat,x,y,z,ry=0,surface='conc
   m.position.set(x,y,z);m.rotation.y=ry;
   m.castShadow=shadow;m.receiveShadow=true;
   m.userData.surface=surface;
+  m.userData.losBox=true;                 // exact OBB already emitted below — skip the AABB fallback
   scene.add(m);shootStatics.push(m);
+  // Integer centimetres (and milliradians) keep the wire upload well under the 4096 B message cap.
+  _losGeo.push([0, Math.round(x*100), Math.round(z*100), Math.round(w/2*100), Math.round(d/2*100), Math.round(ry*1000), Math.round((y-h/2)*100), Math.round((y+h/2)*100)]);
   if(collide){
     // Axis-aligned bounds of a rotated box: w projects onto X, d onto Z (the old code always put the long side on X, so lengthwise containers had colliders turned 90°)
     const c=Math.abs(Math.cos(ry)),s=Math.abs(Math.sin(ry));
     const hx=c*w*.5+s*d*.5,hz=s*w*.5+c*d*.5;
-    colliders.push({minX:x-hx,maxX:x+hx,minZ:z-hz-.01,maxZ:z+hz+.01,top:y+h/2});
+    // Keep the AABB for cheap height/support queries, plus the true OBB for horizontal push-out.
+    colliders.push({x,z,w,d,ry,minX:x-hx,maxX:x+hx,minZ:z-hz-.01,maxZ:z+hz+.01,top:y+h/2});
   }
   return m;
 }
@@ -123,6 +133,7 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
   const world=new THREE.Group();
   scene.add(world);
   const colliders=[],shootStatics=[],worldAnim=[];
+  _losGeo.length=0;                     // start a fresh authoritative LOS geometry pass
   const ownMats=[]; // materials created by this build (freed with the geometry on map switch; shared asset materials excluded)
   const M=assets.mats;
   const ctx={world,colliders,shootStatics,worldAnim,ownMats,M,assets,quality,map,mapKey};
@@ -191,9 +202,12 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
   const sun=new THREE.DirectionalLight(map.sunColor,map.sunI);
   sun.position.copy(sunDir).multiplyScalar(120);
   sun.castShadow=true;
-  sun.shadow.mapSize.set(quality==='high'?2048:1024,quality==='high'?2048:1024);
+  // 1024² over a tighter ±45 m frustum keeps roughly the same texel density as 2048²/±70,
+  // at one quarter of the depth-buffer memory and bandwidth.
+  sun.shadow.mapSize.set(1024,1024);
   const sc=sun.shadow.camera;
-  sc.left=-70;sc.right=70;sc.top=70;sc.bottom=-70;sc.near=10;sc.far=260;
+  sc.left=-45;sc.right=45;sc.top=45;sc.bottom=-45;sc.near=12;sc.far=180;
+  sc.updateProjectionMatrix();
   sun.shadow.bias=-.0004;sun.shadow.normalBias=.03;
   world.add(sun,sun.target);
   world.add(new THREE.HemisphereLight(...map.hemi));
@@ -211,18 +225,18 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
     world.add(rim);
   }
 
-  /* ------- Ground (geometry identical on every map so movement physics stays uniform) ------- */
-  const groundGeo=new THREE.PlaneGeometry(360,360,110,110);
+  /* ------- Ground (geometry identical on every map so movement physics stays uniform) -------
+     The walkable disc is exactly flat: movement uses y=0, so any rendered rise inside the arena
+     would bury the characters' boots (the rig has no foot IK to compensate). Dunes stay outside
+     the r=56 player boundary. */
+  // 110² segments = 24k triangles; the flat walkable disc does not need that density.
+  // Normal maps carry the detail, so 64² is visually equivalent with -17k triangles.
+  const groundSeg=quality==='high'?64:32;
+  const groundGeo=new THREE.PlaneGeometry(360,360,groundSeg,groundSeg);
   groundGeo.rotateX(-Math.PI/2);
   {
     const p=groundGeo.attributes.position;
-    const ns=(x,z)=>Math.sin(x*.045)*Math.cos(z*.038)+Math.sin(x*.11+z*.07)*.5;
-    for(let i=0;i<p.count;i++){
-      const x=p.getX(i),z=p.getZ(i),r=Math.hypot(x,z);
-      let h=ns(x,z)*.5;
-      if(r>64)h+=Math.pow((r-64)/70,1.6)*(5+ns(x*.5+9,z*.5-4)*4.5);
-      p.setY(i,h);
-    }
+    for(let i=0;i<p.count;i++)p.setY(i,terrainHeight(p.getX(i),p.getZ(i)));
     p.needsUpdate=true;
     groundGeo.computeVertexNormals();
   }
@@ -349,7 +363,46 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
 
   // Ray list for line-of-sight / projectiles: drops the 24k-triangle ground mesh (the ray origin is always inside its bounds, so nothing early-outs and every triangle is tested each frame)
   const losStatics=shootStatics.filter(o=>o!==ground);
-  return {group:world,colliders,colliderGrid:new ColliderGrid(colliders),shootStatics,losStatics,spawnPoints,sunDir,mapKey,map,worldAnim,ownMats,sky};
+
+  // Authoritative LOS geometry for the server: boxes already emitted their exact OBB in addBox.
+  // Everything else is approximated, and the approximation matters — a bounding AABB around a
+  // cylinder or a rock dome rejects shots the player can plainly see past. Round props are baked
+  // as the vertical cylinder primitive the LOS engine already understands; flat props (billboards,
+  // signs) keep their yaw so the panel is thin in its own plane; only true boxes fall back to AABB.
+  world.updateMatrixWorld(true);
+  const MIN=.06;
+  const scale=new THREE.Vector3(), quat=new THREE.Quaternion(), pos=new THREE.Vector3();
+  for(const m of losStatics){
+    if(m.userData.losBox)continue;
+    const b=new THREE.Box3().setFromObject(m);
+    if(b.isEmpty())continue;
+    const cx=(b.min.x+b.max.x)/2, cz=(b.min.z+b.max.z)/2;
+    const y0=Math.round(b.min.y*100), y1=Math.round(b.max.y*100);
+    const g=m.geometry, P=g.parameters||{};
+    let r=0;
+    if(g.type==='CylinderGeometry') r=Math.max(P.radiusTop||0,P.radiusBottom||0);
+    else if(g.type==='SphereGeometry') r=P.radius||0;
+    m.matrixWorld.decompose(pos,quat,scale);
+    if(r>0){
+      // Round footprint: use the mean of the two horizontal scales (props are not squashed).
+      const rr=Math.max(r*Math.max(scale.x,scale.z),MIN);
+      _losGeo.push([1, Math.round(cx*100), Math.round(cz*100), Math.round(rr*100), y0, y1]);
+      continue;
+    }
+    if(g.type==='PlaneGeometry'||g.type==='BoxGeometry'){
+      const e=new THREE.Euler().setFromQuaternion(quat,'YXZ');
+      const yaw=Math.round(e.y*1000);
+      const hw=Math.max((b.max.x-b.min.x)/2, MIN), hz=Math.max((b.max.z-b.min.z)/2, MIN);
+      _losGeo.push([0, Math.round(cx*100), Math.round(cz*100), Math.round(hw*100), Math.round(hz*100), yaw, y0, y1]);
+      continue;
+    }
+    // Faceted rocks / domes: the AABB is the safe approximation, but never thinner than MIN.
+    _losGeo.push([0, Math.round(cx*100), Math.round(cz*100),
+      Math.round(Math.max((b.max.x-b.min.x)/2,MIN)*100), Math.round(Math.max((b.max.z-b.min.z)/2,MIN)*100),
+      0, y0, y1]);
+  }
+  const losGeo=_losGeo.slice();
+  return {group:world,colliders,colliderGrid:new ColliderGrid(colliders),shootStatics,losStatics,losGeo,spawnPoints,sunDir,mapKey,map,worldAnim,ownMats,sky,ground};
 }
 
 /* Street lamp (shared shape, per-map palette from MAPS[mapKey].lamp) */

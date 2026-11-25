@@ -45,6 +45,9 @@ export class Grenades{
   }
 
   update(dt){
+    // Multiple grenades can detonate on the same frame; a target should take frag damage once.
+    if(!this._frameHits)this._frameHits=new Set();
+    this._frameHits.clear();
     for(let i=this.list.length-1;i>=0;i--){
       const g=this.list[i];
       g.fuse-=dt;
@@ -90,14 +93,17 @@ export class Grenades{
       this.fx.explosion(pos,1.2);
       this.audio.explosion(pos.distanceTo(this.game.camera.position));
       for(const e of [...this.game.enemies.list]){
-        if(e.dead)continue;
+        if(e.dead||this._frameHits.has(e))continue;
         const d=e.pos.distanceTo(pos);
-        if(d<D.radius)this.game.enemies.damage(e,'body',D.damage*(1-d/D.radius),pos);
+        if(d<D.radius){this._frameHits.add(e);this.game.enemies.damage(e,'body',D.damage*(1-d/D.radius),pos);}
       }
+      // Friend/foe from the actual side the local player is on — online B-team players used to
+      // damage their own squad because this was hard-coded to team 'A'.
+      const myTeam=this.game.playerTeam||'A';
       for(const h of this.game.heroes.list){
-        if(!h.alive||h.team==='A')continue;
+        if(!h.alive||h.team===myTeam||this._frameHits.has(h))continue;
         const d=h.pos.distanceTo(pos);
-        if(d<D.radius)h.takeDamage(D.damage*(1-d/D.radius),this.game.playerName);
+        if(d<D.radius){this._frameHits.add(h);h.takeDamage(D.damage*(1-d/D.radius),this.game.playerName,false,null,'frag');}
       }
     }else if(g.type==='flash'){
       this.fx.impactFlash&&this.fx.impactFlash(pos);
@@ -109,7 +115,7 @@ export class Grenades{
         if(pos.distanceTo(e.pos)<D.radius&&this.game._los(pos,e.pos))e.blindT=2.5;
       }
       for(const h of this.game.heroes.list){
-        if(!h.alive||h.team==='A')continue;
+        if(!h.alive||h.team===(this.game.playerTeam||'A'))continue;
         if(pos.distanceTo(h.pos)<D.radius&&this.game._los(pos,h.pos))h.blindT=2.5;
       }
     }else{

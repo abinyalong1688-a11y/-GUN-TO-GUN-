@@ -72,8 +72,10 @@ Four hand-built arenas, each a distinct scene with its own layout, sky, lighting
 
 ## Game Modes
 
-- **Endless Waves (solo)**: defend the outpost alone against three drone classes with detailed silhouettes — WASP (kamikaze) / REAPER (roaming shooter) / WARDEN (heavy: glowing sensor windows, core guard rings, wing plates / claw feet / gun shields, rotor hubs, breathing red-core pulse). Red-core crits ×2.5
-- **6-Player Deathmatch (3v3)**: you + 2 same-faction AI teammates vs 3 enemy AI. Nova fires controlled bursts, Rogue sprays. 3-minute matches; first to 25 kills ends it early, otherwise the higher kill count wins. Killfeed, TAB scoreboard and respawns — a human death counts on the board and credits the killing bot
+- **Endless Waves (solo, offline)**: defend the outpost alone against three drone classes with detailed silhouettes — WASP (kamikaze) / REAPER (roaming shooter) / WARDEN (heavy: glowing sensor windows, core guard rings, wing plates / claw feet / gun shields, rotor hubs, breathing red-core pulse). Red-core crits ×2.5
+- **6-Player Deathmatch (3v3, offline)**: you + 2 same-faction AI teammates vs 3 enemy AI. Nova fires controlled bursts, Rogue sprays. 3-minute matches; first to 25 kills ends it early, otherwise the higher kill count wins. Killfeed, TAB scoreboard and respawns — a human death counts on the board and credits the killing bot
+- **King of the Hill (3v3, offline)**: the same 3v3 squads contest the centre control point; first to 200 capture points wins
+- **Friends 5v5 (online only)**: room-code lobbies with the same behavior-tree AI filling empty slots (9 AI + player in solo training). Fixed sides A=NOVA / B=ROGUE, snapshot interpolation for remote players, server-authoritative hits/score and a 5-minute room timer. Requires the Worker room service (`/rooms`). The other modes all stay offline
   - Note: true networked multiplayer requires a persistent server, which conflicts with the "single file, offline-playable" goal — deathmatch delivers the same arena experience with AI combatants
 
 ## Bot Combat AI (v1.11)
@@ -131,19 +133,20 @@ build.mjs     esbuild bundle into a single HTML file
 ```bash
 npm install        # three@0.170.0 + esbuild
 npm run build      # produces dist/gun-to-gun.html
-npm test           # unit tests (node --test): utils / weapons / attachment / physics / waves / bot AI / navigation / evolution (137 tests)
-npm run test:e2e   # headless Chrome/Edge integration suite (?e2e=1), 70 assertions
+npm test           # unit tests (node --test): utils / weapons / attachment / physics / waves / bot AI / navigation / evolution / online protocol & rooms (202 tests)
+npm run test:e2e   # headless Chrome/Edge integration suite (?e2e=1), 76 assertions
 npm run evolve     # regenerate the GA-tuned bot doctrine (src/botTuning.js)
 npm run serve      # local server http://127.0.0.1:8137/ (testing only)
+npm run server:dev # local Worker room service (wrangler dev), for online 5v5 testing
 ```
 
-> `npm run test:e2e` needs Chrome or Edge installed (set `CHROME_PATH` if it is not in a standard location). It starts its own static server and private browser profile, so no manual setup is required.
+> The online build bakes the room endpoint via `GTG_SERVER=wss://<host> npm run build` (same-origin `/rooms` for `game.agents100.com`). `npm run test:e2e` needs Chrome or Edge; it starts its own static server and private browser profile.
 
 Built-in verification hooks:
 
 - `?shot=menu|combat|dm|over` — jump straight into a state for screenshot review
 - `?selftest=1` — weapon self-test (primary hit-kill + Desert Eagle semi-auto + UMP-45 full-auto burst); results in the debug bar and console
-- `?e2e=1` — **system integration test**: 70 end-to-end assertions (loading / ADS / recoil ballistics / gravity / landing / crouch / weapons / attachment integrity / crits / XSS / 360° look / **bot perception & memory** / **target priority** / **hearing** / **firing-line blocking** / **difficulty presets** / **DM / KOTH / waves scoreboards** / **player-death scoring**); results in `window.__e2e` and the debug bar; deterministic, reproducible in background tabs
+- `?e2e=1` — **system integration test**: 76 end-to-end assertions (loading / ADS / recoil ballistics / gravity / landing / crouch / weapons / attachment integrity / crits / XSS / 360° look / **bot perception & memory** / **target priority** / **hearing** / **firing-line blocking** / **difficulty presets** / **DM / KOTH / waves scoreboards** / **player-death scoring** / **online 5v5 AI fill, sides and loopback networking**); results in `window.__e2e` and the debug bar; deterministic, reproducible in background tabs
 - `?perf=1` — hitch monitor: slow-frame (>25 ms) count and max frame time reported to console periodically
 - `?ipcc=US` / `?ipcc=CN` — force the interface language (default: auto by IP — English overseas / Chinese in China; silent fallback on probe failure)
 

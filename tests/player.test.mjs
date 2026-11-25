@@ -111,3 +111,21 @@ test('forward vector: yaw maps to the right travel direction',()=>{
   const f2=p.forward();
   assert.ok(Math.abs(f2.x+1)<.001&&Math.abs(f2.z)<.001);
 });
+
+test('damage: rejects NaN / Infinity / negative input from the network',()=>{
+  const p=makePlayer();
+  p.health=100;
+  p.damage(NaN,0); p.damage(Infinity,0); p.damage(-50,0); p.damage('35',0);
+  assert.equal(p.health,100,'health must stay untouched');
+  assert.equal(p.alive,true);
+});
+
+test('damage: a single packet cannot exceed the 200 cap or drive health negative',()=>{
+  const p=makePlayer();
+  p.health=100;
+  p.damage(9999,0);
+  assert.equal(p.health,0);
+  assert.equal(p.alive,false);
+  p.damage(10,0);
+  assert.equal(p.health,0,'dead players ignore further damage');
+});
