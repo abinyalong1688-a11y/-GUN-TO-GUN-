@@ -84,6 +84,8 @@ export class BotBrain {
     this._patrolT = 0;
     this._patrolWait = 0;
     this._patrolVec = new THREE.Vector3();
+    this._navGoalVec = new THREE.Vector3();
+    this._inRange = false;
     this._candidates = [];
     this.blockedLineT = 0;   // fire temporarily held: a friendly body is on the line
     this.blockedBy = null;
@@ -113,6 +115,7 @@ export class BotBrain {
     this._patrolGoal = null;
     this._patrolT = 0;
     this._patrolWait = 0;
+    this._inRange = false;
     this.blockedLineT = 0;
     this.blockedBy = null;
     this.senseT = 1;
@@ -256,6 +259,7 @@ export class BotBrain {
       bot.burst = 0;
       bot.reactionT = this.params.reaction * (best.visible ? 1 : this.params.reactionSpread);
       this._scanT = 0;
+      this._inRange = false;
     } else if (best.visible && !this._wasVisible) {
       // Re-acquired after losing sight: a short fresh-aim delay, not the full reaction time.
       bot.reactionT = Math.max(bot.reactionT, this.params.reaction * .5);
@@ -405,9 +409,19 @@ export class BotBrain {
     const dist = Math.max(.001, Math.hypot(dx, dz));
     const nx = dx / dist, nz = dz / dist;
     const [rmin, rmax] = this.params.range;
+    /* Close the distance through the navigation stack (local A* / corner routes), not by
+       pushing a raw velocity at the wall. Hysteresis stops advance/strafe flip-flopping on
+       the range line. */
+    if (dist > rmax + (this._inRange ? 1.2 : 0)) {
+      this._inRange = false;
+      const stand = Math.max(rmin, rmax * .9);
+      this._navGoalVec.set(t.pos.x - nx * stand, 0, t.pos.z - nz * stand);
+      this.setNav(this._navGoalVec, 1);
+      return;
+    }
+    if (dist <= rmax) this._inRange = true;
     let radial = 0;
-    if (dist > rmax) radial = 1;
-    else if (dist < rmin) radial = -.9;
+    if (dist < rmin) radial = -.9;
     const hp = bot.hp / bot.maxHp;
     const tHp = t.maxHp > 0 ? t.hp / t.maxHp : 1;
     if (radial === 0 && hp > tHp + .15 && dist > rmin + 1) radial = this.params.aggression * .55;
@@ -466,6 +480,7 @@ export class BotBrain {
 
   actReload(bot) {
     this.state = 'reload';
+    bot.prio = 1;
     if (bot.reloadT <= 0) this.startReload(bot);
     if (this.target) {
       this._seekCover(bot, 1.0);
@@ -480,6 +495,7 @@ export class BotBrain {
     const t = this.target;
     if (!t) return BTStatus.FAILURE;
     this.state = 'retreat';
+    bot.prio = 1;
     this.face(t.point);
     if (this._seekCover(bot, 1.05)) {
       // Return fire while falling back — the cover only pays off once the bot gets there.
@@ -502,6 +518,7 @@ export class BotBrain {
   actFightMove(bot) {
     if (!this.targetVisible || !this.target) return BTStatus.FAILURE;
     this.state = 'engage';
+    bot.prio = 3; // a bot in a firing stance has right of way through a crowd
     this.engageMove();
     return BTStatus.RUNNING;
   }
@@ -510,6 +527,7 @@ export class BotBrain {
     const t = this.target;
     if (!t || t.visible) return BTStatus.FAILURE;
     this.state = 'search';
+    bot.prio = 2;
     const d = Math.hypot(t.pos.x - bot.pos.x, t.pos.z - bot.pos.z);
     const hurt = bot.hp / bot.maxHp < this.params.lowHealthThresh;
     const chaseLimit = 10 + this.params.aggression * 18;
@@ -540,6 +558,7 @@ export class BotBrain {
 
   actPatrol(bot) {
     this.state = 'patrol';
+    bot.prio = 2;
     if (this._patrolWait > 0) {
       this._patrolWait -= this.dt;
       this.hold();
