@@ -3,8 +3,15 @@
 // background); cross-origin requests (IP language probe etc.) bypass the cache.
 // Note: this file is not bundled by esbuild; build.mjs copies it into dist/ and syncs the
 // version with the game VERSION.
-const CACHE='gtg-v1.11.2'; // build.mjs injects the package.json version at build time so it cannot drift from the game VERSION
+const CACHE='gtg-v1.11.3'; // build.mjs injects the package.json version at build time so it cannot drift from the game VERSION
 const PAGE='./gun-to-gun.html';
+const PAGE_URL=new URL(PAGE,self.location.href);
+const APP_INDEX=new URL('./',self.location.href).pathname;
+/* This origin also hosts a separately scoped build under /5v5/. A root-scope navigation handler
+   would otherwise answer /5v5/ with this cached page (and overwrite its cache with that HTML), so
+   only the page(s) of this app are handled. Works for a /dist/ deployment too. */
+const isAppNavigation=pathname=>
+  pathname===PAGE_URL.pathname||pathname===APP_INDEX||pathname===APP_INDEX+'index.html';
 // IMPORTANT: './' must NOT be pre-cached. GitHub Pages has no /dist/index.html, so /dist/
 // returns 404 and caches.addAll() rejects the WHOLE install — the SW would never activate
 // and every visit would re-download the large HTML. The page fetched here is normally served
@@ -21,7 +28,8 @@ self.addEventListener('install',e=>{
 self.addEventListener('activate',e=>{
   e.waitUntil(
     caches.keys()
-      .then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k))))
+      // Only retire this app's old caches; a /5v5/ build on the same origin owns its own.
+      .then(ks=>Promise.all(ks.filter(k=>k.startsWith('gtg-v')&&k!==CACHE).map(k=>caches.delete(k))))
       .then(()=>self.clients.claim())
   );
 });
@@ -33,6 +41,7 @@ self.addEventListener('fetch',e=>{
   if(url.origin!==self.location.origin)return; // cross-origin (IP probe) goes straight to network; the page handles failure silently
 
   if(req.mode==='navigate'){
+    if(!isAppNavigation(url.pathname))return; // /5v5/ (or any other app) goes to its own scope/network
     // Start the network refresh immediately, but do not make the user wait for GitHub Pages.
     // The cached copy is returned instantly; the fresh response replaces it for the next visit.
     const network=fetch(req).then(r=>{
