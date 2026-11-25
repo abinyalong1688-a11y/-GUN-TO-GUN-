@@ -44,7 +44,7 @@ const TUTORIAL=[
   {zh:'按 1 循环主武器,2 手枪,3 冲锋枪',en:'Press 1 to cycle primaries, 2 sidearm, 3 SMG'},
   {zh:'按 G / F / V 投掷破片 / 闪光 / 烟雾',en:'Press G / F / V for frag / flash / smoke'},
 ];
-const VERSION='1.11.0';
+const VERSION='1.11.1';
 const _rsO=new THREE.Vector3(); // reused ray-sphere test vector (zero allocation on the hot path)
 
 class Game{
