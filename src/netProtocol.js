@@ -81,7 +81,7 @@ export const WORLD_MAX_BOXES = 512;
 export const MAP_HASHES = {
   desert:   '604397454',
   snow:     '1886093696',
-  snowtown: '1208737809',
+  snowtown: '214523057',
   ember:    '1094325049',
 };
 export const LOS_MAX_DIST = 120;   // must match the client ray.far (arena radius is 56 m)

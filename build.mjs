@@ -13,7 +13,7 @@ const result = await esbuild.build({
   logLevel: 'info',
   define: {
     'process.env.NODE_ENV': '"production"',
-    DEBUG_HOOKS: 'false',                       // strip all window.__game / debug globals from the shipped build
+    DEBUG_HOOKS: process.env.GTG_DEBUG==='1' ? 'true' : 'false', // e2e/dev build only; production strips debug globals
     __GTG_SERVER__: JSON.stringify(process.env.GTG_SERVER || ''),
   },
 });

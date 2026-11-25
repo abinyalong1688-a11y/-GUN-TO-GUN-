@@ -39,10 +39,14 @@ export class KeyboardMouseAdapter{
       if(g.state==='upgrade'&&/^Digit[123]$/.test(e.code)){
         g._pickUpgrade(+e.code.slice(-1)-1);return;
       }
-      // Online pause / 3 s countdown: freeze local input without stopping the match.
+      // Online pause / 3 s countdown freezes local input without stopping the match.
       if(g._uiLock&&e.code!=='Tab'&&e.code!=='Escape')return;
-      if(e.code==='Tab'){e.preventDefault();if(g.state==='playing'&&g.isArena&&g.isArena())g._showBoard();}
-      if(e.code==='Tab')return;
+      if(e.code==='Tab'){
+        e.preventDefault();
+        // Mode-aware board (DM/KOTH team table, waves run summary); allowed through the UI lock.
+        if(g.state==='playing')g._showBoard();
+        return;
+      }
 
       // Toggle-crouch mode: Control latches (press again to stand), excluded from hold detection
       const toggle=g.settings&&g.settings.get('crouchToggle');

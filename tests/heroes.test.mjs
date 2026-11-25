@@ -26,6 +26,7 @@ const fakeAssets=()=>{ // same material set as character.test.mjs
 };
 let NOW=0;
 function makeGame({difficulty='normal'}={}){
+  const playerPos=new THREE.Vector3(0,0,40);
   return {
     scene:new THREE.Scene(),assets:fakeAssets(),
     fx:{tracers:[],tracer(from,dir,len){this.tracers.push({from:from.clone(),dir:dir.clone(),len});},bloodPuff(){},impact(){}},
@@ -34,7 +35,9 @@ function makeGame({difficulty='normal'}={}){
     settings:{get:k=>k==='botDifficulty'?difficulty:null},
     world:{colliders:[],losStatics:[]},
     heroes:{list:[]},
-    player:{pos:new THREE.Vector3(0,0,40),eye:new THREE.Vector3(0,1.62,40),alive:true,health:100,maxHealth:100,god:false},
+    player:{pos:playerPos,vel:new THREE.Vector3(),eye:new THREE.Vector3(0,1.62,40),alive:true,health:100,maxHealth:100,god:false},
+    playerTeam:'A',mode:'dm',koth:null,time:0,
+    playerShotT:-99,playerShotPos:new THREE.Vector3(),
     camera:{position:new THREE.Vector3(0,1.6,8)},
     grenades:null,smokeCalls:0,
     damageCalls:[],kills:[],
@@ -52,6 +55,9 @@ function makeBot(g,{team='A',op='frost',name='Bot',pos=[0,0,0]}={}){
 const step=(h,n=1,dt=.016,los=()=>true)=>{for(let i=0;i<n;i++){NOW+=dt;h.update(dt,NOW,los);}};
 const stepTeam=(team,n=1,dt=.016,los=()=>true)=>{for(let i=0;i<n;i++){NOW+=dt;team.update(dt,NOW,los);}};
 const withRand=(v,fn)=>{const orig=Math.random;Math.random=()=>v;try{return fn();}finally{Math.random=orig;}};
+/* Seed a remembered (heard) target without relying on the view cone — used by cover tests
+   where the LOS stub intentionally reports "blocked" to simulate a hiding threat. */
+const primeSuspicion=(a,b,time=NOW)=>{a.brain.sensor.alert('h'+b.id,b.pos,time,{noise:0,entity:b,team:b.team});};
 
 /* ---- team setup ---- */
 test('HeroTeam.setup: 3 teammates + 4 enemies, the player operator excluded, unique names, base facing',()=>{
@@ -73,23 +79,23 @@ test('HeroTeam.setup: 3 teammates + 4 enemies, the player operator excluded, uni
 });
 
 /* ---- targeting ---- */
-test('targeting: nearest alive enemy wins, dead bots are skipped, team A never targets the player',()=>{
+test('targeting: nearest visible enemy wins, dead bots are skipped, team A never targets the player',()=>{
   const g=makeGame();
-  const a=makeBot(g,{team:'A',op:'frost',name:'A1',pos:[0,0,0]});       // ct dmgH 12
-  const near=makeBot(g,{team:'B',op:'raven',name:'B1',pos:[2,0,0]});
-  const far=makeBot(g,{team:'B',op:'raven',name:'B2',pos:[10,0,0]});
-  g.player.pos.set(1,0,0);g.player.eye.set(1,1.62,0); // closest of all — but team A ignores the player
+  const a=makeBot(g,{team:'A',op:'frost',name:'A1',pos:[0,0,0]});       // faces -z (yaw π)
+  const near=makeBot(g,{team:'B',op:'raven',name:'B1',pos:[0,0,-3]});
+  const far=makeBot(g,{team:'B',op:'raven',name:'B2',pos:[0,0,-10]});
+  g.player.pos.set(1,0,-1);g.player.eye.set(1,1.62,-1); // closest of all — but team A ignores the player
   a.update(.016,NOW+=.016,()=>true); // acquire
   a.reactionT=0;a.fireT=0;
   withRand(.99,()=>step(a,1));
-  assert.equal(near.maxHp-near.hp,12,'the nearest enemy bot should take the ct dmgH 12, got '+(near.maxHp-near.hp));
+  assert.equal(near.maxHp-near.hp,12,'the nearest visible enemy bot should take the ct dmgH 12, got '+(near.maxHp-near.hp));
   assert.equal(far.hp,far.maxHp,'the farther bot should be untouched');
   assert.equal(g.damageCalls.length,0,'team A bots never shoot the player');
   near.takeDamage(9999,'X'); // dead bots are skipped
-  step(a,1);            // the switch frame re-arms the reaction window
-  a.reactionT=0;a.fireT=0; // expire it, then the next frame fires at the new nearest
+  step(a,8);            // let the sensor prune the corpse and re-acquire (≈.13 s)
+  a.reactionT=0;a.fireT=0;
   withRand(.99,()=>step(a,1));
-  assert.equal(far.maxHp-far.hp,12,'after the nearest dies, fire shifts to the next nearest');
+  assert.equal(far.maxHp-far.hp,12,'after the nearest dies, fire shifts to the next enemy');
 });
 
 test('team B bots target the player when the player is the nearest enemy',()=>{
@@ -105,30 +111,37 @@ test('team B bots target the player when the player is the nearest enemy',()=>{
   assert.equal(g.damageCalls[0].fromName,'B1');
 });
 
-test('no friendly fire: a teammate standing in the line of fire never takes bot damage',()=>{
+test('firing line: a teammate in the way holds fire, then fire resumes once the line clears',()=>{
   const g=makeGame();
-  const a=makeBot(g,{team:'A',op:'frost',name:'A1',pos:[0,0,0]});
-  const mate=makeBot(g,{team:'A',op:'frost',name:'A2',pos:[0,0,3]});
-  const foe=makeBot(g,{team:'B',op:'raven',name:'B1',pos:[0,0,6]});
-  a.update(.016,NOW+=.016,()=>true);
+  const a=makeBot(g,{team:'A',op:'frost',name:'A1',pos:[0,0,0]});         // faces -z
+  const mate=makeBot(g,{team:'A',op:'frost',name:'A2',pos:[0,0,-3]});
+  const foe=makeBot(g,{team:'B',op:'raven',name:'B1',pos:[0,0,-6]});
+  a.update(.016,NOW+=.016,()=>true); // acquire the enemy past the teammate
   a.reactionT=0;a.fireT=0;
-  withRand(.99,()=>step(a,200)); // ~3.2 s of fire through the teammate
-  assert.ok(foe.hp<foe.maxHp,'the enemy should take damage, hp '+foe.hp);
-  assert.equal(mate.hp,mate.maxHp,'the teammate in the line of fire must be untouched');
-  assert.equal(g.damageCalls.length,0);
+  const t0=g.fx.tracers.length;
+  withRand(.99,()=>step(a,3));
+  assert.equal(g.fx.tracers.length,t0,'no shot may pass through a teammate');
+  assert.equal(foe.hp,foe.maxHp,'the enemy behind the teammate must stay untouched');
+  assert.equal(mate.hp,mate.maxHp,'the teammate must never take bot damage');
+  assert.ok(a.brain.blockedLineT>0,'the brain should record the blocked firing line');
+  mate.pos.set(4,0,-3); // teammate steps out of the line
+  a.reactionT=0;a.fireT=0;
+  withRand(.99,()=>step(a,1));
+  assert.ok(foe.hp<foe.maxHp,'fire should resume once the line is clear');
+  assert.equal(mate.hp,mate.maxHp);
 });
 
 /* ---- reaction / burst / reload ---- */
 test('reaction time gates the first shot and scales with difficulty',()=>{
-  for(const [diff,expect] of [['normal',.25],['hard',.15],['easy',.4]]){ // ct reaction .25, ×.6 hard, ×1.6 easy
+  for(const [diff,expect] of [['normal',.28],['hard',.13],['easy',.55]]){
     const g=makeGame({difficulty:diff});
     const a=makeBot(g,{team:'A',op:'frost',name:'A1'});
-    makeBot(g,{team:'B',op:'raven',name:'B1',pos:[8,0,0]});
-    a.update(.016,NOW+=.016,()=>true); // acquisition sets reactionT = P.reaction × difficulty
-    assert.ok(Math.abs(a.reactionT-(expect-.016))<1e-6,`${diff}: reactionT should be ${(expect-.016).toFixed(3)}, got ${a.reactionT}`);
-    a.fireT=0; // isolate the reaction gate from the initial 1-2 s fire delay
+    makeBot(g,{team:'B',op:'raven',name:'B1',pos:[0,0,-8]});
+    a.update(.016,NOW+=.016,()=>true); // acquisition sets reactionT
+    assert.ok(Math.abs(a.reactionT-expect)<1e-6,`${diff}: reactionT should be ${expect}, got ${a.reactionT}`);
+    a.fireT=0;
     const t0=g.fx.tracers.length;
-    const win=Math.max(1,Math.ceil((expect-.016)/.016)); // frames the reaction window survives
+    const win=Math.ceil(expect/.016); // frames until the reaction window reaches 0
     step(a,win-1);
     assert.equal(g.fx.tracers.length,t0,diff+': no shot while reactionT>0');
     step(a,1);
@@ -139,7 +152,7 @@ test('reaction time gates the first shot and scales with difficulty',()=>{
 test('burst cadence: burstT spacing inside the burst, then a pause before the next burst',()=>{
   const g=makeGame();
   const a=makeBot(g,{team:'A',op:'frost',name:'A1'});                    // ct: burst 3, burstT .13, pause 1.2
-  const b=makeBot(g,{team:'B',op:'raven',name:'B1',pos:[10,0,0]});
+  const b=makeBot(g,{team:'B',op:'raven',name:'B1',pos:[0,0,-10]});
   a.update(.016,NOW+=.016,()=>true);
   a.reactionT=0;a.fireT=0;
   const shots=[];
@@ -158,14 +171,14 @@ test('burst cadence: burstT spacing inside the burst, then a pause before the ne
   assert.ok(g3>1.15,`after a full burst there should be a pause ≥1.2, got ${g3.toFixed(3)}`);
 });
 
-test('reload: an empty magazine triggers a 1.2 s reload that blocks firing (ammo refills immediately)',()=>{
+test('tactical reload: low ammo triggers a 1.2 s reload that blocks firing (ammo refills immediately)',()=>{
   const g=makeGame();
   const a=makeBot(g,{team:'A',op:'frost',name:'A1'}); // mag 30
-  makeBot(g,{team:'B',op:'raven',name:'B1',pos:[10,0,0]});
+  makeBot(g,{team:'B',op:'raven',name:'B1',pos:[0,0,-10]});
+  a.update(.016,NOW+=.016,()=>true); // acquire
+  a.reactionT=0;a.fireT=0;a.ammo=3; // 10 % against a visible target — reload beats firing
   a.update(.016,NOW+=.016,()=>true);
-  a.reactionT=0;a.fireT=0;a.ammo=1;
-  a.update(.016,NOW+=.016,()=>true); // the last round
-  assert.equal(a.ammo,30,'ammo refills the moment the mag runs dry (cosmetic while reloadT>0)');
+  assert.equal(a.ammo,30,'ammo refills the moment the reload starts (cosmetic while reloadT>0)');
   assert.ok(Math.abs(a.reloadT-1.2)<1e-6,'reload timer should be 1.2 s, got '+a.reloadT);
   const t0=g.fx.tracers.length;
   step(a,74); // 74 frames ≈ 1.184 s — still reloading
@@ -176,22 +189,30 @@ test('reload: an empty magazine triggers a 1.2 s reload that blocks firing (ammo
   assert.equal(a.ammo,29);
 });
 
+test('empty magazine: _consumeAmmo starts the reload path even mid-burst',()=>{
+  const g=makeGame();
+  const a=makeBot(g,{team:'A',op:'frost',name:'A1'});
+  a.ammo=1;a.reloadT=0;a._consumeAmmo();
+  assert.equal(a.ammo,30,'the magazine refills immediately');
+  assert.ok(Math.abs(a.reloadT-1.2)<1e-6,'the empty-magazine reload should run for 1.2 s');
+});
+
 /* ---- accuracy / damage routing ---- */
 test('accuracy: misses deal no damage; smoke inflates the miss chance across its boundary',()=>{
   const g=makeGame();
   const a=makeBot(g,{team:'A',op:'frost',name:'A1'}); // ct missK 1.0
-  const b=makeBot(g,{team:'B',op:'raven',name:'B1',pos:[10,0,0]});
+  const b=makeBot(g,{team:'B',op:'raven',name:'B1',pos:[0,0,-10]});
   a.update(.016,NOW+=.016,()=>true);
   a.reactionT=0;a.fireT=0;
-  // clean 10 m shot: miss chance = 10*.018+.08 = .26 < rand .5 → hit
-  withRand(.5,()=>step(a,1));
+  // clean 10 m shot: base .28 + fresh-aim .16 (+ a little while strafing) < .6 → hit
+  withRand(.6,()=>step(a,1));
   assert.equal(b.maxHp-b.hp,12,'a clean 10 m shot should hit, hp drop '+(b.maxHp-b.hp));
   b.hp=b.maxHp;
   g.grenades={inSmoke:()=>{g.smokeCalls++;return true;}};
   a.fireT=0;
-  withRand(.5,()=>step(a,1));
+  withRand(.6,()=>step(a,1));
   assert.equal(g.smokeCalls,1,'inSmoke should be consulted for the target position');
-  assert.equal(b.hp,b.maxHp,'smoke pushes the miss chance to ≈.71 > rand .5 → miss, no damage');
+  assert.equal(b.hp,b.maxHp,'smoke pushes the miss chance above .6 → miss, no damage');
   b.hp=b.maxHp;a.fireT=0;
   withRand(0,()=>step(a,1)); // rand 0 < any miss chance → guaranteed miss
   assert.equal(b.hp,b.maxHp,'a missed shot deals no damage');
@@ -199,15 +220,19 @@ test('accuracy: misses deal no damage; smoke inflates the miss chance across its
 
 test('miss chance caps at .92 even at long range on easy',()=>{
   const g=makeGame({difficulty:'easy'});
-  const b=makeBot(g,{team:'B',op:'raven',name:'B1'});                    // rogue easy: missK 1.35×1.4 = 1.89
-  const t=makeBot(g,{team:'A',op:'frost',name:'A1',pos:[30,0,0]});       // 30 m: raw chance >1 → capped .92
+  const b=makeBot(g,{team:'B',op:'raven',name:'B1'});                    // rogue easy: missK 1.35, easy damage .85
+  const t=makeBot(g,{team:'A',op:'frost',name:'A1',pos:[0,0,30]});       // 30 m: raw chance >1 → capped .92
   b.update(.016,NOW+=.016,()=>true);
   b.reactionT=0;b.fireT=0;
-  withRand(.93,()=>step(b,1));
-  assert.equal(t.maxHp-t.hp,15,'chance capped at .92 → rand .93 should hit, hp drop '+(t.maxHp-t.hp));
-  t.hp=t.maxHp;b.fireT=0;
-  withRand(.91,()=>step(b,1));
-  assert.equal(t.hp,t.maxHp,'rand .91 below the cap should miss');
+  const saved=b.brain.params;
+  b.brain.params={...saved,accuracy:.2}; // force the raw chance above the cap
+  try{
+    withRand(.93,()=>step(b,1));
+    assert.equal(t.maxHp-t.hp,13,'chance capped at .92 → rand .93 should hit (easy damage 15×.85→13), hp drop '+(t.maxHp-t.hp));
+    t.hp=t.maxHp;b.fireT=0;
+    withRand(.91,()=>step(b,1));
+    assert.equal(t.hp,t.maxHp,'rand .91 below the cap should miss');
+  }finally{b.brain.params=saved;}
 });
 
 /* ---- separation / collision ---- */
@@ -263,44 +288,51 @@ test('integration: separation shoving a bot across a collider boundary ends with
 });
 
 /* ---- cover ---- */
-test('_findCover: returns the LOS-blocked spot closest to the bot; low props and clear LOS are rejected',()=>{
+test('_findCover: returns a standable spot outside the cover with the threat blocked',()=>{
   const g=makeGame();
   const a=makeBot(g,{team:'A',op:'frost',name:'A1',pos:[0,0,8]});
   g.world.colliders=[{minX:-2,maxX:2,minZ:-2,maxZ:2,top:2}];
   const threat=new THREE.Vector3(0,1.4,0);
   const c=a._findCover(threat,()=>false);
-  assert.ok(c&&Math.abs(c.x)<.01&&Math.abs(c.z-3.4)<.01,'expected the south-face spot (0,3.4), got '+c);
+  assert.ok(c&&Number.isFinite(c.x)&&Number.isFinite(c.z),'a valid cover spot should be found');
+  assert.ok(Math.hypot(c.x,c.z)>2,'the cover spot should be outside the cover, got '+c);
+  assert.ok(Math.hypot(c.x,c.z)<8,'the cover spot should stay near the cover box, got '+c);
   g.world.colliders=[{minX:-2,maxX:2,minZ:-2,maxZ:2,top:.5}];
   assert.equal(a._findCover(threat,()=>false),null,'props under 1 m are not cover');
+  g.world.colliders=[{minX:-2,maxX:2,minZ:-2,maxZ:2,top:2}];
   assert.equal(a._findCover(threat,()=>true),null,'spots with clear LOS to the threat are rejected');
 });
 
 test('bots sidestep around a blocker on the cover path instead of grinding in place',()=>{
   const g=makeGame();
   const a=makeBot(g,{team:'A',op:'frost',name:'A1',pos:[0,0,0]});
-  makeBot(g,{team:'B',op:'raven',name:'B1',pos:[0,0,-30]});
-  // box1 provides a valid cover spot at (0,-2.6); box2 (low: not a cover candidate) blocks the
+  const b=makeBot(g,{team:'B',op:'raven',name:'B1',pos:[0,0,-30]});
+  // box1 provides a valid cover spot; box2 (low: not a cover candidate) blocks the
   // straight path to it — cover movement adds no strafe, so without a detour the bot would
-  // grind against the blocker forever (verified before the fix: 5 s pinned at z=0.05)
+  // grind against the blocker forever.
   g.world.colliders=[
     {minX:-2,maxX:2,minZ:-5,maxZ:-4,top:2},
     {minX:-3,maxX:3,minZ:-1.2,maxZ:-.4,top:.8},
   ];
-  a.hp=a.maxHp*.3; // needCover from the start
-  step(a,500,.016,()=>false); // ~8 s
-  assert.ok(a.coverTarget,'the bot should seek cover');
+  a.hp=a.maxHp*.3;
+  primeSuspicion(a,b,NOW+1);
+  step(a,150,.016,()=>false); // ~2.4 s: inside the first low-health retreat window
+  assert.ok(a.coverTarget,'the low-health bot should seek cover against a remembered threat');
   assert.ok(a.pos.z<-1.5,'a blocked bot should sidestep around the blocker and reach cover, stuck at z='+a.pos.z.toFixed(2)+' x='+a.pos.x.toFixed(2));
 });
 
 test('holding at the cover spot is not mistaken for being stuck',()=>{
   const g=makeGame();
   const a=makeBot(g,{team:'A',op:'frost',name:'A1',pos:[0,0,0]});
-  makeBot(g,{team:'B',op:'raven',name:'B1',pos:[0,0,-30]});
+  const b=makeBot(g,{team:'B',op:'raven',name:'B1',pos:[0,0,-30]});
   g.world.colliders=[{minX:-2,maxX:2,minZ:-5,maxZ:-4,top:2}]; // only the cover box, no blocker
   a.hp=a.maxHp*.3;
-  step(a,320,.016,()=>false); // reach the spot, then hold it
+  primeSuspicion(a,b,NOW+1);
+  step(a,150,.016,()=>false); // ~2.4 s: reach the spot, then hold it
   assert.equal(a.detourT,0,'arriving at cover must not trigger a detour');
-  assert.ok(Math.abs(a.pos.z+2.6)<1.2,'the bot should settle at the cover spot, z='+a.pos.z.toFixed(2));
+  assert.ok(a.coverTarget,'the bot should still own a cover target while holding');
+  const d=Math.hypot(a.pos.x-a.coverTarget.x,a.pos.z-a.coverTarget.z);
+  assert.ok(d<1.5,'the bot should settle at its cover spot, distance '+d.toFixed(2));
 });
 
 /* ---- death / respawn ---- */
@@ -375,8 +407,8 @@ test('radio bark cooldown: 6 s between barks unless forced',()=>{
 test('switching targets re-opens the reaction window (no snap-fire on the new target)',()=>{
   const g=makeGame();
   const a=makeBot(g,{team:'A',op:'frost',name:'A1'});
-  const b1=makeBot(g,{team:'B',op:'raven',name:'B1',pos:[8,0,0]});
-  makeBot(g,{team:'B',op:'raven',name:'B2',pos:[20,0,0]});
+  const b1=makeBot(g,{team:'B',op:'raven',name:'B1',pos:[0,0,-8]});
+  makeBot(g,{team:'B',op:'raven',name:'B2',pos:[0,0,-20]});
   a.update(.016,NOW+=.016,()=>true); // acquire B1
   a.reactionT=0;a.fireT=0;
   withRand(.99,()=>step(a,1));
@@ -384,10 +416,10 @@ test('switching targets re-opens the reaction window (no snap-fire on the new ta
   b1.takeDamage(9999,'X');           // B1 dies → the target switches to B2
   a.fireT=0;
   const t0=g.fx.tracers.length;
-  step(a,15); // 15 frames ≈ .24 s — inside the re-opened reaction window (.25)
+  step(a,15); // 15 frames ≈ .24 s — inside the re-opened reaction window (.28)
   assert.equal(g.fx.tracers.length,t0,'no shot right after switching targets');
-  assert.ok(a.reactionT>0&&a.reactionT<=.25,'the reaction window should re-arm, got '+a.reactionT);
-  step(a,1);
+  assert.ok(a.reactionT>0&&a.reactionT<=.28,'the reaction window should re-arm, got '+a.reactionT);
+  step(a,4); // the window expires on the 19th frame
   assert.equal(g.fx.tracers.length,t0+1,'fire resumes once the window expires');
 });
 
@@ -403,10 +435,10 @@ test('difficulty applies live: a mid-match botDifficulty change reaches existing
 
 test('miss tracers stop at the first wall instead of drawing through cover',()=>{
   const g=makeGame();
-  const a=makeBot(g,{team:'A',op:'frost',name:'A1'}); // target 10 m away
-  const b=makeBot(g,{team:'B',op:'raven',name:'B1',pos:[0,0,10]});
+  const a=makeBot(g,{team:'A',op:'frost',name:'A1'}); // faces -z; target 10 m ahead
+  const b=makeBot(g,{team:'B',op:'raven',name:'B1',pos:[0,0,-10]});
   const wall=new THREE.Mesh(new THREE.BoxGeometry(2,3,1));
-  wall.position.set(0,1.5,5);wall.updateMatrixWorld(true); // refresh matrices before same-block raycasts
+  wall.position.set(0,1.5,-5);wall.updateMatrixWorld(true); // refresh matrices before same-block raycasts
   g.world.losStatics.push(wall);
   a.update(.016,NOW+=.016,()=>true);
   a.reactionT=0;a.fireT=0;

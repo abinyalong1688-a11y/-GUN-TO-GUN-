@@ -62,7 +62,7 @@ export class KothMode extends GameMode{
     else if(this.capture<=-1)this.owner='B';
 
     this.lastTickTeam=null;
-    const shown=(g.dm&&g.dm.score)||this.score;
+    const shown=this.online?((g.dm&&g.dm.score)||this.score):this.score; // online mirrors the DO; local KOTH owns the points
     if(this.owner){
       if(this.online){
         // Host only: one point per ~100 ms of ownership. The DO ignores anyone else.
