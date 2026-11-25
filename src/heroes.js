@@ -1,4 +1,4 @@
-// heroes.js — realistic 3D faction characters (third person) + 4v4 bot deathmatch:
+// heroes.js — realistic 3D faction characters (third person) + 3v3 bot deathmatch:
 //   looks are built by character.js from operator definitions (8 operators / camos / silhouettes);
 //   combat style by faction (Nova steady bursts / Rogue heavy spray); death: fall → limbs land flat → fade out → respawn.
 import * as THREE from 'three';
@@ -1102,7 +1102,7 @@ export class HeroBot{
   }
 }
 
-/* Faction team manager: 3 bot teammates on the player's faction (the player is the 4th) vs 4 enemies (8-operator roster, cycled) */
+/* Faction team manager: 2 bot teammates on the player's faction (the player is the 3rd) vs 3 enemies — 3v3 (8-operator roster, cycled) */
 export class HeroTeam{
   constructor(game){
     this.game=game;
@@ -1122,12 +1122,13 @@ export class HeroTeam{
     const g=this.game,scene=g.scene,assets=g.assets,fx=g.effects,audio=g.audio,ui=g.ui;
     const pf=playerFaction==='t'?'t':'ct';
     const ef=pf==='ct'?'t':'ct';
-    // Roster has several operators per faction, so squads cycle through it (name suffixes
-    // keep repeated operators distinguishable); match size stays 3 bot teammates + player vs 4 enemies.
-    const cycle=(arr,n)=>arr.length?Array.from({length:n},(_,i)=>arr[i%arr.length]):[];
-    const ownPool=byFaction(pf).filter(o=>o.id!==playerOpId);
-    const own=cycle(ownPool.length?ownPool:byFaction(pf),3);
-    const foe=cycle(byFaction(ef),4);
+  // Roster has several operators per faction, so squads cycle through it (name suffixes
+  // keep repeated operators distinguishable); match size stays 2 bot teammates + player vs 3 enemies (3v3).
+  const TEAM_BOTS=2,FOE_BOTS=3;
+  const cycle=(arr,n)=>arr.length?Array.from({length:n},(_,i)=>arr[i%arr.length]):[];
+  const ownPool=byFaction(pf).filter(o=>o.id!==playerOpId);
+  const own=cycle(ownPool.length?ownPool:byFaction(pf),TEAM_BOTS);
+  const foe=cycle(byFaction(ef),FOE_BOTS);
     const used=new Set([playerName]);
     const nm=o=>{
       let n=isEN()?o.name.en:o.name.zh;
@@ -1167,7 +1168,7 @@ export class HeroTeam{
   /* Hard-overlap fallback (last resort, P1 keeps it idle in normal play): movement itself is
      resolved at the velocity level, so this only fires when bots already overlap — spawn clusters
      and dead bodies — where a positional split is the only way out. Dead bodies and spawn
-     clusters otherwise pass through each other (visible clipping in 4v4). Overlapping alive
+     clusters otherwise pass through each other (visible clipping in 3v3). Overlapping alive
      pairs are pushed apart on XZ only; the lower-priority bot takes the larger share (P2). */
   _separate(){
     const L=this.list,R=.72;

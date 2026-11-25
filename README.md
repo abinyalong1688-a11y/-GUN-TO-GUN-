@@ -1,6 +1,6 @@
 # GUN TO GUN
 
-A single-file 3D FPS web game — faction combat · four maps · 8 realistic weapons · real physics (gravity / jumping / crouching / recoil ballistics) · male & female operatives · 4v4 behavior-tree AI deathmatch · endless waves.
+A single-file 3D FPS web game — faction combat · four maps · 8 realistic weapons · real physics (gravity / jumping / crouching / recoil ballistics) · male & female operatives · 3v3 behavior-tree AI deathmatch · endless waves.
 
 Designed and developed end-to-end as an original project: every system — rendering, physics, weapons, characters, AI, audio, UI — is implemented in-house and bundled into one self-contained HTML file.
 
@@ -72,8 +72,8 @@ Four hand-built arenas, each a distinct scene with its own layout, sky, lighting
 
 ## Game Modes
 
-- **Endless Waves**: defend the outpost against three drone classes with detailed silhouettes — WASP (kamikaze) / REAPER (roaming shooter) / WARDEN (heavy: glowing sensor windows, core guard rings, wing plates / claw feet / gun shields, rotor hubs, breathing red-core pulse). Red-core crits ×2.5
-- **8-Player Deathmatch (4v4)**: you + 3 same-faction AI teammates vs 4 enemy AI. Nova fires controlled bursts, Rogue sprays. 3-minute matches; first to 25 kills ends it early, otherwise the higher kill count wins. Killfeed, TAB scoreboard and respawns — a human death counts on the board and credits the killing bot
+- **Endless Waves (solo)**: defend the outpost alone against three drone classes with detailed silhouettes — WASP (kamikaze) / REAPER (roaming shooter) / WARDEN (heavy: glowing sensor windows, core guard rings, wing plates / claw feet / gun shields, rotor hubs, breathing red-core pulse). Red-core crits ×2.5
+- **6-Player Deathmatch (3v3)**: you + 2 same-faction AI teammates vs 3 enemy AI. Nova fires controlled bursts, Rogue sprays. 3-minute matches; first to 25 kills ends it early, otherwise the higher kill count wins. Killfeed, TAB scoreboard and respawns — a human death counts on the board and credits the killing bot
   - Note: true networked multiplayer requires a persistent server, which conflicts with the "single file, offline-playable" goal — deathmatch delivers the same arena experience with AI combatants
 
 ## Bot Combat AI (v1.11)
@@ -91,11 +91,11 @@ Difficulty (`easy` / `normal` / `hard`, persisted as `botDifficulty`) controls r
 
 `TAB` opens a mode-aware board while playing:
 
-- **Deathmatch** — 8-player team table (operator / faction / kills / deaths), player row highlighted, sorted by kills then deaths; the top HUD shows team kills and the match timer. A bot killing the player is credited to the killer, the player's death row and the killfeed, so the table and the 25-kill win check stay accurate.
+- **Deathmatch** — 6-player team table (operator / faction / kills / deaths), player row highlighted, sorted by kills then deaths; the top HUD shows team kills and the match timer. A bot killing the player is credited to the killer, the player's death row and the killfeed, so the table and the 25-kill win check stay accurate.
 - **KOTH** — the same team table plus live capture points for NOVA/ROGUE and capture progress; the HUD adds the control-point bar and score.
 - **Waves** — a compact run-status panel (wave / remaining hostiles / score / kills) instead of the PvP table.
 
-A board left open by a held TAB is cleared on pause, next match, menu return, match end and by the results screen, so it cannot leak into another mode. The DM/KOTH end screens also render the full 8-player final table.
+A board left open by a held TAB is cleared on pause, next match, menu return, match end and by the results screen, so it cannot leak into another mode. The DM/KOTH end screens also render the full 6-player final table.
 
 ## Sponsorship Placements
 
@@ -109,7 +109,7 @@ src/
   world.js    Scene — parametric sky shaders (sunset / aurora night / rain night / ember) + four distinct per-map layouts + lighting / fog / ambient particles + a 2 m spatial grid over the static colliders (`SpatialGrid` / `ColliderGrid`)
   weapon.js   Weapons — three-slot loadout viewmodels + first-person arms (tactical gloves) + semi-auto / full-auto triggers + recoil / ADS / reload / shell ejection
   attach.js   Attachment integrity — connected-island check that every weapon part is welded to the gun body (unit test + ?e2e=1)
-  heroes.js   Characters — realistic 3D faction operatives (lathe-surface torsos, facial features, hair physics, faction outfits) and 4v4 AI, incl. the bot navigation stack (velocity-level separation + simplified RVO, normal-projection wall slide, stuck escape, local-grid A* + corner routing, squad fan-out)
+  heroes.js   Characters — realistic 3D faction operatives (lathe-surface torsos, facial features, hair physics, faction outfits) and 3v3 AI, incl. the bot navigation stack (velocity-level separation + simplified RVO, normal-projection wall slide, stuck escape, local-grid A* + corner routing, squad fan-out)
   botPerception.js  Bot senses — view cone / range / LOS / smoke / hearing / damage alerts / bounded memory
   botBehaviorTree.js  Behavior-tree core — Selector / Sequence / Parallel / Condition / Action / decorators
   botBrain.js  Bot brain — target selection, aim lead, engagement footwork, reload / retreat / search / patrol tree

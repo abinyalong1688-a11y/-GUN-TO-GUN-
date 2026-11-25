@@ -224,7 +224,7 @@ test('10 bots from a tight spawn on one target: spread within 2 s and stay apart
   assert.ok(res.tSpread>=0&&res.tSpread<2,`all pairs ≥ .7 m after ${res.tSpread}s`);
   assert.ok(res.minLate>=.6,`stay apart after 2 s (closest ${res.minLate.toFixed(2)} m)`);
 });
-test('respawn pile-up: 7 bots spawned on the same spot untangle within 1 s and stay clear',()=>{
+test('respawn pile-up: 7 bots spawned on the same spot untangle within 1 s and stay clear',()=>{  // stress case: larger than a 3v3 roster on purpose
   const g=makeGame([]);
   const res=seeded(13,()=>{
     const team=makeTeam(g),L=[];

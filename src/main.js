@@ -44,7 +44,7 @@ const TUTORIAL=[
   {zh:'按 1 循环主武器,2 手枪,3 冲锋枪',en:'Press 1 to cycle primaries, 2 sidearm, 3 SMG'},
   {zh:'按 G / F / V 投掷破片 / 闪光 / 烟雾',en:'Press G / F / V for frag / flash / smoke'},
 ];
-const VERSION='1.11.3';
+const VERSION='1.11.4';
 const _rsO=new THREE.Vector3(); // reused ray-sphere test vector (zero allocation on the hot path)
 
 class Game{
@@ -146,13 +146,11 @@ class Game{
     this.ui.portraits=this.portraits; // C4: menu operator card portraits
     // GLB characters load in the background (?model=proc|gltf overrides); when they arrive the
     // portrait cache is stale — clear it and rebuild the roster so cards switch to the new look.
-    // The character data sits in inert <script> tags AFTER this bundle, so decoding starts once
-    // the document is parsed. The menu is fully interactive in the meantime and the procedural
-    // builders cover the gap until the models are ready.
+    // The character data sits in inert <script> tags AFTER this bundle: each rig starts decoding
+    // as soon as its tag streams in (waitForTag), long before the document finishes parsing.
+    // The menu is fully interactive meanwhile; the procedural builders cover the gap.
     modelAssets.onReady(()=>{this.portraits.cache.clear();this.ui.buildOperators();});
-    if(typeof document!=='undefined'&&document.readyState==='loading')
-      document.addEventListener('DOMContentLoaded',preloadCharacters,{once:true});
-    else preloadCharacters();
+    preloadCharacters();
     this.audio=new AudioFX();
     if(this.mapOverride&&MAPS[this.mapOverride])this.ui.sel.map=this.mapOverride; // per-map screenshot / verification hook
     this.buildWorldFor(this.ui.sel.map);
@@ -1507,12 +1505,12 @@ class Game{
       this.ui.sel.operator='frost';this.ui.sel.hero='ct';this.ui.sel.primary='m4a4';this.ui.sel.mode='dm';
       this.startGame();
       const ids=this.heroes.list.map(h=>h.opId);
-      assert(ids.length===7,'deathmatch should have 7 bots (4v4 with the player), got '+ids.length);
+      assert(ids.length===5,'deathmatch should have 5 bots (3v3 with the player), got '+ids.length);
       assert(!ids.includes('frost'),'bots must not duplicate the player operator');
       const names=this.heroes.list.map(h=>h.name);
       assert(new Set(names).size===names.length,'cycled operators need distinct names: '+names.join(','));
-      assert(this.heroes.list.filter(h=>h.team==='A').length===3,'there should be 3 teammates');
-      assert(this.heroes.list.filter(h=>h.team==='B').length===4,'there should be 4 enemies');
+      assert(this.heroes.list.filter(h=>h.team==='A').length===2,'there should be 2 teammates');
+      assert(this.heroes.list.filter(h=>h.team==='B').length===3,'there should be 3 enemies');
       for(const h of this.heroes.list){
         assert(h.materials.length<=13,'each character should have ≤13 materials (GLB: body + used attachments), got '+h.materials.length);
         assert(h.parts.head&&h.parts.gunTip,'character parts should be complete');
@@ -1614,7 +1612,7 @@ class Game{
       assert(this.state==='over','reaching 200 points should end the match');
       assert(document.getElementById('koth-score').textContent.includes('209'),'KOTH HUD should show the final capture points');
       const ob=document.getElementById('o-board');
-      assert(ob.querySelectorAll('tr').length===9,'KOTH results should show 8 players + header');
+      assert(ob.querySelectorAll('tr').length===7,'KOTH results should show 6 players (3v3) + header');
       assert(ob.textContent.includes(this.playerName),'KOTH results should list the player');
       this.startGame();
     });
@@ -1986,7 +1984,7 @@ class Game{
       assert(this.ui.sel.hero==='ct','switching back to a Nova operator should restore the faction');
       assert(this.ui.sel.camo===this.ui.camoOf(byId('frost')),'camo should follow the operator back');
     });
-    await run('bot-separate-4v4',()=>{
+    await run('bot-separate-3v3',()=>{
       this.ui.sel.mode='dm';this.startGame();
       const L=this.heroes.list;
       // Blind everyone: no target-driven movement or fire, but separation + collide stay active
@@ -2043,7 +2041,7 @@ class Game{
       assert(this.save.data.daily.progress.score>=200,'PvP score daily should be awarded at match end, got '+this.save.data.daily.progress.score);
       assert(this.state==='over','reaching winKills should end the match');
       const ob=document.getElementById('o-board');
-      assert(ob.querySelectorAll('tr').length===9,'DM results should show 8 players + header');
+      assert(ob.querySelectorAll('tr').length===7,'DM results should show 6 players (3v3) + header');
       assert(ob.textContent.includes(this.playerName),'DM results should list the player');
       this.startGame();
     });
@@ -2207,7 +2205,7 @@ class Game{
       const board=document.getElementById('board');
       assert(!board.classList.contains('hidden'),'TAB board should show in DM');
       const dataRows=[...board.querySelectorAll('table tr')].slice(1);
-      assert(dataRows.length===8,'DM board should list all 8 players, got '+dataRows.length);
+      assert(dataRows.length===6,'DM board should list all 6 players (3v3), got '+dataRows.length);
       assert(board.querySelector('tr.me td').textContent===this.playerName,'the player row should be marked');
       assert(dataRows[0].querySelector('td').textContent===this.playerName,'the player with most kills should sort first');
       assert(board.textContent.includes(this._factionLabels().A),'team A label should be localized');
@@ -2245,7 +2243,7 @@ class Game{
       assert(board.textContent.includes(t('koth_a'))&&board.textContent.includes(t('koth_b')),'KOTH board should show both team names');
       assert(board.textContent.includes('140')&&board.textContent.includes('95'),'KOTH board should show capture points');
       const dataRows=[...board.querySelectorAll('table tr')].slice(1);
-      assert(dataRows.length===8,'KOTH board should list all 8 players, got '+dataRows.length);
+      assert(dataRows.length===6,'KOTH board should list all 6 players (3v3), got '+dataRows.length);
       window.dispatchEvent(new KeyboardEvent('keyup',{code:'Tab',key:'Tab',bubbles:true}));
       this.startGame();
     });

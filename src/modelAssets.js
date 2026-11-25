@@ -63,14 +63,35 @@ export const modelAssets={
    The build writes each shared rig into its own <script type="application/octet-stream"> tag.
    Reading only the tag we need avoids materialising a multi-megabyte JS object literal at
    parse time, and lets the main bundle start while the payload is still streaming in. */
-function glbSource(name){
-  if(typeof document!=='undefined'){
-    const el=document.getElementById('gtg-glb-'+name);
-    if(el&&el.textContent.length>64)return Promise.resolve(el.textContent.trim());
-  }
+const TAG_LEN=64;
+const tagOf=name=>{
+  if(typeof document==='undefined')return null;
+  const el=document.getElementById('gtg-glb-'+name);
+  return el&&el.textContent.length>TAG_LEN?el.textContent.trim():null;
+};
+/* Wait for a tag that is still streaming in: the build puts the GLB tags AFTER the bundle,
+   so each rig becomes decodable as its bytes arrive — long before DOMContentLoaded fires.
+   Polling ends the moment parsing finishes without the tag (dev server has no tags at all). */
+function waitForTag(name){
+  const hit=tagOf(name);
+  if(hit||typeof document==='undefined'||document.readyState!=='loading')
+    return Promise.resolve(hit);
+  return new Promise(res=>{
+    const poll=()=>{
+      const hit=tagOf(name);
+      if(hit)return res(hit);
+      if(document.readyState!=='loading')return res(null); // parsing done, no tag → dev fallback
+      setTimeout(poll,60);
+    };
+    poll();
+  });
+}
+async function glbSource(name){
   const legacy=(typeof window!=='undefined')&&window.__GTG_GLB__&&window.__GTG_GLB__[name];
-  if(legacy)return Promise.resolve(legacy);
-  return Promise.resolve(`assets/characters/${name}.glb`);
+  if(legacy)return legacy;
+  const tag=await waitForTag(name);
+  if(tag)return tag;
+  return `assets/characters/${name}.glb`; // dev server / extracted build: fetch relative GLBs
 }
 function toArrayBuffer(src){
   if(src.startsWith('data:')){

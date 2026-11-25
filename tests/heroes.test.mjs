@@ -60,13 +60,13 @@ const withRand=(v,fn)=>{const orig=Math.random;Math.random=()=>v;try{return fn()
 const primeSuspicion=(a,b,time=NOW)=>{a.brain.sensor.alert('h'+b.id,b.pos,time,{noise:0,entity:b,team:b.team});};
 
 /* ---- team setup ---- */
-test('HeroTeam.setup: 3 teammates + 4 enemies, the player operator excluded, unique names, base facing',()=>{
+test('HeroTeam.setup: 2 teammates + 3 enemies (3v3), the player operator excluded, unique names, base facing',()=>{
   const g=makeGame();
   const team=new HeroTeam(g);
   team.setup('ct','PlayerName','frost');
-  assert.equal(team.list.length,7,'deathmatch fields 7 bots (the player is the 4th teammate), got '+team.list.length);
-  assert.equal(team.list.filter(h=>h.team==='A').length,3);
-  assert.equal(team.list.filter(h=>h.team==='B').length,4);
+  assert.equal(team.list.length,5,'deathmatch fields 5 bots (3v3 with the player), got '+team.list.length);
+  assert.equal(team.list.filter(h=>h.team==='A').length,2);
+  assert.equal(team.list.filter(h=>h.team==='B').length,3);
   assert.ok(team.list.every(h=>h.opId!=='frost'),'bots must not duplicate the player operator');
   assert.ok(team.list.every(h=>(h.team==='A')===(h.faction==='ct')),'team A follows the player faction');
   const names=team.list.map(h=>h.name);

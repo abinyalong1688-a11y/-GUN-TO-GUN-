@@ -3,7 +3,7 @@
 // background); cross-origin requests (IP language probe etc.) bypass the cache.
 // Note: this file is not bundled by esbuild; build.mjs copies it into dist/ and syncs the
 // version with the game VERSION.
-const CACHE='gtg-v1.11.3'; // build.mjs injects the package.json version at build time so it cannot drift from the game VERSION
+const CACHE='gtg-v1.11.4'; // build.mjs injects the package.json version at build time so it cannot drift from the game VERSION
 const PAGE='./gun-to-gun.html';
 const PAGE_URL=new URL(PAGE,self.location.href);
 const APP_INDEX=new URL('./',self.location.href).pathname;
