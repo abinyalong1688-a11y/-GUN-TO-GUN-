@@ -44,7 +44,7 @@ const TUTORIAL=[
   {zh:'按 1 循环主武器,2 手枪,3 冲锋枪',en:'Press 1 to cycle primaries, 2 sidearm, 3 SMG'},
   {zh:'按 G / F / V 投掷破片 / 闪光 / 烟雾',en:'Press G / F / V for frag / flash / smoke'},
 ];
-const VERSION='1.10.1';
+const VERSION='1.11.0';
 const _rsO=new THREE.Vector3(); // reused ray-sphere test vector (zero allocation on the hot path)
 
 class Game{
@@ -179,6 +179,8 @@ class Game{
     this._sd=new THREE.Vector3();this._sr=new THREE.Vector3();this._su=new THREE.Vector3();
     this._send=new THREE.Vector3();this._muzzle=new THREE.Vector3();this._losV=new THREE.Vector3();this._pierceO=new THREE.Vector3();this._smokeM=new THREE.Vector3();
     this._shotGroups=[];
+    /* Gunfire cue: enemy bots hear the player's shots within their hearing radius (botBrain.js) */
+    this.playerShotT=-99;
 
     this._setupComposer();
     this._setupInput();
@@ -489,6 +491,7 @@ class Game{
     this.damageBoostT=0;this.damageBoostMul=1;
     this.empT=0;
     this.ui.hideBoss();
+    this.ui.hideBoard(); // a board left open by a held TAB must not leak into the next match
     this.upgrades={dmg:0,rpm:0,reload:0,speed:0,hp:0,crit:0,pierce:0,regen:0};
     this.weapon.rpmMul=1;
     this.ui.hideUpgrades();
@@ -521,6 +524,7 @@ class Game{
     this.comboKills=0;this.comboT=0;
     this.stats={shots:0,hits:0,kills:0,critKills:0,headshots:0,time:0,bestCombo:0};
     this.score=0;this.shake=0;this.dyingT=0;
+    this.playerShotT=-99; // a shot from the previous match must not alert the new bots
     this.startTime=performance.now()/1000;
 
     if(this.mode==='dm'){
@@ -581,6 +585,7 @@ class Game{
     this.input.firing=false;this.input.ads=false;
     this._mouseFire=false;this._mouseAds=false; // a mouse-up lost during pause must not leave fire stuck on after resuming
     this.audio.musicSet(.2);
+    this.ui.hideBoard();
     this.ui.showOnly('pause');
     if(document.pointerLockElement)document.exitPointerLock();
   }
@@ -599,6 +604,7 @@ class Game{
     this.state='menu';
     this.audio.musicStart('menu');
     this.audio.musicSet(1);
+    this.ui.hideBoard();
     this.ui.showOnly('menu');
     this.ui.showBest(parseInt(localStorage.getItem('o07_best')||'0'));
     this._menuDrones();
@@ -625,6 +631,7 @@ class Game{
     this.stats.shots++;
     const cam=this.camera;
     const def=this.weapon.def;
+    this.playerShotT=this.time;
     // Industry standard: the shot uses the authoritative yaw/pitch at the moment of firing, not last frame's render camera (fast flicks neither lag nor drift)
     const pl=this.player;
     const sy=Math.sin(pl.yaw),cy=Math.cos(pl.yaw),sp=Math.sin(pl.pitch),cp=Math.cos(pl.pitch);
@@ -680,7 +687,7 @@ class Game{
       this.stats.hits++;
       const head=bestHeroPart==='head';
       const dmg=def.dmg*(head?this.playerCritMul():1)*this.playerDamageMul();
-      bestHero.takeDamage(dmg,this.playerName,head);
+      bestHero.takeDamage(dmg,this.playerName,head,this.player.pos);
       this.audio.hit(head);
       this.ui.hitmark(head);
       this.effects.impact(end,UP,'metal',{decal:false});
@@ -834,9 +841,19 @@ class Game{
       if(killer)this.lastKiller=killer;
     }
     if(this.player.health<=0){
+      /* A bot killing the player used to be invisible to the scoreboard: credit the kill,
+         the player's death and the killfeed so the DM/KOTH table and win check stay honest. */
+      if((this.mode==='dm'||this.mode==='koth')&&this.dm&&fromName){
+        const k=this.dm.scores.get(fromName);
+        if(k)k.kills++;
+        const v=this.dm.scores.get(this.playerName);
+        if(v)v.deaths++;
+        this.ui.killFeed(fromName,this.playerName,t('kill_verb'),false);
+        this._checkDmWin();
+      }
       if((this.mode==='dm'||this.mode==='koth')&&fromName){
         const killer=this.heroes.list.find(h=>h.name===fromName);
-        if(killer&&killer.alive)this.spectate={target:killer,t:2.5};
+        if(killer&&killer.alive&&this.state==='playing')this.spectate={target:killer,t:2.5};
       }
     }
   }
@@ -857,8 +874,32 @@ class Game{
     this.shake=Math.max(this.shake,amt*Math.max(.3,1-d/25));
   }
   _showBoard(){
-    const rows=[...this.dm.scores.values()].sort((a,b)=>b.kills-a.kills);
-    this.ui.scoreboard(rows,this._factionLabels());
+    /* TAB board for every mode: team table in DM/KOTH, a compact run summary in waves.
+       KOTH adds the capture points, which are the actual win condition in that mode. */
+    if(this.mode==='waves'){
+      this.ui.scoreboard([],{},{
+        title:t('sb_run'),
+        lines:[
+          [t('hud_wave'),String(this.waves.n).padStart(2,'0')],
+          [t('hud_left'),String(this.waves.remaining())],
+          [t('hud_score'),String(this.score)],
+          [t('over_kills'),String(this.stats.kills)],
+        ],
+      });
+      return;
+    }
+    if(!this.dm){this.ui.hideBoard();return;}
+    const rows=[...this.dm.scores.values()]
+      .sort((a,b)=>b.kills-a.kills||a.deaths-b.deaths);
+    const meta={title:this.mode==='koth'?t('mode_koth'):t('sb_title')};
+    if(this.mode==='koth'&&this.koth){
+      meta.lines=[
+        [t('koth_a'),Math.floor(this.koth.score.A)],
+        [t('koth_b'),Math.floor(this.koth.score.B)],
+        [t('koth_name'),Math.round((this.koth.capture+1)/2*100)+'%'],
+      ];
+    }
+    this.ui.scoreboard(rows,this._factionLabels(),meta);
   }
   _factionLabels(){
     const ct=t('faction_ct'),tt=t('faction_t');
@@ -884,6 +925,7 @@ class Game{
     const best=parseInt(store.get('o07_best','0'))||0;
     if(this.score>best)store.set('o07_best',this.score);
     this.audio.gameOver();
+    this.ui.hideBoard();
     const award=this._awardProgress(); // award before the results screen so LV/XP is current
     this.ui.showOver({
       title:win?t('win'):t('lose'),
@@ -926,6 +968,7 @@ class Game{
     const best=parseInt(store.get('o07_best','0'))||0;
     if(this.score>best)store.set('o07_best',this.score);
     this.audio.gameOver();
+    this.ui.hideBoard();
     const award=this._awardProgress(); // award before the results screen so LV/XP is current
     this.ui.showOver({
       title:win?t('win'):t('lose'),win,kicker:t('mode_koth'),
@@ -1152,7 +1195,9 @@ class Game{
   }
 
   _los(a,b){
-    const dir=b.clone().sub(a);
+    // Accepts plain {x,y,z} as well as Vector3: the bot cover code passes cheap object
+    // literals, and this is called many times per second by eight bots.
+    const dir=this._losV.set((b.x||0)-(a.x||0),(b.y||0)-(a.y||0),(b.z||0)-(a.z||0));
     const len=dir.length();
     if(len<.5)return true;
     this.losRay.set(a,dir.normalize());this.losRay.far=len-.3;
@@ -1547,6 +1592,7 @@ class Game{
       assert(d.daily.progress.kills>=before.daily.progress.kills+4,'kill daily should progress, got '+d.daily.progress.kills);
       assert(d.daily.progress.headshots>=before.daily.progress.headshots+2,'headshot daily should progress, got '+d.daily.progress.headshots);
       assert(d.daily.progress.wave>=6,'wave daily should progress, got '+d.daily.progress.wave);
+      assert(document.getElementById('o-board').textContent==='','waves results must not keep a stale PvP board');
     });
     await run('koth-score',()=>{
       this.ui.sel.mode='koth';this.startGame();
@@ -1560,6 +1606,10 @@ class Game{
       this.koth.capture=1;this.koth.owner='A';
       this.koth.update(1);
       assert(this.state==='over','reaching 200 points should end the match');
+      assert(document.getElementById('koth-score').textContent.includes('209'),'KOTH HUD should show the final capture points');
+      const ob=document.getElementById('o-board');
+      assert(ob.querySelectorAll('tr').length===9,'KOTH results should show 8 players + header');
+      assert(ob.textContent.includes(this.playerName),'KOTH results should list the player');
       this.startGame();
     });
     await run('accessibility',()=>{
@@ -1944,6 +1994,9 @@ class Game{
       assert(this.save.data.daily.progress.headshots>=hs0+1,'headshot daily should be awarded at match end');
       assert(this.save.data.daily.progress.score>=200,'PvP score daily should be awarded at match end, got '+this.save.data.daily.progress.score);
       assert(this.state==='over','reaching winKills should end the match');
+      const ob=document.getElementById('o-board');
+      assert(ob.querySelectorAll('tr').length===9,'DM results should show 8 players + header');
+      assert(ob.textContent.includes(this.playerName),'DM results should list the player');
       this.startGame();
     });
     await run('bot-reload-choreo',()=>{
@@ -1992,6 +2045,173 @@ class Game{
       try{b.update(.016,this.time,()=>true);}finally{Math.random=orig;}
       assert(this.player.health===100,'god mode must block bot damage');
       this.player.god=false;this.player.health=100;
+    });
+    await run('bot-perception-memory',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const a=this.heroes.list.find(h=>h.team==='A');
+      const b=this.heroes.list.find(h=>h.team==='B');
+      this.player.alive=false; // keep the player out of the sight test
+      for(const h of this.heroes.list)if(h!==a&&h!==b){h.place(new THREE.Vector3(0,0,h.team==='A'?45:-45),0);h.blindT=999;}
+      a.place(new THREE.Vector3(0,0,0),Math.PI);
+      b.place(new THREE.Vector3(0,0,-10),0);
+      const t0=this.time;
+      a.update(.016,t0,()=>true); // acquire in the view cone
+      assert(a.brain.targetId==='h'+b.id,'the enemy in the view cone should be perceived');
+      assert(a.brain.targetVisible,'it should be a live sighting, not memory');
+      for(let i=0;i<12;i++)a.update(.016,t0+i*.016,()=>false); // one full sensing tick behind cover
+      assert(!a.brain.targetVisible,'cover should break live sight');
+      assert(a.brain.targetId==='h'+b.id,'the bot should remember the last known position');
+      const mem=a.brain.sensor.get('h'+b.id);
+      assert(mem&&!mem.visible,'the memory entry should persist while hidden');
+      b.place(new THREE.Vector3(0,0,-42),0);
+      for(let i=0;i<300;i++)a.update(.016,t0+1+i*.016,()=>false); // > memoryTime
+      assert(!a.brain.sensor.get('h'+b.id),'the memory entry should expire after memoryTime');
+      assert(!a.brain.target,'an expired target must not stay selected');
+      this.player.alive=true;this.startGame();
+    });
+    await run('bot-target-priority',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const a=this.heroes.list.find(h=>h.team==='A');
+      const foes=this.heroes.list.filter(h=>h.team==='B');
+      this.player.alive=false;
+      for(const h of this.heroes.list)if(h!==a&&!foes.includes(h)){h.place(new THREE.Vector3(0,0,45),0);h.blindT=999;}
+      for(const f of foes.slice(2)){f.place(new THREE.Vector3(0,0,45),0);f.blindT=999;}
+      a.place(new THREE.Vector3(0,0,0),Math.PI);
+      foes[0].place(new THREE.Vector3(-3,0,-8),0);
+      foes[1].place(new THREE.Vector3(3,0,-8),0);
+      foes[0].hp=foes[0].maxHp;foes[1].hp=20;
+      a.update(.016,this.time,()=>true);
+      assert(a.brain.targetId==='h'+foes[1].id,'the wounded enemy at equal distance should be prioritised');
+      this.player.alive=true;this.startGame();
+    });
+    await run('bot-hearing',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const a=this.heroes.list.find(h=>h.team==='A');
+      const b=this.heroes.list.find(h=>h.team==='B');
+      this.player.alive=false;
+      for(const h of this.heroes.list)if(h!==a&&h!==b){h.place(new THREE.Vector3(0,0,45),0);h.blindT=999;}
+      a.place(new THREE.Vector3(0,0,0),Math.PI);
+      b.place(new THREE.Vector3(0,0,-20),0);
+      const now=this.time+5;
+      b._shotT=now; // a gunshot that the bot cannot see (no _shotPos needed: hearing uses the body position)
+      a.update(.016,now,()=>false);
+      const heard=a.brain.sensor.get('h'+b.id);
+      assert(heard,'gunfire within hearing range should create a memory entry');
+      assert(!heard.visible,'hearing must not act like sight');
+      assert(a.brain.targetId==='h'+b.id,'the bot should investigate the sound');
+      this.player.alive=true;this.startGame();
+    });
+    await run('bot-difficulty-presets',()=>{
+      const rows={};
+      for(const d of ['easy','normal','hard']){
+        this.settings.set('botDifficulty',d);
+        this.ui.sel.mode='dm';this.startGame();
+        rows[d]=this.heroes.list[0].brain.params;
+      }
+      assert(rows.hard.reaction<rows.normal.reaction&&rows.normal.reaction<rows.easy.reaction,'reaction time should improve with difficulty');
+      assert(rows.hard.viewRange>rows.normal.viewRange&&rows.normal.viewRange>rows.easy.viewRange,'view range should improve with difficulty');
+      assert(rows.hard.accuracy>rows.normal.accuracy&&rows.normal.accuracy>rows.easy.accuracy,'accuracy should improve with difficulty');
+      assert(rows.hard.fov>rows.normal.fov&&rows.normal.fov>rows.easy.fov,'view cone should widen with difficulty');
+      this.settings.set('botDifficulty','normal');this.startGame();
+    });
+    await run('bot-firing-line',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const a=this.heroes.list.find(h=>h.team==='A');
+      const mate=this.heroes.list.find(h=>h.team==='A'&&h!==a);
+      const b=this.heroes.list.find(h=>h.team==='B');
+      this.player.alive=false;
+      for(const h of this.heroes.list)if(h!==a&&h!==mate&&h!==b){h.place(new THREE.Vector3(0,0,h.team==='A'?45:-45),0);h.blindT=999;}
+      a.place(new THREE.Vector3(0,0,0),Math.PI);
+      mate.place(new THREE.Vector3(0,0,-3),0);
+      b.place(new THREE.Vector3(0,0,-6),0);
+      a.update(.016,this.time,()=>true); // acquire the enemy past the teammate
+      a.reactionT=0;a.fireT=0;
+      const hp0=b.hp;const orig=Math.random;
+      Math.random=()=>.99;
+      try{for(let i=0;i<3;i++)a.update(.016,this.time+i*.016,()=>true);}finally{Math.random=orig;}
+      assert(b.hp===hp0,'the bot must hold fire while a teammate is on the line');
+      assert(a.brain.blockedLineT>0,'the blocked firing line should be tracked');
+      mate.place(new THREE.Vector3(4,0,-3),0);
+      a.brain.senseT=.2; // force the next update to re-sense, like a real 10 Hz sense tick
+      a.update(.016,this.time+1,()=>true); // re-acquire the now-visible enemy
+      a.reactionT=0;a.fireT=0;
+      Math.random=()=>.99;
+      try{a.update(.016,this.time+1.016,()=>true);}finally{Math.random=orig;}
+      assert(b.hp<hp0,'fire should resume after the teammate steps aside');
+      this.player.alive=true;this.startGame();
+    });
+    await run('scoreboard-dm',()=>{
+      const tab=()=>{
+        const ev=new KeyboardEvent('keydown',{code:'Tab',key:'Tab',bubbles:true,cancelable:true});
+        window.dispatchEvent(ev);
+        return ev;
+      };
+      const untab=()=>window.dispatchEvent(new KeyboardEvent('keyup',{code:'Tab',key:'Tab',bubbles:true}));
+      this.ui.sel.mode='dm';this.startGame();
+      for(const s of this.dm.scores.values()){s.kills=0;s.deaths=0;}
+      const me=this.dm.scores.get(this.playerName);me.kills=7;me.deaths=2;
+      const enemy=[...this.dm.scores.values()].find(s=>s.team==='B');enemy.kills=3;
+      this._checkDmWin();
+      assert(document.getElementById('dm-a').textContent==='7','DM HUD should show team A kills');
+      assert(document.getElementById('dm-b').textContent==='3','DM HUD should show team B kills');
+      const ev=tab();
+      assert(ev.defaultPrevented,'TAB must be consumed by the game, not move browser focus');
+      const board=document.getElementById('board');
+      assert(!board.classList.contains('hidden'),'TAB board should show in DM');
+      const dataRows=[...board.querySelectorAll('table tr')].slice(1);
+      assert(dataRows.length===8,'DM board should list all 8 players, got '+dataRows.length);
+      assert(board.querySelector('tr.me td').textContent===this.playerName,'the player row should be marked');
+      assert(dataRows[0].querySelector('td').textContent===this.playerName,'the player with most kills should sort first');
+      assert(board.textContent.includes(this._factionLabels().A),'team A label should be localized');
+      untab();
+      assert(board.classList.contains('hidden'),'releasing TAB should hide the board');
+      tab();
+      this.startGame();
+      assert(document.getElementById('board').classList.contains('hidden'),'a new match must clear a stale board');
+    });
+    await run('scoreboard-player-death',()=>{
+      this.ui.sel.mode='dm';this.startGame();
+      const b=this.heroes.list.find(h=>h.team==='B');
+      const playerScore=this.dm.scores.get(this.playerName);
+      const killerScore=this.dm.scores.get(b.name);
+      const k0=killerScore.kills,d0=playerScore.deaths;
+      this.player.god=false;this.invulnT=0;this.player.alive=true;this.player.health=5;
+      this.damagePlayerFromBot(50,b.name,b.pos);
+      assert(!this.player.alive,'the player should die');
+      assert(killerScore.kills===k0+1,'the bot that killed the player should get the kill');
+      assert(playerScore.deaths===d0+1,'the player death should appear on the board');
+      assert(document.getElementById('dm-b').textContent===String(k0+1),'the DM HUD should update from the player death');
+      const feed=document.getElementById('killfeed').textContent;
+      assert(feed.includes(b.name)&&feed.includes(this.playerName),'the player death should reach the killfeed');
+      assert(this.state==='playing','one kill must not end a 25-kill match');
+      this.player.alive=true;this.player.health=this.player.maxHealth;
+      this.startGame();
+    });
+    await run('scoreboard-koth',()=>{
+      this.ui.sel.mode='koth';this.startGame();
+      this.koth.score.A=140;this.koth.score.B=95;this.koth.capture=.25;
+      window.dispatchEvent(new KeyboardEvent('keydown',{code:'Tab',key:'Tab',bubbles:true,cancelable:true}));
+      const board=document.getElementById('board');
+      assert(!board.classList.contains('hidden'),'TAB board should show in KOTH');
+      assert(board.textContent.includes(t('mode_koth')),'KOTH board should carry the mode title');
+      assert(board.textContent.includes(t('koth_a'))&&board.textContent.includes(t('koth_b')),'KOTH board should show both team names');
+      assert(board.textContent.includes('140')&&board.textContent.includes('95'),'KOTH board should show capture points');
+      const dataRows=[...board.querySelectorAll('table tr')].slice(1);
+      assert(dataRows.length===8,'KOTH board should list all 8 players, got '+dataRows.length);
+      window.dispatchEvent(new KeyboardEvent('keyup',{code:'Tab',key:'Tab',bubbles:true}));
+      this.startGame();
+    });
+    await run('scoreboard-waves',()=>{
+      this.ui.sel.mode='waves';this.startGame();
+      this.waves.n=7;this.score=1234;this.stats.kills=5;
+      window.dispatchEvent(new KeyboardEvent('keydown',{code:'Tab',key:'Tab',bubbles:true,cancelable:true}));
+      const board=document.getElementById('board');
+      assert(!board.classList.contains('hidden'),'TAB board should show in waves');
+      assert(board.textContent.includes('07'),'waves board should show the wave number');
+      assert(board.textContent.includes('1234'),'waves board should show the score');
+      assert(!board.querySelector('table'),'waves board should not render the deathmatch table');
+      window.dispatchEvent(new KeyboardEvent('keyup',{code:'Tab',key:'Tab',bubbles:true}));
+      this.startGame();
     });
     await run('map-matrix-4',()=>{
       const m0=this.world.mapKey;

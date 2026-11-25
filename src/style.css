@@ -57,6 +57,10 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
 #board td{padding:6px 10px;color:#d5dcec;border-bottom:1px dashed rgba(155,167,192,.15)}
 #board tr.me td{color:#ffe2ae;font-weight:700}
 #board .tA{color:#7fd4ff;font-size:11px}#board .tB{color:#ff8a6a;font-size:11px}
+#board .sb-meta{display:flex;gap:22px;justify-content:center;margin:0 0 14px}
+#board .sb-meta div{text-align:center}
+#board .sb-meta span{display:block;color:var(--muted);font-size:10px;letter-spacing:.12em}
+#board .sb-meta b{display:block;color:#ffe2ae;font-family:var(--mono);font-size:18px;margin-top:2px}
 
 /* crosshair */
 #xh{position:absolute;left:50%;top:50%;width:0;height:0;--gap:8px;--op:1;--xh-color:#7fe3ff;--xh-w:2px;--xh-len:9px;opacity:var(--op)}

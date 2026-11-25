@@ -3,24 +3,15 @@
 //   combat style by faction (Nova steady bursts / Rogue heavy spray); death: fall → limbs land flat → fade out → respawn.
 import * as THREE from 'three';
 import {t,isEN} from './i18n.js';
-import {byId,byFaction,DEFAULT_OP} from './operators.js';
+import {byFaction,DEFAULT_OP} from './operators.js';
 import {buildOperatorMeshAuto,fadeMaterials} from './character.js';
 import {modelAssets} from './modelAssets.js';
 import {rigInit,poseRot,posePos,poseReset} from './rig.js';
+import {BotBrain} from './botBrain.js';
+import {findBestCover} from './botCombat.js';
 
-/* Compatibility layer: legacy code reads base stats per faction; the data lives in operators.js */
-const _opCT=byId('frost'),_opT=byId('raven');
 const _botSpeed=op=>Math.round(5.2*op.speedMul*10)/10;
-export const HERO_DEFS={
-  ct:{label:`${_opCT.name.en} · Nova Operator`,hp:_opCT.hp,speed:_botSpeed(_opCT),gender:_opCT.gender},
-  t:{label:`${_opT.name.en} · Rogue Mercenary`,hp:_opT.hp,speed:_botSpeed(_opT),gender:_opT.gender},
-};
 const FACTION_HEX={ct:'#7fd4ff',t:'#ff8a6a'};
-/* Bot combat style: Nova fires steady bursts, Rogue sprays hard */
-const BOT_PROFILE={
-  ct:{burst:3,burstT:.13,pause:1.2,missK:1.0,dmgP:6,dmgH:12,range:[7,16],reaction:.25,coverBias:.6,flankBias:.3},
-  t:{burst:5,burstT:.11,pause:1.5,missK:1.35,dmgP:9,dmgH:15,range:[6,13],reaction:.18,coverBias:.4,flankBias:.6},
-};
 
 let BID=0;
 const _Y=new THREE.Vector3(0,1,0),_Zc=new THREE.Vector3(0,0,1),_qLag=new THREE.Quaternion(),_qCant=new THREE.Quaternion();
@@ -95,12 +86,17 @@ export class HeroBot{
     this._stuck=0;this._stuckChk=.4;this._stuckPos=new THREE.Vector3();
     this.detourT=0;this._detourSide=0;
     this._route=null;this._routeT=0; // corner waypoints around a blocker on the cover path
-    this.flankDir=Math.random()>.5?1:-1;
-    this.reactionT=0;this._lastTargetId=null; // last target identity — reaction re-arms when it changes
+    this.reactionT=0; // reaction window re-arms whenever the brain changes target
     this.difficulty=(game.settings&&game.settings.get('botDifficulty'))||'normal';
-    this._coverFrom=new THREE.Vector3();this._coverTo=new THREE.Vector3();this._coverBest=new THREE.Vector3();
+    /* Perception + behavior tree (botBrain.js). Installed before buildBody so the very first
+       update after a spawn already has senses; the brain only reads entity state. */
+    this.brain=new BotBrain(this);
+    this._targetId=null;
+    this._navRef=null;             // route identity for the current navigation goal
+    this._navGoalX=0;this._navGoalZ=0; // also detect in-place goal mutation (patrol vector reuse)
+    this._jitterT=new THREE.Vector3();
+    this._shotT=-99; // last gunfire time: heard by enemy bots (botBrain.js)
     this.baseArmR=[0,0,0];this.baseArmL=[0,0,0];this.baseTorsoY=0;
-    this._eyeT=new THREE.Vector3();this._tPosT=new THREE.Vector3(); // hot-path vector reuse
     this._fromT=new THREE.Vector3();this._dirT=new THREE.Vector3();
     this._rifleVel=new THREE.Vector3();this._rifleSpin=new THREE.Vector3();
     this.rifleFalling=false;this.rifleHome=null;
@@ -158,6 +154,7 @@ export class HeroBot{
     this.state='active';this.alive=true;this.deathT=0;this.respawnT=0;
     this.animState='idle';this.animT=0;this.recoilKick=0;this.reloadT=0;this.hitT=0;
     this._barkT=1+Math.random()*3;this._lowBarked=false;this.blindT=0;
+    if(this.brain)this.brain.reset();
     this.magSize=op.rifle==='awp'?10:30;this.ammo=this.magSize;
     if(tag&&tag.bar)tag.bar.scale.x=1;
     this.rifleHome=null;this.rifleFalling=false;
@@ -181,7 +178,7 @@ export class HeroBot{
     ];
   }
 
-  takeDamage(n,fromName,headshot=false){
+  takeDamage(n,fromName,headshot=false,fromPos=null){
     if(!this.alive)return -1;
     this.hp-=n;
     if(this.nameTag&&this.nameTag.bar)
@@ -193,6 +190,18 @@ export class HeroBot{
     if(this.hp<=0){
       this.die(fromName,headshot);
       return -1;
+    }
+    // Being hit is a perception event: turn toward (and remember) the shooter even from behind.
+    if(this.brain&&fromName){
+      let ent=null,pos=fromPos;
+      if(fromName===this.game.playerName){
+        ent='player';
+        pos=this.game.player.pos; // feet, not the camera: memory adds chest height itself
+      }else{
+        ent=this.game.heroes.list.find(h=>h.name===fromName)||null;
+        if(!pos&&ent)pos=ent.pos;
+      }
+      if(pos)this.brain.onDamaged(pos,ent,this.game.time||0);
     }
     return this.hp;
   }
@@ -270,8 +279,11 @@ export class HeroBot{
     this.ammo=this.magSize;this.burst=0;this.flashT=0;this._lowBarked=false;this.blindT=0;
     this._restoreFlash(); // the killing hit's white flash is never restored in the death branch; restore it on respawn or the bot stays white
     this.coverTarget=null;this.coverT=0;
+    if(this.brain)this.brain.reset();
+    this._navRef=null;this._route=null;this._routeT=0;this._shotT=-99;
+    this._navGoalX=0;this._navGoalZ=0;
     this.vel.set(0,0,0); // don't inherit the death-frame velocity into the new life
-    this.strafeDir=Math.random()>.5?1:-1;this.flankDir=Math.random()>.5?1:-1;this._detourSide=0;
+    this.strafeDir=Math.random()>.5?1:-1;this._detourSide=0;
     this.fireT=1+Math.random();this.burst=0;
     if(this.nameTag&&this.nameTag.bar)this.nameTag.bar.scale.x=1;
     for(const o of this._animParts)poseReset(o);
@@ -437,175 +449,136 @@ export class HeroBot{
     if(this.hitT>0)this.hitT=Math.max(0,this.hitT-dt);
     if(this.recoilKick>0)this.recoilKick=Math.max(0,this.recoilKick-dt*4.5);
 
-    // Pick a target: the nearest enemy (bot or player)
-    const hadTarget=this.hasTarget;
-    let target=null,tDist=1e9;
-    const eye=this._eyeT.set(this.pos.x,this.pos.y+1.4,this.pos.z);
-    for(const h of this.game.heroes.list){
-      if(h.team===this.team||!h.alive)continue;
-      const d=this.pos.distanceTo(h.pos);
-      if(d<tDist){tDist=d;target=h;this._tPosT.set(h.pos.x,h.pos.y+1.1,h.pos.z);}
-    }
-    if(this.team==='B'&&this.game.player.alive){
-      const pe=this.game.player.eye;
-      const d=this.pos.distanceTo(this.game.player.pos);
-      if(d<tDist){tDist=d;target='player';this._tPosT.copy(pe);}
-    }
-    const tPos=this._tPosT;
-    if(this.blindT>0)target=null; // lose the target while blinded
-    const P=BOT_PROFILE[this.faction];
-    if(target){
-      const tid=target==='player'?'player':target.id;
-      if(!hadTarget)this.bark('bark_spot');
-      /* Reaction re-arms on every target change — swapping between two known enemies
-         no longer skips the aim delay (and a fresh acquisition keeps the bark) */
-      if(tid!==this._lastTargetId)
-        this.reactionT=P.reaction*(this.difficulty==='hard'?.6:this.difficulty==='easy'?1.6:1);
-      this._lastTargetId=tid;
-    }else this._lastTargetId=null;
-    if(this.reactionT>0)this.reactionT-=dt;
-    if(target){
-      const dx=tPos.x-this.pos.x,dz=tPos.z-this.pos.z;
-      const wantYaw=Math.atan2(dx,dz);
-      let dy=wantYaw-this.yaw;
-      while(dy>Math.PI)dy-=Math.PI*2;while(dy<-Math.PI)dy+=Math.PI*2;
-      this.yaw+=dy*Math.min(1,6*dt);
-      // Aim offset: head pitch + slight torso turn (read by the animation state machine)
-      this.aimYaw=Math.max(-.6,Math.min(.6,dy));
-      const dist0=Math.max(.001,Math.hypot(dx,dz));
-      this.aimPitch=Math.max(-.5,Math.min(.5,Math.atan2(tPos.y-(this.pos.y+1.4),dist0)));
-
-      // Movement: keep engagement distance + strafe + cover / flanking (M3-G6)
-      this.strafeT-=dt;
-      if(this.strafeT<=0){this.strafeT=1.5+Math.random()*2;this.strafeDir*=-1;}
-      const dist=Math.max(.001,Math.hypot(dx,dz));
-      const nx=dx/dist,nz=dz/dist;
-      const approach=dist>P.range[1];
-      const spd=this.speed*(approach?1:.6);
-      let mx=0,mz=0;
-      this.coverT-=dt;
-      const needCover=this.hp/this.maxHp<.4||this.reloadT>0;
-      if(!needCover)this.coverTarget=null;
-      else if(!this.coverTarget||this.coverT<=0){
-        const prev=this.coverTarget;
-        this.coverTarget=this._findCover(tPos,losCheck);
-        this.coverT=2.5;
-        if(this.coverTarget!==prev)this._route=null;
-      }
-      if(this.coverTarget){
-        // Steer via a corner route when the straight line to the hiding spot is blocked
-        // (a low prop on the path would otherwise pin the bot against it).
-        let wx=this.coverTarget.x,wz=this.coverTarget.z;
-        if(this._route&&this._route.length){
-          wx=this._route[0].x;wz=this._route[0].z;
-          if(Math.hypot(wx-this.pos.x,wz-this.pos.z)<.4)this._route.shift();
-          if(!this._route.length){wx=this.coverTarget.x;wz=this.coverTarget.z;}
-        }
-        this._routeT-=dt;
-        if((!this._route||!this._route.length)&&this._routeT<=0){
-          this._routeT=.35;
-          if(!this._segFree(this.pos.x,this.pos.z,this.coverTarget.x,this.coverTarget.z)){
-            this._route=this._cornerRoute(this.coverTarget);
-            if(this._route&&this._route.length){wx=this._route[0].x;wz=this._route[0].z;}
-          }
-        }
-        const cdx=wx-this.pos.x,cdz=wz-this.pos.z;
-        const cd=Math.max(.001,Math.hypot(cdx,cdz));
-        mx=cdx/cd*spd;mz=cdz/cd*spd;
-      }else{
-        if(approach){mx+=nx*spd;mz+=nz*spd;}
-        else if(dist<P.range[0]){mx-=nx*spd*.8;mz-=nz*spd*.8;}
-        const flank=P.flankBias*(this.difficulty==='hard'?1.25:1);
-        mx+=-nz*this.strafeDir*spd*(.35+flank*.5);
-        mz+=nx*this.strafeDir*spd*(.35+flank*.5);
-      }
-      /* Sidestep while detouring: walk perpendicular to the desired direction (the bot keeps
-         its side until the detour expires, then resumes the normal movement) */
-      if(this.detourT>0){
-        this.detourT-=dt;
-        const dl=Math.max(.001,Math.hypot(mx,mz));
-        const dx=mx/dl,dz=mz/dl;
-        mx=-dz*this._detourSide*spd*1.2;
-        mz= dx*this._detourSide*spd*1.2;
-      }
-      /* Advance with bot-vs-bot steering + slide collision. A corner (both axes blocked)
-         is a hard "dead-end" signal that forces a detour immediately — no grinding. */
-      const res=this._stepMove(mx,mz,dt);
-
-      /* Stuck detection: full effort but no progress over a .4 s window (holding an already
-         reached cover spot does not count) — open a perpendicular detour around the blocker.
-         A both-axes collision (corner/dead-end) also trips it instantly. */
-      this._stuckChk-=dt;
-      if(this._stuckChk<=0){
-        const atGoal=this.coverTarget&&Math.hypot(this.coverTarget.x-this.pos.x,this.coverTarget.z-this.pos.z)<1;
-        if(this.vel.length()>1&&!atGoal&&this.pos.distanceTo(this._stuckPos)<.12)this._stuck+=.4;
-        else this._stuck=Math.max(0,this._stuck-.8);
-        this._stuckPos.copy(this.pos);this._stuckChk=.4;
-      }
-      const hardBlocked=res.hitX&&res.hitZ&&this.vel.length()>1;
-      if((hardBlocked||this._stuck>=.8)&&this.detourT<=0){
-        this.detourT=.55+Math.random()*.3;
-        if(!this._detourSide)this._detourSide=Math.random()<.5?1:-1;
-        else if(Math.random()<.35)this._detourSide*=-1; // a failed detour may try the other side
-        // Slide bias: if only one axis is blocked, favor the free axis so the detour opens
-        // *away* from the wall instead of random-jittering into it.
-        if(res.hitX&&!res.hitZ)this._detourSide=Math.sign(mz)||this._detourSide;
-        else if(res.hitZ&&!res.hitX)this._detourSide=Math.sign(mx)||this._detourSide;
-        this._stuck=0;
-      }
-
-      // Bursts / spray (no firing while reloading). The pause branch only opens the
-      // inter-burst gap — firing there too made every "burst:N" fire N+1 rounds.
-      this.fireT-=dt;
-      if(this.fireT<=0&&this.reloadT<=0&&this.reactionT<=0){
-        const clear=losCheck(eye,tPos);
-        if(clear){
-          if(this.burst<P.burst){this.burst++;this.fireT=P.burstT;this._shoot(tPos,target,dist,P);}
-          else{this.burst=0;this.fireT=P.pause+Math.random()*.5;}
-        }else this.fireT=.4;
-      }
-    }else{
-      this.aimPitch*=.9;this.aimYaw*=.9;
-    }
+    /* Perception + behavior tree + combat intent (botBrain.js). The brain only publishes
+       intent; collision, route recovery, animation and the actual shot stay in this class. */
+    this.brain.update(dt,time,losCheck);
+    this._applyBrainAim(dt);
+    this._applyBrainMovement(dt);
 
     this.moving=this.vel.length()>.5;
-    this.hasTarget=!!target;
-    this._decideAnim(target,dt);
+    this.hasTarget=!!(this.brain&&this.brain.target);
+    this._targetId=this.brain?this.brain.targetId:null;
+    this._decideAnim(this.brain?this.brain.target:null,dt);
     this._animate(dt,time,this.vel.length());
     this.group.position.set(this.pos.x,this.group.position.y,this.pos.z);
     this.group.rotation.y=this.yaw;
   }
 
-  /* M3-G6: sample a hiding spot behind cover (LOS blocked and closest to the bot).
-     The candidate is pushed to the cover's *outer edge* (a full 1.4 m + half-extent out from
-     the centre along the threat→cover axis), and rejected if it would land inside any other
-     collider — so a bot never routes itself straight into a wall it cannot reach. */
-  _findCover(threat,losCheck){
-    let best=null,bestD=1e9;
-    const tx=threat.x,ty=threat.y||1.4,tz=threat.z;
-    for(const c of this.game.world.colliders){
-      if(c.top<1)continue;
-      const cx=(c.minX+c.maxX)/2,cz=(c.minZ+c.maxZ)/2;
-      let dx=cx-tx,dz=cz-tz;
-      let d=Math.hypot(dx,dz);
-      if(d<.01){dx=this.pos.x-tx;dz=this.pos.z-tz;d=Math.hypot(dx,dz)||1;}
-      const hw=(c.maxX-c.minX)/2,hz=(c.maxZ-c.minZ)/2;
-      const px=cx+dx/d*(hw+1.4),pz=cz+dz/d*(hz+1.4);
-      // The spot must be inside the arena
-      if(Math.hypot(px,pz)>50)continue;
-      // Reject a spot that would collide with any cover (incl. the sampled one): only
-      // genuinely standable, reachable hiding spots count.
-      let inside=false;
-      for(const o of this.game.world.colliders){
-        if(o.top<1)continue;
-        if(px>=o.minX-.45&&px<=o.maxX+.45&&pz>=o.minZ-.45&&pz<=o.maxZ+.45){inside=true;break;}
-      }
-      if(inside)continue;
-      if(losCheck(this._coverFrom.set(px,1.4,pz),this._coverTo.set(tx,ty,tz)))continue;
-      const dd=Math.hypot(px-this.pos.x,pz-this.pos.z);
-      if(dd<bestD){bestD=dd;best=this._coverBest.set(px,0,pz);}
+  /* Face the brain's aim point / navigation heading; head pitch and torso yaw feed the
+     animation layers exactly as before (the aim is now a lead-corrected point). */
+  _applyBrainAim(dt){
+    const b=this.brain;
+    let tx=null,ty=null,tz=null;
+    if(b&&b.hasAim&&b.aimPoint){tx=b.aimPoint.x;ty=b.aimPoint.y;tz=b.aimPoint.z;}
+    else if(b&&b.facePoint){tx=b.facePoint.x;ty=b.facePoint.y!=null?b.facePoint.y:this.pos.y+1.4;tz=b.facePoint.z;}
+    else if(b&&b.faceYaw!=null){
+      tx=this.pos.x+Math.sin(b.faceYaw)*6;tz=this.pos.z+Math.cos(b.faceYaw)*6;ty=this.pos.y+1.4;
+    }else if(this.vel.lengthSq()>.09){
+      tx=this.pos.x+this.vel.x;tz=this.pos.z+this.vel.z;ty=this.pos.y+1.4;
     }
-    return best?best.clone():null;
+    if(tx==null){this.aimYaw*=.9;this.aimPitch*=.9;return;}
+    const dx=tx-this.pos.x,dz=tz-this.pos.z;
+    if(Math.abs(dx)+Math.abs(dz)<1e-4)return;
+    const wantYaw=Math.atan2(dx,dz);
+    let dy=wantYaw-this.yaw;
+    while(dy>Math.PI)dy-=Math.PI*2;while(dy<-Math.PI)dy+=Math.PI*2;
+    const rate=(b&&b.params&&b.params.turnRate)||6;
+    this.yaw+=dy*Math.min(1,rate*dt);
+    this.aimYaw=Math.max(-.6,Math.min(.6,dy));
+    const dist=Math.max(.001,Math.hypot(dx,dz));
+    const aimY=ty==null?this.pos.y+1.1:ty;
+    this.aimPitch=Math.max(-.5,Math.min(.5,Math.atan2(aimY-(this.pos.y+1.4),dist)));
+  }
+
+  /* Apply the brain's movement intent through the existing avoidance/collision machinery. */
+  _applyBrainMovement(dt){
+    const b=this.brain;
+    if(!b)return;
+    if(b.mode==='nav'&&b.navGoal){
+      this._navigateTo(b.navGoal,b.navSpeed,dt);
+    }else if(b.mode==='combat'&&(b.moveX!==0||b.moveZ!==0)){
+      this._moveWithRecovery(b.moveX,b.moveZ,dt);
+    }else{
+      const k=Math.max(0,1-6*dt);
+      this.vel.x*=k;this.vel.z*=k;
+      this.pos.x+=this.vel.x*dt;this.pos.z+=this.vel.z*dt;
+      this._collide(this.game.world.colliders);
+      // A detour only matters while moving; let it lapse during a hold instead of resuming
+      // a stale sidestep the next time the bot decides to advance.
+      if(this.detourT>0)this.detourT=Math.max(0,this.detourT-dt);
+    }
+  }
+
+  /* Navigate to a world point: straight line when clear, corner route around the first
+     blocking box otherwise, with the same detour recovery as combat footwork. */
+  _navigateTo(goal,speedScale,dt){
+    if(this._navRef!==goal||Math.abs(goal.x-this._navGoalX)>.15||Math.abs(goal.z-this._navGoalZ)>.15){
+      this._navRef=goal;this._navGoalX=goal.x;this._navGoalZ=goal.z;
+      this._route=null;this._routeT=0;
+    }
+    const gx=goal.x,gz=goal.z;
+    const gd=Math.hypot(gx-this.pos.x,gz-this.pos.z);
+    if(gd<.7){const k=Math.max(0,1-8*dt);this.vel.x*=k;this.vel.z*=k;return true;}
+    let wx=gx,wz=gz;
+    if(this._route&&this._route.length){
+      wx=this._route[0].x;wz=this._route[0].z;
+      if(Math.hypot(wx-this.pos.x,wz-this.pos.z)<.45)this._route.shift();
+      if(!this._route.length){wx=gx;wz=gz;}
+    }
+    this._routeT-=dt;
+    if((!this._route||!this._route.length)&&this._routeT<=0){
+      this._routeT=.35;
+      if(!this._segFree(this.pos.x,this.pos.z,gx,gz)){
+        this._route=this._cornerRoute({x:gx,z:gz});
+        if(this._route&&this._route.length){wx=this._route[0].x;wz=this._route[0].z;}
+      }
+    }
+    const dx=wx-this.pos.x,dz=wz-this.pos.z;
+    const d=Math.max(.001,Math.hypot(dx,dz));
+    const spd=this.speed*speedScale;
+    this._moveWithRecovery(dx/d*spd,dz/d*spd,dt);
+    return gd<1;
+  }
+
+  /* Advance along (mx,mz) with bot avoidance + slide collision + stuck/detour recovery.
+     One shared path for combat footwork and navigation, so a bot cannot grind against a
+     corner while strafing or a crate while running to cover. */
+  _moveWithRecovery(mx,mz,dt){
+    if(this.detourT>0){
+      this.detourT-=dt;
+      const dl=Math.max(.001,Math.hypot(mx,mz));
+      const dx=mx/dl,dz=mz/dl;
+      const spd=Math.max(this.speed*.6,dl);
+      mx=-dz*this._detourSide*spd;
+      mz= dx*this._detourSide*spd;
+    }
+    const res=this._stepMove(mx,mz,dt);
+    this._stuckChk-=dt;
+    if(this._stuckChk<=0){
+      const atGoal=this.brain&&this.brain.navGoal&&
+        Math.hypot(this.brain.navGoal.x-this.pos.x,this.brain.navGoal.z-this.pos.z)<1;
+      if(this.vel.length()>1&&!atGoal&&this.pos.distanceTo(this._stuckPos)<.12)this._stuck+=.4;
+      else this._stuck=Math.max(0,this._stuck-.8);
+      this._stuckPos.copy(this.pos);this._stuckChk=.4;
+    }
+    const hardBlocked=res.hitX&&res.hitZ&&this.vel.length()>1;
+    if((hardBlocked||this._stuck>=.8)&&this.detourT<=0){
+      this.detourT=.55+Math.random()*.3;
+      if(!this._detourSide)this._detourSide=Math.random()<.5?1:-1;
+      else if(Math.random()<.35)this._detourSide*=-1; // a failed detour may try the other side
+      // Slide bias: if only one axis is blocked, favor the free axis so the detour opens
+      // *away* from the wall instead of random-jittering into it.
+      if(res.hitX&&!res.hitZ)this._detourSide=Math.sign(mz)||this._detourSide;
+      else if(res.hitZ&&!res.hitX)this._detourSide=Math.sign(mx)||this._detourSide;
+      this._stuck=0;
+    }
+    return res;
+  }
+
+  /* M3-G6: best hiding spot against a threat, scored and LOS-verified by botCombat.js.
+     Kept as a HeroBot method because the e2e suite and the brain both call it directly. */
+  _findCover(threat,losCheck){
+    return findBestCover(this,threat,losCheck);
   }
 
   /* Segment clearance: true when a bot-sized disc (.42 m, slightly under the .45 collide
@@ -691,32 +664,31 @@ export class HeroBot{
     }
   }
 
-  _shoot(tPos,target,dist,P){
+  /* One burst round. `miss` is rolled by BotBrain.fire() (single difficulty model); this
+     method only turns it into a tracer + damage or a cover-clipped near miss. */
+  _shoot(aimPoint,target,dist,P,miss){
     this._consumeAmmo();
     const from=this._fromT;
     this.gunTip.getWorldPosition(from);
-    const dir=this._dirT.copy(tPos).sub(from).normalize();
-    // Accuracy: spread grows with distance (Rogue hits harder but sloppier)
-    const mk=P.missK*(this.difficulty==='hard'?.7:this.difficulty==='easy'?1.4:1);
-    const smoked=this.game.grenades&&this.game.grenades.inSmoke(tPos);
-    const miss=Math.random()<Math.min(.92,dist*.018*mk+.08+(smoked?.45:0));
+    const dir=this._dirT.copy(aimPoint).sub(from).normalize();
     let end;
     if(miss){
-      dir.add(new THREE.Vector3((Math.random()-.5)*.12,(Math.random()-.5)*.08,(Math.random()-.5)*.12)).normalize();
+      const j=this._jitterT.set((Math.random()-.5)*.12,(Math.random()-.5)*.08,(Math.random()-.5)*.12);
+      dir.add(j).normalize();
       // Clip the miss tracer at the first piece of cover so it never draws through walls
       _losRay.set(from,dir);_losRay.far=dist+4;
       const hit=_losRay.intersectObjects(this.game.world&&this.game.world.losStatics||[],false)[0];
       end=from.clone().addScaledVector(dir,hit?Math.max(1,hit.distance):dist+4);
-    }else end=tPos.clone();
+    }else end=aimPoint.clone();
     this.fx.tracer(from,dir,from.distanceTo(end));
-    // Hit effects come from botDamageFx / player hit feedback; the wall-clipped miss end keeps bullet holes off mid-air
     this.audio.botShot(this.game.player.pos.distanceTo(this.pos));
+    this._shotT=this.game.time||0;
     if(!miss){
       if(target==='player'){
         this.game.damagePlayerFromBot(P.dmgP,this.name,this.pos);
       }else{
-        target.takeDamage(P.dmgH,this.name);
-        this.game.botDamageFx(target,tPos);
+        target.takeDamage(P.dmgH,this.name,false,this.pos);
+        this.game.botDamageFx(target,aimPoint);
       }
     }
   }

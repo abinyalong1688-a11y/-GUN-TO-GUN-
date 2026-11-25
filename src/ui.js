@@ -412,13 +412,20 @@ export class UI{
     slot.el.textContent=`${name}: ${text}`;
     slot.el.style.display='block';
   }
-  scoreboard(rows,labels={}){
+  scoreboard(rows,labels={},meta=null){
     const la=labels.A||t('faction_ct'),lb=labels.B||t('faction_t');
-    let html=`<h3>${t('sb_title')}</h3><table><tr><th>${t('sb_role')}</th><th>${t('sb_faction')}</th><th>${t('sb_kills')}</th><th>${t('sb_deaths')}</th></tr>`;
-    for(const r of rows){
-      html+=`<tr class="${r.me?'me':''}"><td>${escHTML(r.name)}</td><td><span class="${r.team==='A'?'tA':'tB'}">${r.team==='A'?la:lb}</span></td><td>${r.kills}</td><td>${r.deaths}</td></tr>`;
+    let html=`<h3>${escHTML((meta&&meta.title)||t('sb_title'))}</h3>`;
+    if(meta&&Array.isArray(meta.lines)&&meta.lines.length){
+      html+='<div class="sb-meta">'+meta.lines.map(([k,v])=>
+        `<div><span>${escHTML(String(k))}</span><b>${escHTML(String(v))}</b></div>`).join('')+'</div>';
     }
-    html+='</table>';
+    if(rows&&rows.length){
+      html+=`<table><tr><th>${t('sb_role')}</th><th>${t('sb_faction')}</th><th>${t('sb_kills')}</th><th>${t('sb_deaths')}</th></tr>`;
+      for(const r of rows){
+        html+=`<tr class="${r.me?'me':''}"><td>${escHTML(r.name)}</td><td><span class="${r.team==='A'?'tA':'tB'}">${r.team==='A'?la:lb}</span></td><td>${r.kills}</td><td>${r.deaths}</td></tr>`;
+      }
+      html+='</table>';
+    }
     this.el.board.innerHTML=html;
     this.el.board.classList.remove('hidden');
   }

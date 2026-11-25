@@ -39,8 +39,12 @@ export class KeyboardMouseAdapter{
       if(g.state==='upgrade'&&/^Digit[123]$/.test(e.code)){
         g._pickUpgrade(+e.code.slice(-1)-1);return;
       }
-      if(e.code==='Tab'){e.preventDefault();if(g.state==='playing'&&g.mode==='dm')g._showBoard();}
-      if(e.code==='Tab')return;
+      if(e.code==='Tab'){
+        e.preventDefault();
+        // The board is mode-aware (team table in DM/KOTH, run summary in waves).
+        if(g.state==='playing')g._showBoard();
+        return;
+      }
 
       // Toggle-crouch mode: Control latches (press again to stand), excluded from hold detection
       const toggle=g.settings&&g.settings.get('crouchToggle');

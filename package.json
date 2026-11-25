@@ -4,11 +4,13 @@
     "three": "^0.170.0"
   },
   "name": "gun-to-gun",
-  "version": "1.10.1",
+  "version": "1.11.0",
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
     "test": "node --test",
+    "test:e2e": "node scripts/e2e.mjs",
+    "evolve": "node scripts/evolve-bots.mjs",
     "serve": "node serve.mjs"
   },
   "devDependencies": {

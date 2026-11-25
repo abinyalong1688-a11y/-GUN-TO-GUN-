@@ -1,6 +1,6 @@
 # GUN TO GUN
 
-A single-file 3D FPS web game — faction combat · four maps · 8 realistic weapons · real physics (gravity / jumping / crouching / recoil ballistics) · male & female operatives · 4v4 AI deathmatch · endless waves.
+A single-file 3D FPS web game — faction combat · four maps · 8 realistic weapons · real physics (gravity / jumping / crouching / recoil ballistics) · male & female operatives · 4v4 behavior-tree AI deathmatch · endless waves.
 
 Designed and developed end-to-end as an original project: every system — rendering, physics, weapons, characters, AI, audio, UI — is implemented in-house and bundled into one self-contained HTML file.
 
@@ -19,7 +19,7 @@ Or **double-click [`dist/gun-to-gun.html`](dist/gun-to-gun.html)** (~3.1 MB / 1.
 | Right click | Aim down sights (ADS) · high-magnification scope on AUG / Longbow / SG 553 (scope overlay + zoom-compensated sensitivity) |
 | R | Reload |
 | 1 / 2 / 3 | Switch weapons: **tap 1 repeatedly to cycle all 4 primaries** / Desert Eagle / UMP-45 backup SMG (mouse wheel cycles all 6) |
-| TAB | Scoreboard (deathmatch) |
+| TAB | Scoreboard (deathmatch / KOTH / waves run status) |
 | ESC | Pause |
 
 > **Interface language**: visitors from China automatically get the Chinese UI; everyone else gets the full English UI (synchronous first-frame detection + async IP probe with dual-endpoint fallback; offline or failed probes fall back to Chinese). Force a language for testing with `?ipcc=US` / `?ipcc=CN`.
@@ -76,6 +76,27 @@ Four hand-built arenas, each a distinct scene with its own layout, sky, lighting
 - **8-Player Deathmatch (4v4)**: you + 3 same-faction AI teammates vs 4 enemy AI. Nova fires controlled bursts, Rogue sprays. First to 25 kills wins, with killfeed, TAB scoreboard and respawns
   - Note: true networked multiplayer requires a persistent server, which conflicts with the "single file, offline-playable" goal — deathmatch delivers the same arena experience with AI combatants
 
+## Bot Combat AI (v1.11)
+
+The deathmatch bots are driven by four decoupled layers that replace the old "nearest enemy → shoot" if-chain. The behavior-tree nodes, perception, combat maths and evolution are unit-tested in Node; the integrated brain is covered by the bot integration tests and `?e2e=1`.
+
+- **Perception** (`src/botPerception.js`) — view cone + view range + line-of-sight ray, 360° close-proximity awareness, smoke occlusion, gunfire hearing and damage alerts, and a `memoryTime`-bounded memory of the last seen/heard position. Unseen enemies never leak their live position, velocity or health: memory only refreshes on an actual sighting or a fresh sound/damage cue.
+- **Behavior tree** (`src/botBehaviorTree.js` + `src/botBrain.js`) — Selector / Sequence / Parallel / Condition / Action nodes. Priority order: finish a reload → break contact to cover when hurt → engage (aim control and footwork run in a Parallel) → search the last known position → patrol the objective. Includes strafing, flanking, engagement bands, tactical reloads and cover selection. Bots also check the firing line: a teammate (or the allied player) in the way makes them hold fire and sidestep until the line clears.
+- **Aim & cover** (`src/botCombat.js`) — target priority (visible > remembered; closer, wounded, threatening and already-tracked targets score higher), ballistic lead for moving targets, a range/motion/settle/smoke accuracy model, and corner-aware cover-spot generation and scoring.
+- **Self-evolution** (`src/botEvolution.js` + `scripts/evolve-bots.mjs`) — an offline genetic algorithm tunes tactical doctrine (aggression / cover / flank / strafe / stand-off / retreat) against the normal doctrine in a deterministic duel model. `npm run evolve` regenerates `src/botTuning.js`; the winning genome is clamped into `PARAM_RANGES` and merged into the hard preset.
+
+Difficulty (`easy` / `normal` / `hard`, persisted as `botDifficulty`) controls reaction time, aim settling, accuracy, view cone/range, memory, hearing, aggression, cover/flank bias, burst discipline and damage. `?e2e=1` asserts perception memory, target priority, hearing, firing-line blocking and difficulty ordering.
+
+## Scoreboards
+
+`TAB` opens a mode-aware board while playing:
+
+- **Deathmatch** — 8-player team table (operator / faction / kills / deaths), player row highlighted, sorted by kills then deaths; the top HUD shows team kills and the match timer. A bot killing the player is credited to the killer, the player's death row and the killfeed, so the table and the 25-kill win check stay accurate.
+- **KOTH** — the same team table plus live capture points for NOVA/ROGUE and capture progress; the HUD adds the control-point bar and score.
+- **Waves** — a compact run-status panel (wave / remaining hostiles / score / kills) instead of the PvP table.
+
+A board left open by a held TAB is cleared on pause, next match, menu return, match end and by the results screen, so it cannot leak into another mode. The DM/KOTH end screens also render the full 8-player final table.
+
 ## Sponsorship Placements
 
 Three self-illuminated **double-sided** billboards (brand face / large URL face — AbinStudio · AI short-drama production · app.agents100.com), present on all four maps and shootable with persistent bullet holes; sponsor info also appears at the bottom of the main menu.
@@ -89,6 +110,12 @@ src/
   weapon.js   Weapons — three-slot loadout viewmodels + first-person arms (tactical gloves) + semi-auto / full-auto triggers + recoil / ADS / reload / shell ejection
   attach.js   Attachment integrity — connected-island check that every weapon part is welded to the gun body (unit test + ?e2e=1)
   heroes.js   Characters — realistic 3D faction operatives (lathe-surface torsos, facial features, hair physics, faction outfits) and 4v4 AI
+  botPerception.js  Bot senses — view cone / range / LOS / smoke / hearing / damage alerts / bounded memory
+  botBehaviorTree.js  Behavior-tree core — Selector / Sequence / Parallel / Condition / Action / decorators
+  botBrain.js  Bot brain — target selection, aim lead, engagement footwork, reload / retreat / search / patrol tree
+  botCombat.js  Combat maths — target scoring, accuracy model, cover point generation and selection
+  botConfig.js  Difficulty presets, faction weapon styles, parameter bounds and the tuned-genome merge
+  botEvolution.js  Offline genetic algorithm — deterministic duel model + fitness + selection/crossover/mutation
   enemies.js  Enemies — three drone classes (sensor windows / guard rings / detail parts) + AI + projectiles + occlusion checks
   player.js   Player — movement / circle-vs-AABB collision / health / regeneration
   waves.js    Gameplay — wave scheduling / spawn throttling / supplies
@@ -104,15 +131,19 @@ build.mjs     esbuild bundle into a single HTML file
 ```bash
 npm install        # three@0.170.0 + esbuild
 npm run build      # produces dist/gun-to-gun.html
-npm test           # unit tests (node --test): utils / weapon stats / weapon attachment integrity / movement physics / wave scheduling
+npm test           # unit tests (node --test): utils / weapon stats / attachment integrity / physics / bots / evolution
+npm run test:e2e   # headless Chrome/Edge integration suite (?e2e=1), 68 assertions
+npm run evolve     # regenerate the GA-tuned bot doctrine (src/botTuning.js)
 npm run serve      # local server http://127.0.0.1:8137/ (testing only)
 ```
+
+> `npm run test:e2e` needs Chrome or Edge installed (set `CHROME_PATH` if it is not in a standard location). It starts its own static server and private browser profile, so no manual setup is required.
 
 Built-in verification hooks:
 
 - `?shot=menu|combat|dm|over` — jump straight into a state for screenshot review
 - `?selftest=1` — weapon self-test (primary hit-kill + Desert Eagle semi-auto + UMP-45 full-auto burst); results in the debug bar and console
-- `?e2e=1` — **system integration test**: 56 end-to-end assertions (loading / ADS / recoil ballistics / gravity jump / crate-top landing / crouch / weight-based speed / **4-primary same-slot cycling** / **backup-SMG full-auto** / **attachment integrity** / crits / XSS protection / 360° look); results in `window.__e2e` and the debug bar; deterministic, reproducible in background tabs
+- `?e2e=1` — **system integration test**: 68 end-to-end assertions (loading / ADS / recoil ballistics / gravity jump / crate-top landing / crouch / weight-based speed / **4-primary same-slot cycling** / **backup-SMG full-auto** / **attachment integrity** / crits / XSS protection / 360° look / **bot perception & memory** / **target priority** / **gunfire hearing** / **firing-line blocking** / **difficulty presets** / **DM / KOTH / waves scoreboards** / **player-death scoring**); results in `window.__e2e` and the debug bar; deterministic, reproducible in background tabs
 - `?perf=1` — hitch monitor: slow-frame (>25 ms) count and max frame time reported to console periodically
 - `?ipcc=US` / `?ipcc=CN` — force the interface language (default: auto by IP — English overseas / Chinese in China; silent fallback on probe failure)
 
@@ -139,6 +170,8 @@ Security / stability / performance work done to a ship-ready standard:
 | Stability | Main-loop exception circuit breaker: a bad frame no longer silently kills the rAF chain — it halts cleanly and prints the stack to the debug bar |
 | Performance | Zero allocation in the firing hot path: `fire()` reuses a vector pool, ray-sphere tests reuse module-level vectors, floating score text reuses scratch vectors |
 | Performance | Drone AI hot path uses vector pooling + **per-type shared geometry caching** (no spawn allocation spikes, no geometry leaks) |
+| Performance | Bot AI budget: 8-bot 90-second deathmatch soak measured **0.08 ms per bot per frame** (FOV/LOS checks throttled to 7–14 Hz per bot; cover LOS limited to the top 10 candidates) |
+| Fairness | Bot perception is strictly bounded: view cone + range + LOS, `memoryTime` memory, and unseen enemies never update remembered position, velocity or health (no wallhack memory) |
 | Performance | HUD hot-path DOM write deduplication (ammo / crosshair unchanged → no write) |
 | Performance | Full resource disposal on map switch: geometries (incl. ambient Points) + per-map materials (sky shaders / bulbs / beacons / lava cracks / cooling towers) |
 | Performance | Hitch monitor counters (`?perf=1`): slow-frame (>25 ms) ratio and max frame time |
@@ -151,6 +184,9 @@ Security / stability / performance work done to a ship-ready standard:
 - [x] PBR materials + four lighting atmospheres + shadows + Bloom / ACES, no overexposure
 - [x] Menu / combat / deathmatch / end-screen multi-state screenshot verification
 - [x] Raycast hits + cover blocking + red-core crits + character headshots ×2 + backup SMG full-auto
+- [x] Behavior-tree bot combat AI: view cone / LOS / smoke occlusion / gunfire hearing / damage alerts / bounded memory
+- [x] Bot tactics: target priority, ballistic lead, strafe/flank, tactical reload, low-health cover retreat, last-known search, objective patrol
+- [x] Offline GA self-tuning of bot tactical doctrine (`npm run evolve`) with bounded parameters and a committed winning genome
 - [x] Attachment integrity: no floating weapon parts (scopes, butt plates, sights welded — unit + e2e check)
 - [x] Three-slot weapon system: faction primaries / Desert Eagle (semi-auto) / UMP-45 backup SMG (full-auto)
 - [x] Bullet decals conform to surfaces; explosions include fireball + shockwave + debris
