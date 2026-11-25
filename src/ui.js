@@ -16,6 +16,7 @@ export class UI{
   constructor(){
     this.el={
       hud:$('hud'),menu:$('menu'),pause:$('pause'),over:$('over'),
+      lobby:$('lobby'),netPill:$('net-pill'),pLeave:$('p-leave'),oRematch:$('o-rematch'),
       wave:$('ui-wave'),remain:$('ui-remain'),score:$('ui-score'),
       xh:$('xh'),hitmark:$('hitmark'),
       ammo:$('ui-ammo'),reserve:$('ui-reserve'),weapon:$('ui-weapon'),
@@ -67,7 +68,8 @@ export class UI{
     this._pv=new THREE.Vector3(); // reused for per-frame score popups
     this.dmgDirT=0;this.comboT=0;
     // Menu selection state (validates persisted values; dirty data falls back to defaults)
-    const MOK=['desert','snow','snowtown','ember'],KOK=['waves','dm','koth'];
+    // The roster is online-only now: koth (3v3) and dm (5v5); waves is single-player offline.
+    const MOK=['desert','snow','snowtown','ember'],KOK=['waves','koth','dm'];
     const m=store.get('o07_map'),k=store.get('o07_mode');
     const p=store.get('o07_primary');
     const op=byId(store.get('o07_operator'))||byId(DEFAULT_OP);
@@ -76,7 +78,7 @@ export class UI{
       operator:op.id,
       camo:'default',
       map:MOK.includes(m)?m:'desert',
-      mode:KOK.includes(k)?k:'waves',
+      mode:KOK.includes(k)?k:'dm',
       primary:['m4a4','aug','awp','mp5','sg553','ak47'].includes(p)?p:'m4a4',
     };
     // Match operator and primary to the faction + restore the saved camo (C4/C5: still selected after a refresh)
@@ -302,9 +304,9 @@ export class UI{
   saveName(){store.set('o07_name',$('m-name').value.trim());}
 
   /* ---------- State switching ---------- */
-  showOnly(name){ // 'menu'|'pause'|'over'|null (in game)
-    for(const k of ['menu','pause','over'])
-      this.el[k].classList.toggle('hidden',k!==name);
+  showOnly(name){ // 'menu'|'pause'|'over'|'lobby'|null (in game)
+    for(const k of ['menu','pause','over','lobby'])
+      if(this.el[k])this.el[k].classList.toggle('hidden',k!==name);
     const playing=!name;
     this.el.hud.classList.toggle('hidden',!playing);
     this.el.dmTop.classList.toggle('hidden',!playing||!this.dmMode);
@@ -313,6 +315,23 @@ export class UI{
     this.dmMode=on;
     document.getElementById('topline').style.display=on?'none':'flex';
   }
+  /* ---------- Online ---------- */
+  setNetPill(state,text){
+    const el=this.el.netPill;
+    if(!el)return;
+    el.className=state?('np-'+state):'hidden';
+    el.textContent=text||'';
+  }
+  setNetMode(on){
+    if(this.el.pLeave)this.el.pLeave.classList.toggle('hidden',!on);
+    const note=$('pause-net-note');
+    if(note)note.classList.toggle('hidden',!on);
+    const restart=$('p-restart');
+    if(restart)restart.classList.toggle('hidden',!!on);
+  }
+  updateLobby(room,meId){ if(this._netLobby)this._netLobby.render(room,meId); }
+  lobbyError(key){ if(this._netLobby)this._netLobby.error(key); }
+  hideLobby(){ if(this._netLobby)this._netLobby.hide(); }
 
   /* ---------- HUD ---------- */
   setWave(n){this.el.wave.textContent=String(n).padStart(2,'0');}
@@ -398,7 +417,7 @@ export class UI{
     slot.t=4;
     slot.el.className='kf'+(mine?' me':'');
     // Callsigns are user-controlled: escape against XSS
-    slot.el.innerHTML=`<b>${escHTML(killer)}</b> <span class="w">[${escHTML(weapon)}]</span> ${mine?'✖':t('killed')} <i>${escHTML(victim)}</i>`;
+    slot.el.innerHTML=`<b>${escHTML(killer)}</b>${weapon?` <span class="w">[${escHTML(weapon)}]</span>`:''} ${mine?'✖':t('killed')} <i>${escHTML(victim)}</i>`;
     slot.el.style.display='block';
   }
   /* M2-A2: radio barks (names from the operator def, lines from i18n) */

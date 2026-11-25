@@ -39,7 +39,9 @@ export class KeyboardMouseAdapter{
       if(g.state==='upgrade'&&/^Digit[123]$/.test(e.code)){
         g._pickUpgrade(+e.code.slice(-1)-1);return;
       }
-      if(e.code==='Tab'){e.preventDefault();if(g.state==='playing'&&g.mode==='dm')g._showBoard();}
+      // Online pause / 3 s countdown: freeze local input without stopping the match.
+      if(g._uiLock&&e.code!=='Tab'&&e.code!=='Escape')return;
+      if(e.code==='Tab'){e.preventDefault();if(g.state==='playing'&&g.isArena&&g.isArena())g._showBoard();}
       if(e.code==='Tab')return;
 
       // Toggle-crouch mode: Control latches (press again to stand), excluded from hold detection
@@ -71,7 +73,7 @@ export class KeyboardMouseAdapter{
     });
 
     this._on(window,'mousedown',e=>{
-      if(g.state!=='playing')return;
+      if(g.state!=='playing'||g._uiLock)return;
       if(e.button===0){g.input.firing=true;g._mouseFire=true;}
       if(e.button===2){
         // U1: in toggle-ADS mode right click toggles the scope; default is hold-to-aim
@@ -91,7 +93,7 @@ export class KeyboardMouseAdapter{
 
     // Mouse wheel cycles weapons: down = next, up = previous (wraps)
     this._on(window,'wheel',e=>{
-      if(g.state!=='playing')return;
+      if(g.state!=='playing'||g._uiLock)return;
       e.preventDefault();
       const n=g.weapon.defs.length;
       g.weapon.switchTo((g.weapon.cur+(e.deltaY>0?1:n-1))%n);
@@ -101,7 +103,7 @@ export class KeyboardMouseAdapter{
 
     this._on(window,'mousemove',e=>{
       g._mx=e.clientX;g._my=e.clientY;
-      if(g.state!=='playing')return;
+      if(g.state!=='playing'||g._uiLock)return;
       if(!document.pointerLockElement&&!g.fallbackAim)return;
       g.applyLook(e.movementX,e.movementY);
     });
@@ -111,6 +113,7 @@ export class KeyboardMouseAdapter{
       // The game's own unlocks (DM death spectate) set _suppressPauseOnce so they don't pop the pause menu.
       if(!document.pointerLockElement&&g.state==='playing'&&!g.fallbackAim){
         if(g._suppressPauseOnce)g._suppressPauseOnce=false;
+        else if(g.netMatch&&g.netMatch.active&&g.netMenu)g.netMenu();
         else g.pause();
       }
       if(g._updateCursor)g._updateCursor();

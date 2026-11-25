@@ -372,3 +372,59 @@ body.touch #bossbar,body.touch #koth-bar{width:min(420px,52vw)}
   .op-portrait{height:110px}
   #combo-callout{font-size:26px}
 }
+
+/* ============ Friends 5v5 online ============ */
+#net-pill{position:absolute;top:16px;right:18px;font-size:10px;letter-spacing:.16em;font-family:var(--mono);
+  padding:5px 12px;border-radius:999px;background:rgba(8,12,20,.7);border:1px solid rgba(155,167,192,.25);color:var(--muted)}
+#net-pill.np-ok{color:#8ef0c0;border-color:rgba(110,230,170,.45)}
+#net-pill.np-warn{color:#ffd28a;border-color:rgba(240,168,96,.5)}
+#net-pill.np-bad{color:#ff8a7a;border-color:rgba(255,120,100,.5)}
+.p-net-note{font-size:11.5px;color:#ffd28a;background:rgba(240,168,96,.08);
+  border:1px solid rgba(240,168,96,.3);border-radius:8px;padding:8px 12px;margin-top:12px}
+
+.lobby-box{background:linear-gradient(165deg,rgba(19,24,42,.95),rgba(12,15,28,.96));
+  border:1px solid rgba(240,168,96,.3);border-radius:18px;padding:26px 34px;
+  width:min(94vw,720px);max-height:92vh;overflow-y:auto;box-shadow:0 30px 80px rgba(0,0,0,.6);backdrop-filter:blur(10px)}
+.lobby-head{display:flex;align-items:center;justify-content:space-between;font-size:22px;font-weight:800;
+  letter-spacing:.16em;color:#fff;margin-bottom:12px}
+.lmode{font-size:11px;font-weight:600;letter-spacing:.08em;font-family:var(--mono);color:#ffd28a;
+  border:1px solid rgba(240,168,96,.35);border-radius:999px;padding:3px 9px;margin-left:auto;margin-right:10px}
+.lp-off,.lp-ok,.lp-live,.lp-bad,.lp-warn{font-size:10px;letter-spacing:.12em;font-family:var(--mono);
+  color:var(--muted);border:1px solid rgba(155,167,192,.3);border-radius:999px;padding:4px 10px}
+.lp-ok,.lp-live{color:#8ef0c0;border-color:rgba(110,230,170,.45)}
+.lp-bad{color:#ff8a7a;border-color:rgba(255,120,100,.5)}
+.lp-warn{color:#ffd28a;border-color:rgba(240,168,96,.5)}
+#lobby-status{font-size:12px;color:var(--muted);margin:8px 0;min-height:16px}
+#lobby-status.err{color:#ff8a7a}
+.lobby-tip{font-size:12px;color:var(--muted);letter-spacing:.06em;margin:0 0 14px}
+#lobby-home{display:flex;flex-direction:column;gap:12px;align-items:stretch}
+#lobby-home > .btn-primary,#lobby-home > .btn{width:100%}
+.lobby-join-row{display:flex;gap:10px}
+.lobby-join-row input{flex:1;min-width:0;background:rgba(255,255,255,.05);border:1px solid rgba(155,167,192,.35);
+  border-radius:9px;color:#ffe2ae;font-size:18px;font-family:var(--mono);letter-spacing:.3em;text-align:center;
+  padding:10px;outline:none;text-transform:uppercase}
+.lobby-join-row input:focus{border-color:rgba(240,168,96,.6)}
+.lobby-code{display:flex;align-items:center;gap:12px;background:rgba(240,168,96,.07);
+  border:1px solid rgba(240,168,96,.3);border-radius:10px;padding:10px 14px;margin-bottom:16px}
+.lobby-code .lc-label{font-size:10px;letter-spacing:.16em;color:var(--muted)}
+.lobby-code b{font-family:var(--mono);font-size:24px;letter-spacing:.28em;color:#ffd28a;flex:1}
+.lobby-code button{cursor:pointer;font-size:11px;letter-spacing:.1em;color:#c9d1e2;background:rgba(255,255,255,.06);
+  border:1px solid rgba(155,167,192,.35);border-radius:7px;padding:7px 12px}
+.lobby-teams{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
+.team-a,.team-b{background:rgba(255,255,255,.03);border:1px solid rgba(155,167,192,.25);border-radius:11px;
+  padding:10px 12px;min-height:172px}
+.team-a{border-top:2px solid #7fd4ff}.team-b{border-top:2px solid #ff8a6a}
+.lt{cursor:pointer;font-size:11px;letter-spacing:.14em;color:var(--muted);margin-bottom:8px}
+.lt:hover{color:#fff}
+.lr{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:5px 0;border-bottom:1px solid rgba(155,167,192,.1)}
+.lr.me .lr-name{color:#ffd28a;font-weight:700}
+.lr.offline{opacity:.45}
+.lr-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lr-host{font-size:9px;color:#1a1208;background:var(--amber);border-radius:4px;padding:1px 5px}
+.lr-ready{font-size:9px;color:var(--muted)}
+.lr-ready.yes{color:#8ef0c0}
+.lempty{font-size:11px;color:#5a6c92;padding:10px 0}
+.lobby-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.lobby-actions .btn,.lobby-actions .btn-primary{flex:1;white-space:nowrap}
+.lobby-actions select.btn{flex:1.2;min-width:120px}
+@media(max-width:640px){.lobby-teams{grid-template-columns:1fr}.lobby-box{padding:18px 16px}}

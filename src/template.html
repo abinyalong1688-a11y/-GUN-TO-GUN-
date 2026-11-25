@@ -33,6 +33,7 @@
       <div id="dm-timer">04:00</div>
       <div id="dm-score"><span class="teamA" id="dm-a">0</span><i>:</i><span class="teamB" id="dm-b">0</span></div>
     </div>
+    <div id="net-pill" class="hidden"></div>
     <div id="bossbar" class="hidden"><span id="boss-name">WARDEN</span><div class="bb-track"><i id="boss-fill"></i></div></div>
     <div id="koth-bar" class="hidden"><span id="koth-name">KING OF THE HILL</span><div class="bb-track"><i id="koth-fill"></i></div><div id="koth-score"></div></div>
     <div id="killfeed"></div>
@@ -91,9 +92,9 @@
         <div class="m-sec">
           <div class="m-sec-t" data-i="sec_mode">MODE</div>
           <div class="chips" id="m-modes">
-            <div class="chip selected" data-mode="waves">Wave Survival · Defend the Outpost</div>
-            <div class="chip" data-mode="dm">6-Player Brawl · 3v3</div>
-            <div class="chip" data-mode="koth">King of the Hill · first to 200</div>
+            <div class="chip" data-mode="waves">Wave Survival · Solo</div>
+            <div class="chip" data-mode="koth">King of the Hill · 3v3</div>
+            <div class="chip selected" data-mode="dm">Team Brawl · 5v5</div>
           </div>
         </div>
       </div>
@@ -111,10 +112,40 @@
     </div>
   </div>
 
+  <div id="lobby" class="overlay hidden">
+    <div class="lobby-box">
+      <div class="lobby-head"><span data-i="lobby_title">FRIENDS 5v5</span><span id="lobby-mode" class="lmode"></span><span id="lobby-pill" class="lp-off"></span></div>
+      <div id="lobby-status"></div>
+      <div id="lobby-home">
+        <p class="lobby-tip" data-i="lobby_tip">Room-code only · fill empty slots with AI</p>
+        <button id="lobby-create" class="btn-primary" data-i="lobby_create">CREATE ROOM</button>
+        <div class="lobby-join-row">
+          <input id="lobby-code" maxlength="5" placeholder="ROOM CODE" autocomplete="off" spellcheck="false">
+          <button id="lobby-join" class="btn" data-i="lobby_join">JOIN</button>
+        </div>
+        <button id="lobby-solo" class="btn" data-i="lobby_solo">SOLO TRAINING (offline · AI)</button>
+      </div>
+      <div id="lobby-room" class="hidden">
+        <div class="lobby-code"><span class="lc-label" data-i="lobby_code">ROOM CODE</span><b id="lobby-code-val"></b><button id="lobby-copy" data-i="lobby_copy">COPY LINK</button></div>
+        <div class="lobby-teams">
+          <div class="team-a" id="lobby-team-a" data-side="A"></div>
+          <div class="team-b" id="lobby-team-b" data-side="B"></div>
+        </div>
+        <div class="lobby-actions">
+          <select id="lobby-map" class="btn"></select>
+          <button id="lobby-ready" class="btn" data-i="lobby_ready">READY</button>
+          <button id="lobby-start" class="btn-primary hidden" data-i="lobby_start">START</button>
+          <button id="lobby-leave" class="btn" data-i="lobby_leave">LEAVE</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="pause" class="overlay hidden">
     <div class="pause-box">
       <span class="m-kicker" data-i="pause_kicker">PAUSED</span>
       <h2 data-i="pause_title">OPERATION HALTED</h2>
+      <div id="pause-net-note" class="p-net-note hidden" data-i="pause_net_note">Online match continues · your character holds position</div>
       <div class="p-row"><label><span data-i="p_sens">Mouse sensitivity</span> <input id="p-sens" type="range" min="0.3" max="2.2" step="0.05" value="1"><span id="p-sens-v">1.00</span></label></div>
       <div class="p-row"><label><span data-i="p_ads">ADS sensitivity</span> <input id="p-ads" type="range" min="0.5" max="1.5" step="0.05" value="1"><span id="p-ads-v">1.00</span></label></div>
       <div class="p-row"><label><span data-i="p_fov">Field of view</span> <input id="p-fov" type="range" min="70" max="110" step="1" value="106"><span id="p-fov-v">106</span></label></div>
@@ -139,6 +170,7 @@
       <div class="p-row btns">
         <button id="p-resume" class="btn-primary" data-i="resume">RESUME</button>
         <button id="p-restart" class="btn" data-i="redeploy">REDEPLOY</button>
+        <button id="p-leave" class="btn hidden" data-i="pause_leave">LEAVE MATCH</button>
         <button id="p-menu" class="btn" data-i="main_menu">MAIN MENU</button>
       </div>
     </div>
@@ -155,6 +187,7 @@
       <div class="o-best" id="o-best"></div>
       <div class="p-row btns">
         <button id="o-restart" class="btn-primary" data-i="redeploy">REDEPLOY</button>
+        <button id="o-rematch" class="btn-primary hidden" data-i="lobby_rematch">REMATCH</button>
         <button id="o-menu" class="btn" data-i="main_menu">MAIN MENU</button>
         <button id="o-share" class="btn" data-i="o_share">SAVE RESULT</button>
       </div>

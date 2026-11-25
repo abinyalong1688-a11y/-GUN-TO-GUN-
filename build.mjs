@@ -11,7 +11,11 @@ const result = await esbuild.build({
   target: ['es2020'],
   charset: 'utf8',
   logLevel: 'info',
-  define: { 'process.env.NODE_ENV': '"production"' },
+  define: {
+    'process.env.NODE_ENV': '"production"',
+    DEBUG_HOOKS: 'false',                       // strip all window.__game / debug globals from the shipped build
+    __GTG_SERVER__: JSON.stringify(process.env.GTG_SERVER || ''),
+  },
 });
 
 let js = result.outputFiles[0].text
@@ -54,3 +58,5 @@ for(const icon of ['icon.svg','icon-192.png','icon-512.png'])copyFileSync(`src/$
 const mb = statSync('dist/gun-to-gun.html').size / 1024 / 1024;
 console.log(`✓ dist/gun-to-gun.html  ${mb.toFixed(2)} MB  (${SHARED_MODELS.length} shared rigs)  ${mb <= 4 ? '(within the 4 MB single-file budget)' : '(OVER the single-file budget!)'}`);
 console.log('✓ dist/sw.js + dist/manifest.webmanifest + dist/icon*.png  (PWA offline support)');
+if (!process.env.GTG_SERVER)
+  console.log('· GTG_SERVER 未设置：联机模式会提示「服务器未配置」，离线玩法不受影响');

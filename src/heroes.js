@@ -2,8 +2,10 @@
 //   looks are built by character.js from operator definitions (8 operators / camos / silhouettes);
 //   combat style by faction (Nova steady bursts / Rogue heavy spray); death: fall → limbs land flat → fade out → respawn.
 import * as THREE from 'three';
+import { pushCircleOut } from './collision.js';
 import {t,isEN} from './i18n.js';
 import {byId,byFaction,DEFAULT_OP} from './operators.js';
+import {SnapshotBuffer} from './interp.js';
 import {buildOperatorMeshAuto,fadeMaterials} from './character.js';
 import {modelAssets} from './modelAssets.js';
 import {rigInit,poseRot,posePos,poseReset} from './rig.js';
@@ -24,22 +26,41 @@ const BOT_PROFILE={
 
 let BID=0;
 const _Y=new THREE.Vector3(0,1,0),_Zc=new THREE.Vector3(0,0,1),_qLag=new THREE.Quaternion(),_qCant=new THREE.Quaternion();
+const _hitC1=new THREE.Vector3(),_hitC2=new THREE.Vector3(),_hitC3=new THREE.Vector3(); // scratch: hitSpheres must not allocate per shot
 const _losRay=new THREE.Raycaster(); // shared: clips miss tracers at cover (no through-wall tracers)
 
 /* M2-A5: name tag health bar — both geometries shared at module level, materials per bot */
 const TAG_BG_GEO=new THREE.PlaneGeometry(.62,.075);
 const TAG_BAR_GEO=new THREE.PlaneGeometry(.58,.05).translate(.29,0,0);
 
+/* Name-tag textures are cached: 7 bots used to allocate 7 new 256x64 GPU textures per match.
+   The cache is bounded — past the cap the tag is created unshared and freed with its bot, so a
+   long online session with many unique names cannot grow GPU memory without limit. */
+const TAG_TEX_CACHE=new Map();
+const TAG_TEX_CACHE_MAX=64;
+function nameTagTexture(name,faction){
+  const key=name+'|'+faction;
+  let t=TAG_TEX_CACHE.get(key);
+  if(!t){
+    const c=document.createElement('canvas');c.width=256;c.height=64;
+    const g=c.getContext('2d');
+    g.font='bold 28px "Microsoft YaHei",sans-serif';
+    g.textAlign='center';g.textBaseline='middle';
+    g.shadowColor='rgba(0,0,0,.9)';g.shadowBlur=6;
+    g.fillStyle=FACTION_HEX[faction];
+    g.fillText(name,128,32); // faction is shown by the tag colour
+    t=new THREE.CanvasTexture(c);
+    t.colorSpace=THREE.SRGBColorSpace;
+    if(TAG_TEX_CACHE.size<TAG_TEX_CACHE_MAX){
+      t.userData.shared=true;  // module cache: must not be disposed by a single bot
+      TAG_TEX_CACHE.set(key,t);
+    }
+  }
+  return t;
+}
+
 function makeNameTag(name,faction){
-  const c=document.createElement('canvas');c.width=256;c.height=64;
-  const g=c.getContext('2d');
-  g.font='bold 28px "Microsoft YaHei",sans-serif';
-  g.textAlign='center';g.textBaseline='middle';
-  g.shadowColor='rgba(0,0,0,.9)';g.shadowBlur=6;
-  g.fillStyle=FACTION_HEX[faction];
-  g.fillText(name,128,32); // faction is shown by the tag colour
-  const t=new THREE.CanvasTexture(c);
-  t.colorSpace=THREE.SRGBColorSpace;
+  const t=nameTagTexture(name,faction);
   const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true,depthTest:true}));
   sp.scale.set(1.9,.44,1);
   sp.userData.tex=t;
@@ -57,13 +78,19 @@ function makeNameTag(name,faction){
 }
 
 export class HeroBot{
-  constructor(game,scene,assets,effects,audio,ui,{operator,team,name}){
+  constructor(game,scene,assets,effects,audio,ui,{operator,team,name,netId=0,netDriven=false,kind='bot',spawnBase=null,faction=null,isSimulated=false}){
     this.game=game;this.scene=scene;this.assets=assets;this.fx=effects;this.audio=audio;this.ui=ui;
     this.id=++BID;
     this.def=operator;
     this.opId=operator.id;
-    this.faction=operator.faction;
-    this.hero=operator.faction;      // compatibility field: combat style / faction label follow the faction
+    this.kind=kind;                  // 'bot' | 'human'
+    this.netId=netId;                // network id (0 = local AI)
+    this.netDriven=netDriven;        // true = position comes from snapshots
+    this.netBuf=null;                // interp.SnapshotBuffer
+    this.spawnBase=spawnBase;        // respawn base (null = game.spawns[team])
+    this.isSimulated=isSimulated;    // host-owned bot proxy
+    this.faction=faction||operator.faction;
+    this.hero=this.faction;          // compatibility field: combat style / faction label follow the faction
     this.team=team;this.name=name;
     this.gender=operator.gender;
     this.hp=operator.hp;this.maxHp=operator.hp;
@@ -175,14 +202,30 @@ export class HeroBot{
   }
 
   hitSpheres(){
+    // Remote crouch is carried in PEER_FLAGS.CROUCH; use it so hitboxes match the pose.
+    const crouch=(this.netDriven&&this._netState&&this._netState.crouch) ? .42 : 0;
+    const hy=(this.headY||1.6)-crouch;
+    const by=.95-crouch*.8;
+    _hitC1.set(this.pos.x,this.pos.y+hy,this.pos.z);
+    _hitC2.set(this.pos.x,this.pos.y+by,this.pos.z);
+    // Small neck sphere closes the old 7–11 cm gap between head (top 1.37/1.44) and body.
+    _hitC3.set(this.pos.x,this.pos.y+1.40-crouch,this.pos.z);
     return [
-      {c:new THREE.Vector3(this.pos.x,this.pos.y+(this.headY||1.6),this.pos.z),r:.16,part:'head'},
-      {c:new THREE.Vector3(this.pos.x,this.pos.y+.95,this.pos.z),r:.42,part:'body'},
+      {c:_hitC1,r:.16,part:'head'},
+      {c:_hitC2,r:.42,part:'body'},
+      {c:_hitC3,r:.09,part:'body'},
     ];
   }
 
-  takeDamage(n,fromName,headshot=false){
+  takeDamage(n,fromName,headshot=false,fromId=null,kind='weapon'){
     if(!this.alive)return -1;
+    if(this.netDriven){
+      // Remote avatar: the victim's own client settles HP. Never mutate local HP here.
+      // `kind` lets the DO recompute the right weapon (grenades are not the equipped gun).
+      if(this.game.netMatch)this.game.netMatch.requestHit(this,n,fromName,headshot,{kind});
+      return -1;
+    }
+    if(fromId)this._lastHitFrom=fromId;
     this.hp-=n;
     if(this.nameTag&&this.nameTag.bar)
       this.nameTag.bar.scale.x=Math.max(.001,Math.min(1,this.hp/this.maxHp));
@@ -191,21 +234,22 @@ export class HeroBot{
     if(this.hp/this.maxHp<.35&&!this._lowBarked&&this.bark('bark_low'))this._lowBarked=true;
     for(const m of this.flashable){m.emissive.setHex(0xffffff);m.emissiveIntensity=.6;}
     if(this.hp<=0){
-      this.die(fromName,headshot);
+      this.die(fromName,headshot,fromId);
       return -1;
     }
     return this.hp;
   }
 
   /* C2: death — fall over in 0.7 s with the limbs landing flat, corpse gone ≈0.8 s later; respawn after 5.5 s */
-  die(byName,headshot=false){
+  die(byName,headshot=false,fromId=null){
     if(!this.alive)return;
+    if(this.netDriven){ this._netDie(); return; } // remote death comes from the DO's s:kill; no local scoring
     this.alive=false;
     this.state='dying';
     this.deathT=0;
     this.respawnT=5.5;
     this.vel.set(0,0,0); // stop dead — the corpse falls where it dropped, no slide
-    this.game.onHeroKill(byName,this,headshot);
+    this.game.onHeroKill(byName,this,headshot,fromId||this._lastHitFrom||null);
     this.bark('bark_down',true);
     this.fx.bloodPuff(new THREE.Vector3(this.pos.x,this.pos.y+1.1,this.pos.z));
     this.dropRifle();
@@ -277,7 +321,8 @@ export class HeroBot{
     for(const o of this._animParts)poseReset(o);
     this._headPitch=0;this._torsoYaw=0;
     this.group.rotation.x=0;this.group.rotation.z=0;
-    const base=this.team==='A'?new THREE.Vector3(0,0,24):new THREE.Vector3(0,0,-24);
+    const base=this.spawnBase || (this.game.spawns ? this.game.spawns[this.team]
+      : (this.team==='A'?new THREE.Vector3(0,0,24):new THREE.Vector3(0,0,-24)));
     this.place(base.clone().add(new THREE.Vector3((Math.random()-.5)*8,0,(Math.random()-.5)*8)),
       this.team==='A'?Math.PI:0);
     this._collide(this.game.world.colliders); // jittered spawn can land on map geometry (caldera gate pillars)
@@ -303,32 +348,11 @@ export class HeroBot{
     let hitX=false,hitZ=false;
     for(const c of colliders){
       if(this.pos.y>c.top)continue;
-      // (1) X axis
-      const cx=Math.max(c.minX,Math.min(this.pos.x,c.maxX));
-      const cz=Math.max(c.minZ,Math.min(this.pos.z,c.maxZ));
-      const dx=this.pos.x-cx,dz=this.pos.z-cz;
-      if(dx*dx+dz*dz<r*r){
-        // Centre fully inside the box (clamped to the centre, no direction): pop to the
-        // nearest face + r — the slide logic has no meaningful escape axis from dead-centre.
-        if(Math.abs(dx)<1e-6&&Math.abs(dz)<1e-6){
-          const dl=this.pos.x-c.minX,dr=c.maxX-this.pos.x,dn=this.pos.z-c.minZ,df=c.maxZ-this.pos.z;
-          const m=Math.min(dl,dr,dn,df);
-          if(m===dr){this.pos.x=c.maxX+r;hitX=true;}
-          else if(m===dl){this.pos.x=c.minX-r;hitX=true;}
-          else if(m===df){this.pos.z=c.maxZ+r;hitZ=true;}
-          else{this.pos.z=c.minZ-r;hitZ=true;}
-          continue;
-        }
-        // Slide along the axis of least penetration (the shallowest escape direction)
-        const overlapX=r-Math.abs(dx);
-        const overlapZ=r-Math.abs(dz);
-        if(overlapX<overlapZ){
-          hitX=true;
-          this.pos.x+=Math.sign(dx||1)*overlapX;
-        }else{
-          hitZ=true;
-          this.pos.z+=Math.sign(dz||1)*overlapZ;
-        }
+      // OBB-aware push-out; the resulting position delta tells us which axes were blocked.
+      const bx=this.pos.x,bz=this.pos.z;
+      if(pushCircleOut(this.pos,r,c)){
+        if(Math.abs(this.pos.x-bx)>1e-6)hitX=true;
+        if(Math.abs(this.pos.z-bz)>1e-6)hitZ=true;
       }
     }
     const dd=Math.hypot(this.pos.x,this.pos.z);
@@ -369,6 +393,7 @@ export class HeroBot{
   }
 
   update(dt,time,losCheck){
+    if(this.netDriven)return this._updateNet(dt,time);
     if(this.state!=='active'){
       this.deathT+=dt;
     if(this.state==='dying'){
@@ -446,7 +471,8 @@ export class HeroBot{
       const d=this.pos.distanceTo(h.pos);
       if(d<tDist){tDist=d;target=h;this._tPosT.set(h.pos.x,h.pos.y+1.1,h.pos.z);}
     }
-    if(this.team==='B'&&this.game.player.alive){
+    // The local player can be on either team online (A=NOVA / B=ROGUE); offline playerTeam is A.
+    if(this.team!==(this.game.playerTeam||'A')&&this.game.player&&this.game.player.alive){
       const pe=this.game.player.eye;
       const d=this.pos.distanceTo(this.game.player.pos);
       if(d<tDist){tDist=d;target='player';this._tPosT.copy(pe);}
@@ -715,7 +741,7 @@ export class HeroBot{
       if(target==='player'){
         this.game.damagePlayerFromBot(P.dmgP,this.name,this.pos);
       }else{
-        target.takeDamage(P.dmgH,this.name);
+        target.takeDamage(P.dmgH,this.name,false,this.netId||this.name);
         this.game.botDamageFx(target,tPos);
       }
     }
@@ -798,11 +824,80 @@ export class HeroBot{
     this.group.rotation.y=this.yaw;
   }
 
+  /* ---------------- network-driven avatars (remote humans / replicated bots) ---------------- */
+  _updateNet(dt,time){
+    const match=this.game.netMatch;
+    const rt=match?match.renderTime(this.kind):time;
+    const s=this.netBuf&&this.netBuf.sample(rt,this.kind);
+    if(!s){this.group.visible=false;return;}
+    this._netState=s;                       // hitSpheres reads crouch from here
+    this.group.scale.y=s.crouch ? .72 : 1;  // minimal crouch pose for remote avatars
+    const dx=s.x-this.pos.x,dz=s.z-this.pos.z;
+    this.vel.set(dt>0?dx/dt:0,0,dt>0?dz/dt:0);
+    this.pos.set(s.x,s.y,s.z);
+    this.yaw=s.yaw;
+    if(this.nameTag){
+      const d=this.game.camera.position.distanceTo(this.pos);
+      const a=Math.max(0,Math.min(1,(46-d)/16));
+      this.nameTag.group.visible=a>.01;
+      this.nameTag.sprite.material.opacity=a;
+      this.nameTag.bg.material.opacity=a*.75;
+      this.nameTag.bar.material.opacity=a*.95;
+    }
+    const wasAlive=this.alive,alive=!!s.alive;
+    if(wasAlive&&!alive)this._netDie();
+    if(!wasAlive&&alive)this._netRevive();
+    this.alive=alive;
+    if(this.nameTag&&this.nameTag.bar)
+      this.nameTag.bar.scale.x=Math.max(.001,Math.min(1,(s.hp||0)/this.maxHp));
+    this.hp=s.hp;
+    if(!alive){
+      // Mirror the local death collapse so remote corpses look identical (no local scoring).
+      this.deathT+=dt;
+      const k1=Math.min(1,this.deathT/.28);
+      const kraw=Math.max(0,Math.min(1,(this.deathT-.28)/.42));
+      const k2=kraw*kraw*(3-2*kraw);
+      this.group.rotation.x=-Math.PI/2.2*k2;
+      this.group.rotation.y=this.yaw;
+      this.group.position.set(this.pos.x,this.pos.y+.3*k2,this.pos.z);
+      if(this.hips){posePos(this.hips,0,-.22*k1,0);poseRot(this.hips,0,this.hitDir*.5*k1*(1-k2*.7),0);}
+      if(this.shinL){const fold=.95*k1*(1-k2);poseRot(this.shinL,fold);poseRot(this.shinR,fold*.8);}
+      if(this.armR)poseRot(this.armR,.72*k2,0,.04*k2);
+      if(this.armL)poseRot(this.armL,.85*k2,-.35*k2,-.5*k2);
+      if(this.deathT>.7)fadeMaterials(this.materials,Math.max(0,1-(this.deathT-.7)/.8));
+      this._updateDroppedRifle(dt);
+      this.group.visible=this.deathT<1.55;
+      return;
+    }
+    this.state='active';
+    this.moving=this.vel.length()>.5;
+    this._animate(dt,time,this.vel.length());
+    this.group.position.set(this.pos.x,this.pos.y,this.pos.z);
+    this.group.rotation.set(0,this.yaw,0);
+    this.group.visible=true;
+  }
+  _netDie(){
+    if(this.state==='dying'||this.state==='dead')return;
+    this.alive=false;this.state='dying';this.deathT=0;
+    this.vel.set(0,0,0);
+    this.dropRifle();
+    this.fx.bloodPuff&&this.fx.bloodPuff(new THREE.Vector3(this.pos.x,this.pos.y+1.1,this.pos.z));
+  }
+  _netRevive(){
+    this._restoreRifle();
+    fadeMaterials(this.materials,1);
+    this._restoreFlash();
+    for(const o of this._animParts)poseReset(o);
+    this.state='active';this.deathT=0;this.hp=this.maxHp;
+    this.group.rotation.x=0;this.group.visible=true;
+    if(this.nameTag&&this.nameTag.bar)this.nameTag.bar.scale.x=1;
+  }
+
   dispose(){
     this.scene.remove(this.group);
     if(this.parts.rifle&&this.parts.rifle.parent===this.scene)this.scene.remove(this.parts.rifle);
     if(this.nameTag){
-      if(this.nameTag.tex)this.nameTag.tex.dispose();
+      if(this.nameTag.tex&&!this.nameTag.tex.userData.shared)this.nameTag.tex.dispose();
       if(this.nameTag.sprite&&this.nameTag.sprite.material)this.nameTag.sprite.material.dispose();
       if(this.nameTag.bg&&this.nameTag.bg.material)this.nameTag.bg.material.dispose();
       if(this.nameTag.bar&&this.nameTag.bar.material)this.nameTag.bar.material.dispose();
@@ -828,49 +923,109 @@ export class HeroTeam{
       if(h.builtWith!=='gltf'&&h.alive)h.setOperator(h.def);
     }
   }
-  setup(playerFaction='ct',playerName='',playerOpId=DEFAULT_OP){
+  setup(playerFaction='ct',playerName='',playerOpId=DEFAULT_OP,opts={}){
     this.clear();
     const g=this.game,scene=g.scene,assets=g.assets,fx=g.effects,audio=g.audio,ui=g.ui;
-    const pf=playerFaction==='t'?'t':'ct';
+    const hasOpts=!!opts&&!!(opts.sizes||opts.roster||opts.bots||opts.humans||opts.playerTeam);
+    const place=(h,team,spread=10)=>{
+      const base=h.spawnBase||(g.spawns?g.spawns[team]:new THREE.Vector3(0,0,team==='A'?24:-24));
+      h.place(base.clone().add(new THREE.Vector3((Math.random()-.5)*spread,0,(Math.random()-.5)*spread)),
+        team==='A'?Math.PI:0);
+      h._collide(g.world.colliders); // jittered spawn can land on map geometry (caldera gate pillars)
+    };
+    if(!hasOpts){
+      // Legacy 4v4 deathmatch / KOTH: unchanged 3 + 4 (tests/heroes.test.mjs:57, e2e operators-8).
+      const pf=playerFaction==='t'?'t':'ct';
+      const ef=pf==='ct'?'t':'ct';
+      const cycle=(arr,n)=>arr.length?Array.from({length:n},(_,i)=>arr[i%arr.length]):[];
+      const ownPool=byFaction(pf).filter(o=>o.id!==playerOpId);
+      const own=cycle(ownPool.length?ownPool:byFaction(pf),3);
+      const foe=cycle(byFaction(ef),4);
+      const used=new Set([playerName]);
+      const nm=o=>{
+        let n=isEN()?o.name.en:o.name.zh;
+        if(used.has(n)){let i=2;while(used.has(n+' '+i))i++;n=n+' '+i;}
+        used.add(n);
+        return n;
+      };
+      for(const d of [...own.map(o=>({operator:o,team:'A'})),...foe.map(o=>({operator:o,team:'B'}))]){
+        const base=d.operator;
+        const op=g.camoFor?{...base,camo:g.camoFor(base)}:{...base};
+        const h=new HeroBot(g,scene,assets,fx,audio,ui,{operator:op,team:d.team,name:nm(base)});
+        place(h,d.team);
+        this.list.push(h);
+      }
+      return;
+    }
+    /* Online / training 5v5: remote humans + host-replicated bots + local AI fill. */
+    const {
+      sizes={A:5,B:5}, humans={A:0,B:0}, playerTeam='A',
+      roster=[], bots=[], isHost=false, online=false,
+    }=opts;
+    const pf=online?(playerTeam==='A'?'ct':'t'):(playerFaction==='t'?'t':'ct');
     const ef=pf==='ct'?'t':'ct';
-    // Roster has several operators per faction, so squads cycle through it (name suffixes
-    // keep repeated operators distinguishable); match size stays 3 bot teammates + player vs 4 enemies.
-    const cycle=(arr,n)=>arr.length?Array.from({length:n},(_,i)=>arr[i%arr.length]):[];
-    const ownPool=byFaction(pf).filter(o=>o.id!==playerOpId);
-    const own=cycle(ownPool.length?ownPool:byFaction(pf),3);
-    const foe=cycle(byFaction(ef),4);
+    const teamFaction=team=>team===playerTeam?pf:ef;
     const used=new Set([playerName]);
     const nm=o=>{
       let n=isEN()?o.name.en:o.name.zh;
       if(used.has(n)){let i=2;while(used.has(n+' '+i))i++;n=n+' '+i;}
-      used.add(n);
-      return n;
+      used.add(n);return n;
     };
-    const defs=[
-      ...own.map(o=>({operator:o,team:'A'})),
-      ...foe.map(o=>({operator:o,team:'B'})),
-    ];
-    for(const d of defs){
-      const base=d.operator;
-      const op=g.camoFor?{...base,camo:g.camoFor(base)}:{...base};
-      const h=new HeroBot(g,scene,assets,fx,audio,ui,{operator:op,team:d.team,name:nm(base)});
-      const b=d.team==='A'?new THREE.Vector3(0,0,24):new THREE.Vector3(0,0,-24);
-      h.place(b.clone().add(new THREE.Vector3((Math.random()-.5)*10,0,(Math.random()-.5)*10)),
-        d.team==='A'?Math.PI:0);
-      h._collide(g.world.colliders); // match-start jitter can land on map geometry too
-      this.list.push(h);
+    for(const r of roster){
+      const base=byId(r.op)||byId(DEFAULT_OP);
+      const fac=teamFaction(r.team);
+      const op={...base,camo:r.camo||'default',faction:fac};
+      const h=new HeroBot(g,scene,assets,fx,audio,ui,{
+        operator:op,team:r.team,name:r.name||nm(base),faction:fac,
+        netId:r.netId||r.id,netDriven:true,kind:'human',
+        spawnBase:g.spawns?g.spawns[r.team]:null,
+      });
+      h.netBuf=new SnapshotBuffer(32);
+      place(h,r.team);this.list.push(h);used.add(h.name);
+    }
+    for(const b of bots){
+      const base=byId(b.op)||byId(DEFAULT_OP);
+      const fac=teamFaction(b.team);
+      const op={...base,camo:'default',faction:fac};
+      const h=new HeroBot(g,scene,assets,fx,audio,ui,{
+        operator:op,team:b.team,name:b.name||nm(base),faction:fac,
+        netId:b.id,netDriven:!isHost,kind:'bot',isSimulated:!!isHost,
+        spawnBase:g.spawns?g.spawns[b.team]:null,
+      });
+      if(h.netDriven)h.netBuf=new SnapshotBuffer(32);
+      place(h,b.team);this.list.push(h);used.add(h.name);
+    }
+    for(const team of ['A','B']){
+      const botsHere=this.list.filter(h=>h.team===team&&h.kind==='bot').length;
+      const need=(sizes[team]||0)-(humans[team]||0)-(playerTeam===team?1:0)-botsHere;
+      if(need<=0)continue;
+      const f=teamFaction(team);
+      const pool=byFaction(f).filter(o=>o.id!==playerOpId);
+      const poolAll=byFaction(f);
+      const src=pool.length?pool:(poolAll.length?poolAll:[byId(DEFAULT_OP)]);
+      for(let i=0;i<need;i++){
+        const base=src[i%src.length];
+        const op=g.camoFor?{...base,camo:g.camoFor(base),faction:f}:{...base,faction:f};
+        const h=new HeroBot(g,scene,assets,fx,audio,ui,{operator:op,team,name:nm(base),faction:f});
+        place(h,team);this.list.push(h);
+      }
     }
   }
+  adopt(hero){ this.list.push(hero); return hero; }
+  byNetId(id){ return this.list.find(h=>h.netId===id&&h.netId) || null; }
   clear(){
     for(const h of this.list)h.dispose();
     this.list.length=0;
   }
   update(dt,time,losCheck){
-    for(const h of this.list)h.update(dt,time,losCheck);
+    for(const h of this.list){
+      if(h.netDriven)h._updateNet(dt,time); // remote avatars consume snapshots, never local AI
+      else h.update(dt,time,losCheck);
+    }
     this._separate();
     /* Separation can shove a bot across a collider boundary (or fully inside one);
        re-run the push-out so nobody ends the frame embedded in geometry. */
-    for(const h of this.list)if(h.alive)h._collide(this.game.world.colliders);
+    for(const h of this.list)if(h.alive&&!h.netDriven)h._collide(this.game.world.colliders);
   }
   /* Soft bot-vs-bot separation: dead bodies and spawn clusters otherwise pass through each
      other (visible clipping in 4v4). Push overlapping alive pairs apart on XZ only. */
@@ -878,7 +1033,8 @@ export class HeroTeam{
     const L=this.list,R=.72;
     for(let i=0;i<L.length;i++)for(let j=i+1;j<L.length;j++){
       const a=L[i],b=L[j];
-      if(!a.alive||!b.alive)continue;
+      // A net-driven proxy belongs to another client: never displace it locally.
+      if(!a.alive||!b.alive||a.netDriven||b.netDriven)continue;
       const dx=b.pos.x-a.pos.x,dz=b.pos.z-a.pos.z;
       const d2=dx*dx+dz*dz;
       if(d2>=R*R||d2<1e-6)continue;
@@ -891,7 +1047,7 @@ export class HeroTeam{
     if(this.game.player&&this.game.player.alive){
       const pp=this.game.player.pos;
       for(const h of L){
-        if(!h.alive)continue;
+        if(!h.alive||h.netDriven)continue;
         const dx=h.pos.x-pp.x,dz=h.pos.z-pp.z;
         const d2=dx*dx+dz*dz;
         if(d2<R*R&&d2>1e-6){

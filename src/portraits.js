@@ -1,9 +1,12 @@
 // portraits.js — offscreen 3D portrait renderer (roster / kill card / MVP / share card):
 //   · singleton WebGLRenderer (alpha, transparent background), lazily initialised;
 //   · results cached as dataURLs keyed by def.id|camo|size, no external images;
+//   · GLB-only: renders nothing until the shared rigs are loaded — the UI falls back to a
+//     CSS gradient placeholder while they stream in, and main.js rebuilds the roster on
+//     modelAssets.onReady (no procedural character is ever drawn here);
 //   · without WebGL / on init failure render() returns null and the UI falls back to a CSS gradient.
 import * as THREE from 'three';
-import {buildOperatorMeshAuto} from './character.js';
+import {buildOperatorMeshGLTF} from './character.js';
 import {modelAssets} from './modelAssets.js';
 import {OPERATORS} from './operators.js';
 import {isEN} from './i18n.js';
@@ -51,8 +54,10 @@ export class PortraitRenderer{
   }
 
   /* Returns a dataURL, or null on failure; frame: 'full' body / 'bust'.
-     Cache is keyed by model mode: a GLB/procedural flip (async preload finishing) invalidates it. */
+     GLB-only: until the shared rigs are loaded we return null (CSS placeholder) instead of
+     rendering a procedural body that would be thrown away moments later. */
   render(def,camo='default',size=512,{frame='full'}={}){
+    if(!modelAssets.isReady())return null;
     const key=`${modelAssets.mode()}|${def.id}|${camo}|${size}|${frame}`;
     if(this.cache.has(key))return this.cache.get(key);
     this._init();
@@ -62,7 +67,7 @@ export class PortraitRenderer{
     let built=null;
     try{
       this.renderer.setSize(size,size,false);
-      built=buildOperatorMeshAuto(this.assets,def,{camo});
+      built=buildOperatorMeshGLTF(this.assets,def,{camo});
       if(frame==='bust'){
         // Frame the skull: head centre ≈ headY - .06, camera slightly above eye line
         const hy=(built.parts.headY||1.6)-.06;
@@ -89,13 +94,14 @@ export class PortraitRenderer{
 
   /* M2-A7: returns the shared canvas after rendering (drawn synchronously into the share card, no async image load) */
   renderCanvas(def,camo='default',size=512,{frame='full'}={}){
+    if(!modelAssets.isReady())return null;
     this._init();
     const cam=frame==='bust'?this.bustCam:this.camera;
     if(!this.renderer||!this.scene||!cam)return null;
     let built=null;
     try{
       this.renderer.setSize(size,size,false);
-      built=buildOperatorMeshAuto(this.assets,def,{camo});
+      built=buildOperatorMeshGLTF(this.assets,def,{camo});
       if(frame==='bust'){
         const hy=(built.parts.headY||1.6)-.06;
         cam.position.set(0,hy+.1,1.5);

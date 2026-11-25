@@ -73,8 +73,18 @@ Four hand-built arenas, each a distinct scene with its own layout, sky, lighting
 ## Game Modes
 
 - **Endless Waves**: defend the outpost against three drone classes with detailed silhouettes — WASP (kamikaze) / REAPER (roaming shooter) / WARDEN (heavy: glowing sensor windows, core guard rings, wing plates / claw feet / gun shields, rotor hubs, breathing red-core pulse). Red-core crits ×2.5
-- **8-Player Deathmatch (4v4)**: you + 3 same-faction AI teammates vs 4 enemy AI. Nova fires controlled bursts, Rogue sprays. First to 25 kills wins, with killfeed, TAB scoreboard and respawns
-  - Note: true networked multiplayer requires a persistent server, which conflicts with the "single file, offline-playable" goal — deathmatch delivers the same arena experience with AI combatants
+- **8-Player Deathmatch (4v4)**: you + 3 same-faction AI teammates vs 4 enemy AI. Nova fires controlled bursts, Rogue sprays. First to 25 kills wins, with killfeed, TAB scoreboard and respawns. **Unchanged since v1.10 — offline only, zero network activity**
+- **Friends 5v5 (Online)** — new in v1.11: room-code only, 3 minutes / first to 25 kills, AI fills empty slots, 2.5 s respawns. Host migration, reconnection by token, lobby with ready/map/side selection. Does not alter the offline modes or the single-file offline build.
+
+### Friends 5v5 · Online (v1.11)
+
+Pick **Friends 5v5 · Online** in the mode chips and press DEPLOY to open the room lobby. Create a room (5-character code with 0/O/1/I removed), share the invite link `…?room=CODE`, or use **Solo Training** for an offline 5v5 against AI. No public matchmaking, no ranked play.
+
+- **Server**: Cloudflare Workers + Durable Objects, one DO per room. The DO is only a roster / message fan-out / authoritative scoreboard — it runs no three.js, physics or AI.
+- **Authority**: each client owns its own position; the attacker raycasts and the DO relays clamped damage to the victim; the DO owns kills, deaths, timer, win condition and the roster. Bots are simulated only by the host and replicated at 12 Hz; if the host drops, the DO elects a new host who takes over the bots in place.
+- **Trust model**: room-code-only among friends. Positions and damage are client-reported (capped), so a host can cheat locally. Online results never write `o07_best` and never submit to the leaderboard — offline progress stays clean.
+- **No server configured?** The lobby shows a clear hint; Solo Training still works. Select no online mode and `net.stats.socketsOpened === 0` — verified by e2e.
+- See [`docs/FRIENDS-5V5-ONLINE.md`](docs/FRIENDS-5V5-ONLINE.md) for the code-level design and [`server/README.md`](server/README.md) for deployment, free-tier estimates and the trust model.
 
 ## Sponsorship Placements
 
@@ -86,8 +96,14 @@ Three self-illuminated **double-sided** billboards (brand face / large URL face 
 src/
   assets.js   Materials — 1024px procedural Canvas PBR textures (sand / snow / basalt / ice / wet asphalt) + normal maps + weapon wood / faction fabrics + neon signage + billboard art; zero image files
   world.js    Scene — parametric sky shaders (sunset / aurora night / rain night / ember) + four distinct per-map layouts + lighting / fog / ambient particles
+  terrain.js  Ground height field — exactly flat inside the r=56 play area (movement uses y=0), dunes fade in outside
+  footAudit.js Foot-vs-surface audit — samples rendered skinned sole vertices and rigid boot meshes, reports penetration
   weapon.js   Weapons — three-slot loadout viewmodels + first-person arms (tactical gloves) + semi-auto / full-auto triggers + recoil / ADS / reload / shell ejection
   attach.js   Attachment integrity — connected-island check that every weapon part is welded to the gun body (unit test + ?e2e=1)
+  netProtocol.js / interp.js / net.js / netMatch.js / netLobby.js / remotePlayers.js
+              Online layer — shared protocol, snapshot interpolation, WebSocket transport + loopback,
+              session orchestration, room lobby DOM, remote avatar factory. No socket until connect()
+  server/     Cloudflare Worker + Durable Object room state machine (never bundled into the client)
   heroes.js   Characters — realistic 3D faction operatives (lathe-surface torsos, facial features, hair physics, faction outfits) and 4v4 AI
   enemies.js  Enemies — three drone classes (sensor windows / guard rings / detail parts) + AI + projectiles + occlusion checks
   player.js   Player — movement / circle-vs-AABB collision / health / regeneration
@@ -104,15 +120,22 @@ build.mjs     esbuild bundle into a single HTML file
 ```bash
 npm install        # three@0.170.0 + esbuild
 npm run build      # produces dist/gun-to-gun.html
-npm test           # unit tests (node --test): utils / weapon stats / weapon attachment integrity / movement physics / wave scheduling
+npm test           # unit tests (node --test): 109 assertions incl. protocol / interpolation / room state / NetClient / 5v5 squads / flat arena terrain
 npm run serve      # local server http://127.0.0.1:8137/ (testing only)
+npm run server:dev    # local Cloudflare room server (wrangler dev --local) for the online mode
+npm run server:deploy # deploy the room server to Cloudflare
 ```
 
 Built-in verification hooks:
 
 - `?shot=menu|combat|dm|over` — jump straight into a state for screenshot review
 - `?selftest=1` — weapon self-test (primary hit-kill + Desert Eagle semi-auto + UMP-45 full-auto burst); results in the debug bar and console
-- `?e2e=1` — **system integration test**: 56 end-to-end assertions (loading / ADS / recoil ballistics / gravity jump / crate-top landing / crouch / weight-based speed / **4-primary same-slot cycling** / **backup-SMG full-auto** / **attachment integrity** / crits / XSS protection / 360° look); results in `window.__e2e` and the debug bar; deterministic, reproducible in background tabs
+- `?e2e=1` — **system integration test**: 65 assertions (loading / ADS / recoil ballistics / gravity jump / crate-top landing / crouch / weight-based speed / **4-primary same-slot cycling** / **backup-SMG full-auto** / **attachment integrity** / **foot-vs-ground clearance** / crits / XSS protection / 360° look / offline 5v5 / zero offline sockets); results in `window.__e2e`; deterministic, reproducible in background tabs
+- `?e2e=1&net=loopback` — **70 assertions**: the full online flow driven against an in-memory room server (create / join / ready / start / snapshot relay / kill relay / host migration), no external server and no second `Game` instance
+- `?e2e=1&model=proc` — the same suite on the procedural-character fallback (the foot audit samples rigid boot meshes instead of skinned foot vertices)
+- Foot clearance: see [`docs/FOOT-CLEARANCE.md`](docs/FOOT-CLEARANCE.md) for the QA matrix, measurements and known animation limitations
+- `?shot=online|online-remotes` — stage a 5v5 match (with or without remote human avatars) for screenshot review
+- `?room=CODE` — deep link: auto-fill and join a friend's room
 - `?perf=1` — hitch monitor: slow-frame (>25 ms) count and max frame time reported to console periodically
 - `?ipcc=US` / `?ipcc=CN` — force the interface language (default: auto by IP — English overseas / Chinese in China; silent fallback on probe failure)
 
@@ -124,6 +147,7 @@ When hosting in the cloud, **upload the `dist/` trio together**: `gun-to-gun.htm
 - **First-visit loading**: the HTML is ~3.1 MB (1.6 MB gzipped) and ~70 % of it is the four shared rigged character GLBs (v1.10 cut the gzipped payload by ~46 %). The main bundle is placed **before** that payload, so the menu becomes interactive after only ~270 KB of transfer; the models live in inert `<script type="application/octet-stream">` tags read on demand once parsing completes (procedural characters cover the gap). On the ~27 KB/s link measured from mainland China, full download drops from ~111 s to ~60 s while time-to-interactive stays unchanged.
 - **Language detection**: the hosted version detects the UI language from the client IP (English overseas / Chinese in China). This is the only optional external call — it fails silently offline and never affects the game itself (the game body remains zero-external-request)
 - Cross-origin probe requests are never cached; the SW cache is purged automatically by version number on updates. The SW pre-cache list must not contain `./` — `/dist/` has no index and returns 404 on GitHub Pages, which makes `caches.addAll()` reject the whole install
+- **Online rooms**: deploy the Worker with `npm run server:deploy`, then build with `GTG_SERVER=wss://<worker>.workers.dev npm run build` to bake the address into the single file. It can still be overridden per session with `?server=wss://…` or in `localStorage.o07_server`. HTTPS pages may only connect to `wss://`; `ws://` is for local development. The `server/` directory is never bundled into the client (dist stays ~3.16 MB, far under the 5 MB budget)
 
 ## Production Hardening
 
@@ -132,7 +156,8 @@ Security / stability / performance work done to a ship-ready standard:
 | Category | Hardening |
 |---|---|
 | Security | All user-controlled strings (nicknames etc.) are HTML-escaped before entering killfeed / scoreboard / end-screen innerHTML (stored-XSS protection) |
-| Security | The `window.__game` debug probe is exposed only under test hooks (`?shot=` / `?selftest` / `?e2e`) |
+| Security | The `window.__game` debug probe is exposed only under test hooks (`?shot=` / `?selftest` / `?e2e` / `?net=loopback`) |
+| Security | Online: naming sanitisation + XSS escaping, 5-char room codes, per-socket 32 msg/s + 4 KB token bucket, damage caps, seq de-duplication; names are display-only, identity is by server-assigned id |
 | Stability | All `localStorage` access goes through a safe wrapper (private mode / disabled storage never crashes; reads and writes have fallbacks) |
 | Stability | Dirty-data guards on persisted values: sensitivity / volume / quality / character / map / mode / primary / best score — invalid values fall back to defaults |
 | Stability | WebGL context loss (driver crash / GPU switch / sleep) → visible notice + automatic recovery reload |

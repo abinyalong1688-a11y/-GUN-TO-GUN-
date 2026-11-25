@@ -1,4 +1,8 @@
-// modes.js — M4-P4 King of the Hill: centre radius 8 m, two teams contest it, first to 200 points wins.
+// modes.js — King of the Hill: centre radius 8 m, two teams contest it, first to 200 points wins.
+//
+// Offline this class owns the score. Online it only *evaluates* the capture: the host sends a
+// point tick to the Durable Object (room.addPoint) and the DO's s:score is the single source of
+// truth, so two clients can never disagree about who is standing on the point.
 import * as THREE from 'three';
 import {t} from './i18n.js';
 
@@ -9,22 +13,32 @@ export class GameMode{
   end(){this.active=false;}
 }
 
+export const KOTH_RADIUS = 8;
+export const KOTH_WIN = 150;
+
 export class KothMode extends GameMode{
   constructor(game){
     super(game);
     this.pos=new THREE.Vector3(0,0,0);
-    this.radius=8;
+    this.radius=KOTH_RADIUS;
     this.capture=0;   // -1 ~ 1, positive means team A
     this.owner=null;
     this.score={A:0,B:0};
-    this.winScore=200;
+    this.winScore=KOTH_WIN;
     this.done=false;
+    this.online=false;     // true => the DO owns the score (see update)
+    this.lastTickTeam=null;
+  }
+
+  reset(){
+    this.capture=0;this.owner=null;
+    this.score={A:0,B:0};this.done=false;this.lastTickTeam=null;this._tick=0;
+    if(this.game.ui&&this.game.ui.hideKoth)this.game.ui.hideKoth();
   }
 
   start(){
     super.start();
-    this.capture=0;this.owner=null;
-    this.score={A:0,B:0};this.done=false;
+    this.reset();
   }
 
   _inside(pos){
@@ -47,7 +61,16 @@ export class KothMode extends GameMode{
     if(this.capture>=1)this.owner='A';
     else if(this.capture<=-1)this.owner='B';
 
+    this.lastTickTeam=null;
+    const shown=(g.dm&&g.dm.score)||this.score;
     if(this.owner){
+      if(this.online){
+        // Host only: one point per ~100 ms of ownership. The DO ignores anyone else.
+        this._tick=(this._tick||0)+dt;
+        if(this._tick>=.1){this._tick=0;this.lastTickTeam=this.owner;}
+        g.ui.setKoth(this.owner,(this.capture+1)/2,Math.floor(shown.A||0),Math.floor(shown.B||0));
+        return;
+      }
       this.score[this.owner]+=dt*10;
       if(a>0&&b>0)this.score[this.owner]+=dt*2; // contested: faster scoring
       if(this.score[this.owner]>=this.winScore){
@@ -56,7 +79,7 @@ export class KothMode extends GameMode{
         if(g._endMode)g._endMode(this.owner==='A');
       }
     }
-    g.ui.setKoth(this.owner,(this.capture+1)/2,Math.floor(this.score.A),Math.floor(this.score.B));
+    g.ui.setKoth(this.owner,(this.capture+1)/2,Math.floor(shown.A||0),Math.floor(shown.B||0));
   }
 
   end(){super.end();this.game.ui.hideKoth();}
