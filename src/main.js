@@ -44,7 +44,7 @@ const TUTORIAL=[
   {zh:'按 1 循环主武器,2 手枪,3 冲锋枪',en:'Press 1 to cycle primaries, 2 sidearm, 3 SMG'},
   {zh:'按 G / F / V 投掷破片 / 闪光 / 烟雾',en:'Press G / F / V for frag / flash / smoke'},
 ];
-const VERSION='1.11.1';
+const VERSION='1.11.2';
 const _rsO=new THREE.Vector3(); // reused ray-sphere test vector (zero allocation on the hot path)
 
 class Game{
@@ -2282,6 +2282,18 @@ class Game{
           assert(clearOf(gx,gz,.5),k+': drone spawn gate is blocked at '+gx+','+gz);
         assert(clearOf(0,0,.45),k+': the KOTH capture point at the origin is blocked');
         assert(clearOf(0,24,.45)&&clearOf(0,-24,.45),k+': a bot team base center is blocked');
+        if(k==='snowtown'){
+          // The dock canyon is a wall of 6.1 m containers stacked end-to-end. Two were placed
+          // overlapping by .5 m (visible interpenetration in the seam); a same-top AABB overlap
+          // check keeps that layout bug from coming back.
+          for(let i=0;i<this.world.colliders.length;i++)for(let j=i+1;j<this.world.colliders.length;j++){
+            const a=this.world.colliders[i],b=this.world.colliders[j];
+            if(Math.abs(a.top-b.top)>.3)continue;
+            const ix=Math.min(a.maxX,b.maxX)-Math.max(a.minX,b.minX);
+            const iz=Math.min(a.maxZ,b.maxZ)-Math.max(a.minZ,b.minZ);
+            assert(!(ix>.15&&iz>.15),`snowtown has interpenetrating same-height cover at ${a.minX.toFixed(1)},${a.minZ.toFixed(1)} / ${b.minX.toFixed(1)},${b.minZ.toFixed(1)}`);
+          }
+        }
         // Stepped simulation: nothing goes NaN and the match keeps running
         const errs0=this.ui.errors.length;
         this.player.god=true;this.player.alive=true;this.invulnT=0;

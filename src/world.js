@@ -555,8 +555,8 @@ const LAYOUTS={
 
     /* Canyon west wall (lengthwise containers, one staggered crossing gap) */
     addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:seaBlue,x:-3,y:1.3,z:-13,ry:Math.PI/2,surface:'metal'});
-    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:rust,x:-3,y:1.3,z:-7.4,ry:Math.PI/2,surface:'metal'});
-    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:seaBlue,x:-3,y:3.9,z:-7.4,ry:Math.PI/2,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:rust,x:-3,y:1.3,z:-6.9,ry:Math.PI/2,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:seaBlue,x:-3,y:3.9,z:-6.9,ry:Math.PI/2,surface:'metal'});
     addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:mustard,x:-3,y:1.3,z:-.2,ry:Math.PI/2,surface:'metal'});
     /* Canyon east wall (3-high tower north of the wide east crossing, single layers south of it) */
     addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:charcoal,x:5,y:1.3,z:-12,ry:Math.PI/2,surface:'metal'});
