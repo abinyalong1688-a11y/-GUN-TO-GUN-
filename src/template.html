@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#0a0c14">
-<meta name="description" content="GUN TO GUN · single-file 3D FPS · 4 operators · 4 maps · 7 weapons · playable offline">
+<meta name="description" content="GUN TO GUN · browser 3D FPS · 8 operators · 4 maps · 7 weapons · no install">
 <meta property="og:title" content="GUN TO GUN · Tactical Faction Shooter">
-<meta property="og:description" content="Single-file 3D FPS · 4 operators · 4 maps · 7 weapons · playable offline">
+<meta property="og:description" content="Browser 3D FPS · 8 operators · 4 maps · 7 weapons · no install">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://abin-studio.github.io/gun-to-gun/">
 <link rel="manifest" href="manifest.webmanifest">
@@ -16,6 +16,13 @@
 <style>/*__CSS__*/</style>
 </head>
 <body>
+<!-- Static loading screen: no JS needed, painted while the bundle downloads (removed by main.js) -->
+<div id="boot">
+  <h1>GUN TO GUN</h1>
+  <div id="boot-faces"><!--__THUMBS__--></div>
+  <div id="boot-bar"><i></i></div>
+  <div id="boot-status"></div>
+</div>
 <div id="app">
   <div id="gl"></div>
 
@@ -124,7 +131,7 @@
           <input id="lobby-code" maxlength="5" placeholder="ROOM CODE" autocomplete="off" spellcheck="false">
           <button id="lobby-join" class="btn" data-i="lobby_join">JOIN</button>
         </div>
-        <button id="lobby-solo" class="btn" data-i="lobby_solo">SOLO TRAINING (offline · AI)</button>
+        <button id="lobby-solo" class="btn" data-i="lobby_solo">SOLO TRAINING (vs AI)</button>
       </div>
       <div id="lobby-room" class="hidden">
         <div class="lobby-code"><span class="lc-label" data-i="lobby_code">ROOM CODE</span><b id="lobby-code-val"></b><button id="lobby-copy" data-i="lobby_copy">COPY LINK</button></div>
@@ -232,16 +239,11 @@
     </div>
   </div>
 
-  <div id="sw-toast">
-    <span data-i="sw_update">New version ready</span>
-    <button id="sw-reload" class="btn-primary" data-i="sw_reload">RELOAD NOW</button>
-  </div>
-
   <div id="debug" class="hidden"></div>
 </div>
-<!-- The main bundle runs BEFORE the character payload: an interactive menu no longer has to
-     wait for the multi-megabyte GLB data. GLB tags below are inert (non-executing) and are
-     read on demand by modelAssets.js once the document finishes parsing. -->
+<!-- Web build: the bundle is the whole page; the character rigs are fetched separately after
+     the menu is up. Single-file build (npm run build:single): inert GLB tags follow the bundle
+     and are read on demand by modelAssets.js. -->
 <script>//__JS__</script>
 <!--__GLB__-->
 </body>

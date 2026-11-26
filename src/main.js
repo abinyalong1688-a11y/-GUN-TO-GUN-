@@ -40,6 +40,8 @@ import {LoopbackTransport} from './net.js';
 import {C,S,ROOM_CODE_RE} from './netProtocol.js';
 import {auditFeet} from './footAudit.js';
 import {terrainHeight} from './terrain.js';
+import {contrastCheck} from './contrastCheck.js';
+import {SquadAI} from './squadAI.js';
 
 const $=id=>document.getElementById(id);
 const UP=new THREE.Vector3(0,1,0);
@@ -51,12 +53,17 @@ const TUTORIAL=[
   {zh:'按 1 循环主武器,2 手枪,3 冲锋枪',en:'Press 1 to cycle primaries, 2 sidearm, 3 SMG'},
   {zh:'按 G / F / V 投掷破片 / 闪光 / 烟雾',en:'Press G / F / V for frag / flash / smoke'},
 ];
-const VERSION='1.12.1';
+const VERSION='1.13.0';
 const _rsO=new THREE.Vector3(); // reused ray-sphere test vector (zero allocation on the hot path)
 const DEBUG=typeof DEBUG_HOOKS!=='undefined'?DEBUG_HOOKS:true; // production build sets DEBUG_HOOKS=false
 
 class Game{
   constructor(){
+    // The static loading screen (top of <body>) has been visible since the first bytes of the page;
+    // localise its status line now that i18n is up. It is dismissed at the end of this constructor.
+    const bootStatus=$('boot-status');
+    if(bootStatus)bootStatus.textContent=t('boot_loading');
+    performance.mark('gtg:boot');
     this.shotMode=new URLSearchParams(location.search).get('shot');
     this.selftestMode=new URLSearchParams(location.search).has('selftest');
     this.e2eMode=new URLSearchParams(location.search).has('e2e');
@@ -179,19 +186,21 @@ class Game{
       pmrem.dispose();
     }catch(e){}
 
+    performance.mark('gtg:assets-start');
     this.assets=initAssets();
+    performance.mark('gtg:assets');
     this.portraits=new PortraitRenderer(this.assets);
     this.ui.portraits=this.portraits; // C4: menu operator card portraits
-    // GLB characters load in the background (?model=proc|gltf overrides); when they arrive the
-    // portrait cache is stale — clear it and rebuild the roster so cards switch to the new look.
-    // The character data sits in inert <script> tags AFTER this bundle: each rig starts decoding
-    // as soon as its tag streams in (waitForTag), long before the document finishes parsing.
-    // The menu is fully interactive meanwhile; the procedural builders cover the gap.
+    // Character rigs load in the background (?model=proc|gltf overrides). Web build: they are two
+    // separate files requested right after the menu is up (baked thumbnails cover the roster
+    // meanwhile); single-file build: inert tags after the bundle. When they arrive the portrait
+    // cache is stale — clear it and rebuild the roster so cards switch to the live renders.
     modelAssets.onReady(()=>{this.portraits.cache.clear();this.ui.buildOperators();});
-    preloadCharacters();
+    preloadCharacters({version:VERSION});
     this.audio=new AudioFX();
     if(this.mapOverride&&MAPS[this.mapOverride])this.ui.sel.map=this.mapOverride; // per-map screenshot / verification hook
     this.buildWorldFor(this.ui.sel.map);
+    performance.mark('gtg:world');
 
     this.effects=new Effects(this.scene,this.assets,this.quality,this.camera);
     this.effects.onShake=v=>{this.shake=Math.max(this.shake,v);};
@@ -209,6 +218,8 @@ class Game{
     this.pickups=new Pickups(this,this.scene,this.effects,this.audio,this.ui);
     this.radar=new Radar(document.getElementById('radar'));
     this.koth=new KothMode(this);
+    // Squad command layer above the bot brains (src/botai/): plans, lanes, roles per team
+    this.squad=new SquadAI(this);
     this.ray=new THREE.Raycaster();
     this.losRay=new THREE.Raycaster();
     // Reusable vector pool for shooting: avoids a new Vector3 per bullet and the resulting GC jitter
@@ -367,12 +378,13 @@ class Game{
 
     const ver=$('m-ver');
     if(ver)ver.textContent=`v${VERSION}`;
-    console.log(`%cGUN TO GUN v${VERSION}`,'color:#f0a860;font-weight:bold','· single file, playable offline');
+    console.log(`%cGUN TO GUN v${VERSION}`,'color:#f0a860;font-weight:bold','· plays in the browser, no install');
     // Dev capture hook (?shot=/* and ?portraits pages): expose the game instance so browser
     // automation can grab frames (captureFrame) and dump the rig bone map
     if(DEBUG&&(this.shotMode||this.portraitsMode||this.debugExpose)){
       window.__GTG_DEBUG__=this;
       window.__modelAssets=modelAssets;
+      window.__squadAI=this.squad; // console: __squadAI.debug()
       window.__GTG_OPS__=OPERATORS; // roster lineup captures (portraits.renderSheet)
     }
 
@@ -388,17 +400,19 @@ class Game{
     });
     addEventListener('resize',()=>this._resize());
     this._resize();
-    // PWA offline support: cached on first visit after deployment, can be reopened offline from cache (file:// needs no SW)
+    performance.mark('gtg:ready');
+    dismissBoot();
+    // Offline mode was removed: revisits use the host's normal HTTP cache. Returning visitors may
+    // still have the old service worker installed — unregister it once and drop its cache, otherwise
+    // it would keep answering from a stale copy forever (and hide the separate rig files).
     if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol)){
-      const hadController=!!navigator.serviceWorker.controller;
-      navigator.serviceWorker.addEventListener('controllerchange',()=>{
-        if(!hadController||this._swReloaded)return;
-        const toast=$('sw-toast');
-        if(toast)toast.classList.add('show');
-      });
-      const swBtn=$('sw-reload');
-      if(swBtn)swBtn.addEventListener('click',()=>{this._swReloaded=true;location.reload();});
-      addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').catch(()=>{});});
+      navigator.serviceWorker.getRegistrations()
+        .then(rs=>Promise.all(rs.map(r=>r.unregister().catch(()=>{}))))
+        .then(()=>{
+          if(typeof caches==='undefined')return;
+          return caches.keys().then(ks=>Promise.all(ks.filter(k=>k.startsWith('gtg-v')).map(k=>caches.delete(k))));
+        })
+        .catch(()=>{});
     }
   }
 
@@ -744,6 +758,7 @@ class Game{
     }
 
     this.state='playing';
+    if(this.squad)this.squad.beginMatch();
     this.audio.musicStart('combat');
     this._musicLow=false;
     this.ui.showOnly(null);
@@ -804,6 +819,7 @@ class Game{
     this._requestLock();
   }
   toMenu(){
+    if(this.squad)this.squad.endMatch();
     if(this.netMatch&&this.netMatch.phase!==PHASE.IDLE)this.netMatch.leave();
     this._uiLock=false;
     this.ui.setNetMode(false);
@@ -877,6 +893,7 @@ class Game{
     const cam=this.camera;
     const def=this.weapon.def;
     this.playerShotT=this.time;
+    if(this.squad)this.squad.onPlayerShot();
     // Industry standard: the shot uses the authoritative yaw/pitch at the moment of firing, not last frame's render camera (fast flicks neither lag nor drift)
     const pl=this.player;
     const kick=this.weapon.camKick||0, kickY=this.weapon.camKickYaw||0;
@@ -1067,6 +1084,7 @@ class Game{
       return;
     }
     if(!this.dm||!this.isArena())return;
+    if(this.squad)this.squad.onKill(killerName,victimHero);
     const k=this.dm.scores.get(killerName);
     if(k)k.kills++;
     const v=this.dm.scores.get(victimHero.name);
@@ -1111,6 +1129,7 @@ class Game{
           const k=this.dm&&this.dm.scores.get(fromName);
           if(k)k.kills++;
           this.ui.killFeed(fromName,this.playerName,t('kill_verb'),false);
+          if(this.squad)this.squad.onKill(fromName,'player');
           this._checkDmWin();
         }
       }
@@ -1170,6 +1189,9 @@ class Game{
   }
   _checkDmWin(){
     if(this.netMatch&&this.netMatch.active)return; // the DO decides the winner online
+    // Team deathmatch only. KOTH is decided by capture points (KothMode offline / the room server
+    // online) — its kill line is 0, so running the kill check there ended the match on first blood.
+    if(this.matchMode!=='dm')return;
     let a=0,b=0;
     for(const s of this.dm.scores.values()){
       if(s.team==='A')a+=s.kills;else b+=s.kills;
@@ -1179,7 +1201,7 @@ class Game{
   }
   _endDm(a,b){
     if(this.state==='over')return;
-    this.state='over';
+    this.squad.endMatch();this.state='over';
     const win=a>b;
     const lab=this._factionLabels();
     const rows=[...this.dm.scores.values()].sort((x,y)=>y.kills-x.kills)
@@ -1210,7 +1232,7 @@ class Game{
   /* Online result is rendered from the DO's s:end payload. No local best score, no leaderboard. */
   _endOnline(m={}){
     if(this.state==='over')return;
-    this.state='over';
+    this.squad.endMatch();this.state='over';
     this._uiLock=false;
     const score=m.score||this.dm?.score||{A:0,B:0};
     const win=m.win===this.playerTeam;
@@ -1262,7 +1284,7 @@ class Game{
   /* M4-P4: generic mode result (KOTH timeout / capture complete) */
   _endMode(win){
     if(this.state==='over')return;
-    this.state='over';
+    this.squad.endMatch();this.state='over';
     this.koth.end();
     const lab=this._factionLabels();
     const rows=[...this.dm.scores.values()].sort((x,y)=>y.kills-x.kills)
@@ -1288,6 +1310,9 @@ class Game{
 
   /* ================= Main loop ================= */
   tick(){
+    // A case that drives the simulation itself (and awaits between chunks) holds the loop, so no
+    // frame lands in one of its awaits and moves the camera / the clock under its assertions.
+    if(this._e2eHold)return;
     const dtRaw=Math.min(.05,this.clock.getDelta());
     let dt=dtRaw;
     // Hitch monitor: slow frame (>25ms) count and longest frame time
@@ -1317,7 +1342,7 @@ class Game{
       dt*=.3;
       this.dyingT-=dtRaw;
       if(this.dyingT<=0){
-        this.state='over';
+        this.squad.endMatch();this.state='over';
         // Waves is single-player: one death ends the run and shows the results screen.
         const best=parseInt(store.get('o07_best','0'))||0;
         if(this.score>best)store.set('o07_best',this.score);
@@ -1376,6 +1401,7 @@ class Game{
 
       if(this.isArena()){
         this._losLeft=16;                      // AI LOS budget for this frame (firing + cover sampling)
+        if(this.squad)this.squad.update(dt);  // orders first, so the brains can act on them this frame
         this.heroes.update(dt,this.time,(a,b)=>this._losCapped(a,b));
         if(this.mode==='koth'){
           const online=this.netMatch&&this.netMatch.active;
@@ -1405,6 +1431,7 @@ class Game{
       }else{
         // Single-player waves: drones are simulated and drawn locally.
         this._losLeft=16;
+        if(this.squad)this.squad.update(dt);
         this.heroes.update(dt,this.time,(a,b)=>this._losCapped(a,b));   // teammate avatars
         this.enemies.update(dt,this.player,this.world.colliders,this.time,this);
         this.waves.update(dt);
@@ -1698,8 +1725,9 @@ class Game{
       await new Promise(r=>{modelAssets.onReady(r);setTimeout(r,15000);});
     const results=[];let pass=0;
     const run=async(name,fn)=>{
-      try{await fn();results.push({name,ok:true});pass++;}
-      catch(err){results.push({name,ok:false,err:err&&err.message||String(err)});}
+      const t0=performance.now();
+      try{await fn();results.push({name,ok:true,ms:Math.round(performance.now()-t0)});pass++;}
+      catch(err){results.push({name,ok:false,ms:Math.round(performance.now()-t0),err:err&&err.message||String(err)});}
     };
     const assert=(c,m)=>{if(!c)throw new Error(m);};
     const stepW=n=>{for(let i=0;i<n;i++)this.weapon.update(.016,this.input,this.player,this.camera,this.time,()=>{});};
@@ -1954,20 +1982,184 @@ class Game{
     await run('koth-score',()=>{
       this.ui.sel.mode='koth';this.startGame();
       assert(this.koth.active&&this.koth.score.A===0,'KOTH should initialise');
-      this.player.pos.set(0,0,0);
+      this.player.pos.set(this.koth.pos.x,0,this.koth.pos.z); // stand on the hill, wherever the map put it
       this.player.alive=true;this.player.god=true;
       for(const h of this.heroes.list)h.alive=false;
       for(let i=0;i<120;i++)this.koth.update(.016);
       assert(this.koth.capture>0,'standing on the point should build capture progress');
+      assert(this.koth.score.A===0,'no points before the hill is captured (capture takes ≈3 s)');
+      this.koth.capture=1;this.koth.owner='A';
+      for(let i=0;i<30;i++)this.koth.update(1/30);
+      assert(this.koth.score.A>0.9&&this.koth.score.A<1.1,'one point per second of holding, got '+this.koth.score.A);
       this.koth.score.A=199;this.koth.score.B=0;
       this.koth.capture=1;this.koth.owner='A';
       this.koth.update(1);
       assert(this.state==='over','reaching 200 points should end the match');
-      assert(document.getElementById('koth-score').textContent.includes('209'),'KOTH HUD should show the final capture points');
+      assert(document.getElementById('koth-score').textContent.includes('200'),'KOTH HUD should show the final capture points (200)');
       const ob=document.getElementById('o-board');
       assert(ob.querySelectorAll('tr').length===7,'KOTH results should show 6 players (3v3) + header');
       assert(ob.textContent.includes(this.playerName),'KOTH results should list the player');
       this.startGame();
+    });
+    /* Every screen must keep light text off light backgrounds. Each overlay is opened with real
+       content, then contrastCheck() resolves text colour against the composited background. */
+    await run('contrast-no-light-on-light',()=>{
+      const ui=this.ui,root=id=>document.getElementById(id);
+      const hidden=id=>root(id).classList.contains('hidden');
+      const fails=[];
+      const check=name=>{for(const f of contrastCheck().fails)fails.push(name+' '+JSON.stringify(f));};
+      // a menu with every mode / map chip selected in turn + both lobby sub-views + a filled results page
+      const prev={...ui.sel};
+      ui.showOnly('menu');
+      for(const mode of ['dm','koth','waves']){ui.sel.mode=mode;try{ui.refreshModes&&ui.refreshModes();}catch(e){}check('menu['+mode+']');}
+      for(const m of Object.keys(MAPS)){ui.sel.map=m;check('menu[map '+m+']');}
+      Object.assign(ui.sel,prev);
+      // The detector must be able to fail: an option that loses its opaque background is exactly
+      // the white-on-white bug (the OS popup sheet shows through), so it has to be reported.
+      const opt=document.querySelector('#m-quality option'),bg=opt.style.backgroundColor;
+      opt.style.backgroundColor='rgba(0,0,0,0)';
+      const caught=contrastCheck().fails.length;
+      opt.style.backgroundColor=bg;
+      assert(caught>0,'the contrast detector must flag an option without an opaque background');
+      assert(contrastCheck().fails.length===0,'…and the stylesheet in place keeps every screen clean');
+      ui.showOnly('lobby');
+      root('lobby-home').classList.remove('hidden');root('lobby-room').classList.add('hidden');check('lobby-home');
+      root('lobby-home').classList.add('hidden');root('lobby-room').classList.remove('hidden');check('lobby-room');
+      root('lobby-home').classList.remove('hidden');root('lobby-room').classList.add('hidden');
+      ui.showOnly('pause');ui.setNetMode(false);check('pause');ui.setNetMode(true);check('pause-net');
+      ui.setNetMode(false);
+      ui.showTutorial(TUTORIAL,()=>{});check('tutorial');ui.closeTutorial(false);
+      this.ui.sel.mode='waves';this.startGame();this.openUpgrade();
+      if(this.state==='upgrade'){check('upgrades');applyUpgrade(this,'dmg');}
+      this.ui.sel.mode='dm';this.startGame();this.fallbackAim=true;
+      ui.showOver({title:t('win'),win:true,kicker:t('dm_over_kicker'),
+        stats:{time:123,kills:9,critKills:2,hits:40,shots:60,score:900,best:1200,bestCombo:3,mvp:{name:'Raven',op:byId('raven'),kills:9,deaths:1}},
+        board:`<table><tr><th>${t('sb_kills')}</th><th>${t('sb_deaths')}</th></tr><tr class="me"><td>9</td><td>1</td></tr></table>`});
+      check('over');
+      // HUD / scoreboard during play
+      ui.showOnly(null);check('hud');
+      window.dispatchEvent(new KeyboardEvent('keydown',{code:'Tab',key:'Tab',bubbles:true,cancelable:true}));
+      check('scoreboard');
+      window.dispatchEvent(new KeyboardEvent('keyup',{code:'Tab',key:'Tab',bubbles:true}));
+      ui.showOnly('menu');this.startGame();
+      assert(fails.length===0,'low-contrast text on: '+fails.slice(0,6).join(' | '));
+    });
+    await run('koth-first-blood-no-end',()=>{
+      this.ui.sel.mode='koth';this.startGame();
+      // 25 kills used to satisfy KOTH's kill line (0) → "match over" on the very first kill
+      for(const s of this.dm.scores.values())if(s.team==='A')s.kills=25;
+      const foes=this.heroes.list.filter(h=>h.team==='B');
+      foes[0].takeDamage(9999,this.playerName,true);
+      assert(this.state==='playing'&&this.koth.done===false,'a kill must not end King of the Hill');
+      assert(this.dm.timer>230,'the match clock should still be running');
+      this.player.god=false;this.player.health=1;this.player.alive=true;
+      this.damagePlayerFromBot(999,foes[1].name,foes[1].pos);
+      assert(this.state!=='over','the player dying must not end King of the Hill');
+      this.player.god=true;this.startGame();
+    });
+    await run('koth-hill-open-4maps',()=>{
+      // The hill is placed on open ground: its whole disc must be clear of static geometry on
+      // every map (the dock map used to have 9 containers and pillars inside the point).
+      const map0=this.ui.sel.map,mode0=this.ui.sel.mode;
+      for(const k of ['desert','snow','snowtown','ember']){
+        this.ui.sel.map=k;this.ui.sel.mode='koth';this.startGame();
+        const p=this.koth.pos,r=this.koth.radius;
+        assert(Math.hypot(p.x,p.z)<=30,k+': hill should stay near the middle of the arena');
+        // ember is dense: its best site keeps tall obstacles ≥ 7.5 m from the centre (a sliver of
+        // cover may poke into the outer edge of the ring); the other three maps get the full 8 m
+        assert(this.koth.clearance>=r-.5,k+': hill should sit on open ground (clearance '+this.koth.clearance.toFixed(1)+')');
+        for(const c of this.world.colliders){
+          if(c.top<=1)continue; // low rocks / kerbs can be walked over
+          const dx=Math.max(c.minX-p.x,0,p.x-c.maxX),dz=Math.max(c.minZ-p.z,0,p.z-c.maxZ);
+          assert(Math.hypot(dx,dz)>=r-.5,k+': collider overlaps the hill: '+JSON.stringify([c.minX,c.maxX,c.minZ,c.maxZ])+' hill '+p.x.toFixed(1)+','+p.z.toFixed(1));
+        }
+        assert(this.koth.marker&&this.koth.marker.grp.parent===this.scene,k+': hill marker should be in the scene');
+      }
+      this.ui.sel.map=map0;this.ui.sel.mode=mode0;this.startGame();
+    });
+    /* The squad command layer must really run: it is wrapped in a safety net, so a bug inside it
+       would otherwise fail silently and leave every bot on its own patrol. */
+    const breathe=()=>new Promise(r=>setTimeout(r,0)); // let the runner's poll through during long sims
+    await run('squad-ai-orders',async()=>{
+      this._e2eHold=true;                                       // this case steps the world itself
+      try{
+      for(const mode of ['dm','koth']){
+        this.ui.sel.mode=mode;this.ui.sel.map='snowtown';this.startGame();
+        this.player.god=true;this.player.pos.set(0,0,46);
+        for(let i=0;i<400;i++){
+          this._losLeft=16;this.squad.update(.016);
+          this.heroes.update(.016,this.time+i*.016,(a,b)=>this._losCapped(a,b));
+          if(mode==='koth')this.koth.update(.016);
+          if(i%60===0)await breathe();
+        }
+        assert(this.squad.enabled&&this.squad.ai,'squad layer is active ('+mode+')');
+        assert(!(this.squad.failures>0),'squad layer ran without failures ('+mode+'): '+(this.squad.failures||0));
+        assert(this.squad.units.size===this.heroes.list.length,'every local bot is a squad unit');
+        const d=this.squad.ai.director;
+        assert(d.teams.A.plan&&d.teams.B.plan,'both teams hold a plan ('+mode+')');
+        assert(['attack','defense'].includes(d.teams.A.plan.kind),'plan kinds are attack / defense');
+        const kinds=new Set([...this.squad.units.values()].map(u=>u.order&&u.order.kind));
+        assert(kinds.has('move')||kinds.has('hold'),'orders reach the bots ('+mode+'): '+[...kinds]);
+        const sets=this.heroes.list.map(h=>h.brain.params);
+        assert(new Set(sets).size===sets.length,'each brain owns its parameter set');
+        assert(this.heroes.list.every(h=>h.brain.baseParams===this.heroes.list[0].brain.baseParams||h.faction!==this.heroes.list[0].brain.faction),'…while the presets stay shared per faction');
+      }
+      this.squad.endMatch();this.ui.sel.map='desert';this.ui.sel.mode='dm';this.startGame();
+      }finally{this._e2eHold=false;}
+    });
+    await run('bot-order-crosses-map',async()=>{
+      this._e2eHold=true;                                       // this case steps the world itself
+      try{
+      /* A single order across the whole map is followed through the bot's own navigation. The dock
+         and caldera maps keep spawn pockets behind big buildings: the bot's 10 m planner finds no
+         route there, and an empty waypoint list used to latch and pin the bot in place. */
+      for(const k of ['snowtown','ember']){
+        this.ui.sel.map=k;this.ui.sel.mode='dm';this.startGame();
+        const bot=this.heroes.list.find(h=>h.team==='A');
+        // nobody else on the map (alive=false alone would leave the others fighting): pure navigation
+        const everyone=this.heroes.list;this.heroes.list=[bot];
+        this.player.god=true;this.player.pos.set(0,0,46);
+        bot.place(new THREE.Vector3(this.spawns.A.x,0,this.spawns.A.z),0);
+        bot._route=null;bot.vel.set(0,0,0);bot.brain.reset();bot._blockT=0;
+        const goal=new THREE.Vector3(this.spawns.B.x,0,this.spawns.B.z);
+        const d0=bot.pos.distanceTo(goal);
+        const order={kind:'move',goal:[goal.x,goal.z],lookAt:[goal.x,goal.z],label:'TEST'};
+        for(let i=0;i<1500;i++){                                           // 24 s
+          this.squad.ai.director.teams.A.lastOrder['h'+bot.id]={...order,until:this.squad.time+30};
+          this._losLeft=16;this.squad.update(.016);
+          this.heroes.update(.016,this.time+i*.016,(a,b)=>this._losCapped(a,b));
+          if(i%60===0)await breathe();
+        }
+        const d1=bot.pos.distanceTo(goal);
+        this.heroes.list=everyone;
+        assert(d1<3,k+': the bot should reach a whole-map order ('+d0.toFixed(1)+' → '+d1.toFixed(1)+' m in 24 s)');
+      }
+      this.ui.sel.map='desert';this.startGame();
+      }finally{this._e2eHold=false;}
+    });
+    await run('bot-empty-route-replans',()=>{
+      this.ui.sel.map='snowtown';this.ui.sel.mode='dm';this.startGame();
+      const bot=this.heroes.list.find(h=>h.team==='A');
+      for(const h of this.heroes.list)if(h!==bot)h.blindT=999;              // everyone else stands still
+      this.squad.setEnabled(false);                                         // hand the order straight to the brain
+      bot.place(new THREE.Vector3(this.spawns.A.x,0,this.spawns.A.z),0);
+      bot._route=[];bot.vel.set(0,0,0);bot.brain.reset();                   // the state that used to latch
+      const goal=new THREE.Vector3(this.spawns.B.x,0,this.spawns.B.z);
+      const order={kind:'move',goal:[goal.x,goal.z],lookAt:[goal.x,goal.z]};
+      let planned=false,empty=0;
+      for(let i=0;i<240;i++){
+        bot.blindT=0;bot.brain.squadOrder=order;
+        this.heroes.update(.016,this.time+i*.016,(a,b)=>this._losCapped(a,b));
+        if(bot._route&&bot._route.length)planned=true;
+        // the list may be empty for the few frames between "last waypoint reached" and the next
+        // planning frame — but it must never STAY empty (that latched before this fix)
+        if(bot._route&&!bot._route.length)empty++;else empty=0;
+        assert(empty<=4,'an empty waypoint list must not persist ('+empty+' frames)');
+      }
+      this.squad.setEnabled(true);
+      assert(planned,'a route toward the enemy spawn gets planned (local or whole-map)');
+      assert(bot.pos.distanceTo(goal)<44,'and the bot is under way ('+bot.pos.distanceTo(goal).toFixed(1)+' m left of 48)');
+      this.ui.sel.map='desert';this.startGame();
     });
     await run('accessibility',()=>{
       this.settings.set('reduceMotion',true);
@@ -2937,6 +3129,15 @@ class Game{
       this.ui.debug('SELFTEST FAIL '+err.message,true);
     }
   }
+}
+
+/* Loading screen → menu. It painted while this bundle was still downloading; fade it out once the
+   first frame can be rendered and drop it from the DOM. */
+function dismissBoot(){
+  const boot=$('boot');
+  if(!boot||boot.classList.contains('done'))return;
+  boot.classList.add('done');
+  setTimeout(()=>{if(boot.parentNode)boot.parentNode.removeChild(boot);},700);
 }
 
 new Game();

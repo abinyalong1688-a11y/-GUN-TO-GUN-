@@ -166,6 +166,9 @@ try {
   }
   const failed = result.results.filter(r => !r.ok);
   for (const row of result.results) console.log(`${row.ok ? 'PASS' : 'FAIL'}  ${row.name}${row.ok ? '' : ' :: ' + row.err}`);
+  // a case that blocks the page for ~30 s starves the DevTools poll (CDP timeout) — keep them visible
+  const slow = result.results.filter(r => r.ms >= 4000).sort((a, b) => b.ms - a.ms);
+  if (slow.length) console.log('[e2e] slow cases: ' + slow.map(r => `${r.name} ${(r.ms / 1000).toFixed(1)}s`).join(' · '));
   console.log(`\n[e2e] ${result.pass}/${result.results.length} PASS, ${result.fail} FAIL`);
   exitCode = failed.length ? 1 : 0;
 } catch (err) {

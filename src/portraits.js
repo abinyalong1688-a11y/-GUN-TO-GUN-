@@ -1,10 +1,17 @@
 // portraits.js — offscreen 3D portrait renderer (roster / kill card / MVP / share card):
 //   · singleton WebGLRenderer (alpha, transparent background), lazily initialised;
 //   · results cached as dataURLs keyed by def.id|camo|size, no external images;
-//   · GLB-only: renders nothing until the shared rigs are loaded — the UI falls back to a
-//     CSS gradient placeholder while they stream in, and main.js rebuilds the roster on
-//     modelAssets.onReady (no procedural character is ever drawn here);
+//   · GLB-only for live renders: until the shared rigs are downloaded, bust portraits come from
+//     the BAKED thumbnails below (real faces, tiny JPEGs inside the bundle), so the roster never
+//     shows an empty placeholder while loading; main.js rebuilds the roster on modelAssets.onReady;
 //   · without WebGL / on init failure render() returns null and the UI falls back to a CSS gradient.
+
+/* Baked thumbnails: scripts/bake-portraits.mjs renders every operator with this same class and
+   writes src/portraits.baked.json, which build.mjs inlines as __GTG_PORTRAITS__ (ops → JPEG
+   dataURL, default camo, bust framing, on the card's faction gradient). Absent in dev / debug
+   bundles, and for non-default camos or non-bust frames → null (CSS placeholder as before). */
+const BAKED=(typeof __GTG_PORTRAITS__!=='undefined'&&__GTG_PORTRAITS__&&__GTG_PORTRAITS__.ops)||{};
+export const hasBakedPortrait=id=>!!BAKED[id];
 import * as THREE from 'three';
 import {buildOperatorMeshGLTF} from './character.js';
 import {modelAssets} from './modelAssets.js';
@@ -54,10 +61,10 @@ export class PortraitRenderer{
   }
 
   /* Returns a dataURL, or null on failure; frame: 'full' body / 'bust'.
-     GLB-only: until the shared rigs are loaded we return null (CSS placeholder) instead of
-     rendering a procedural body that would be thrown away moments later. */
+     Until the shared rigs are downloaded a bust portrait is the baked thumbnail (so the menu has
+     faces from the first frame); anything else waits for the rigs and otherwise returns null. */
   render(def,camo='default',size=512,{frame='full'}={}){
-    if(!modelAssets.isReady())return null;
+    if(!modelAssets.isReady())return frame==='bust'&&camo==='default'?(BAKED[def.id]||null):null;
     const key=`${modelAssets.mode()}|${def.id}|${camo}|${size}|${frame}`;
     if(this.cache.has(key))return this.cache.get(key);
     this._init();

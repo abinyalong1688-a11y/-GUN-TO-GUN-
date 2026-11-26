@@ -1,14 +1,16 @@
 # GUN TO GUN
 
-A single-file 3D FPS web game — faction combat · four maps · 8 realistic weapons · real physics (gravity / jumping / crouching / recoil ballistics) · male & female operatives · 3v3 behavior-tree AI deathmatch · endless waves.
+A browser 3D FPS — faction combat · four maps · 8 realistic weapons · real physics (gravity / jumping / crouching / recoil ballistics) · male & female operatives · 3v3 squad-AI deathmatch · endless waves. Plays from a link, no install.
 
-Designed and developed end-to-end as an original project: every system — rendering, physics, weapons, characters, AI, audio, UI — is implemented in-house and bundled into one self-contained HTML file.
+Designed and developed end-to-end as an original project: every system — rendering, physics, weapons, characters, AI, audio, UI — is implemented in-house.
 
 ## Play
 
 **Play online: https://abinyalong1688-a11y.github.io/-GUN-TO-GUN-/**
 
-Or **double-click [`dist/gun-to-gun.html`](dist/gun-to-gun.html)** (~3.1 MB / 1.6 MB gzipped, zero external requests, fully playable offline).
+**Play online: https://abinyalong1688-a11y.github.io/-GUN-TO-GUN-/** — the page reaches the menu after a ~1.1 MB download; the two character models (0.85 MB) stream in behind it while a static loading screen shows the squad.
+
+Offline / from disk: **`npm run build:single`**, then double-click `dist-single/gun-to-gun.html` (one self-contained file, no server needed).
 
 | Key | Action |
 |---|---|
@@ -72,11 +74,23 @@ Four hand-built arenas, each a distinct scene with its own layout, sky, lighting
 
 ## Game Modes
 
-- **Endless Waves (solo, offline)**: defend the outpost alone against three drone classes with detailed silhouettes — WASP (kamikaze) / REAPER (roaming shooter) / WARDEN (heavy: glowing sensor windows, core guard rings, wing plates / claw feet / gun shields, rotor hubs, breathing red-core pulse). Red-core crits ×2.5
-- **6-Player Deathmatch (3v3, offline)**: you + 2 same-faction AI teammates vs 3 enemy AI. Nova fires controlled bursts, Rogue sprays. 3-minute matches; first to 25 kills ends it early, otherwise the higher kill count wins. Killfeed, TAB scoreboard and respawns — a human death counts on the board and credits the killing bot
-- **King of the Hill (3v3, offline)**: the same 3v3 squads contest the centre control point; first to 200 capture points wins
+- **Endless Waves (solo, vs AI)**: defend the outpost alone against three drone classes with detailed silhouettes — WASP (kamikaze) / REAPER (roaming shooter) / WARDEN (heavy: glowing sensor windows, core guard rings, wing plates / claw feet / gun shields, rotor hubs, breathing red-core pulse). Red-core crits ×2.5
+- **6-Player Deathmatch (3v3, vs AI)**: you + 2 same-faction AI teammates vs 3 enemy AI. Nova fires controlled bursts, Rogue sprays. 3-minute matches; first to 25 kills ends it early, otherwise the higher kill count wins. Killfeed, TAB scoreboard and respawns — a human death counts on the board and credits the killing bot
+- **King of the Hill (3v3, vs AI)**: the same 3v3 squads contest a control point (radius 8 m, marked by a ground ring and a light pillar — cyan when NOVA holds it, orange for ROGUE). **1 point per second of holding it** (+2 while contested); first to **200** wins, otherwise the higher score when the 4-minute clock runs out. Kills are only K/D here. The hill is placed per map on the most open ground near the centre (`pickHill` in `src/modes.js`), so the whole capture zone is walkable
 - **Friends 5v5 (online only)**: room-code lobbies with the same behavior-tree AI filling empty slots (9 AI + player in solo training). Fixed sides A=NOVA / B=ROGUE, snapshot interpolation for remote players, server-authoritative hits/score and a 5-minute room timer. Requires the Worker room service (`/rooms`). The other modes all stay offline
-  - Note: true networked multiplayer requires a persistent server, which conflicts with the "single file, offline-playable" goal — deathmatch delivers the same arena experience with AI combatants
+  - Note: online rooms need the Worker room service (`/rooms`); every other mode runs entirely in the browser
+
+## Squad Command Layer (v1.13)
+
+`src/botai/` + `src/squadAI.js` add a commander **above** the per-bot brains. The brains keep doing what they did (perception, aiming, firing, fight footwork, cover, local avoidance); the commander decides *where the squad should be* and hands each local bot an order — move to (x, z) and look at (x, z), or hold a spot facing an entrance:
+
+- **Nav grid** — the whole arena baked into a 0.5 m walkable grid with clearance (A*, line of sight, smoothing). Also the fallback router for a bot whose own 10 m planner finds no way out of a spawn pocket.
+- **Tactical map** — cover points, attack lanes (main / flank / lurk with danger / length / exposure scoring), hill entrances and defensive positions derived from the grid.
+- **Influence map** — each team's fire coverage plus a decaying death heat; feeds lane scoring and path cost.
+- **Squad director** — per team and per phase (attack / defend / escort): lane choice, role assignment by persona (entry / support / flank / lurk / bait, anchor / rotator), timed execution, lane swap after repeated deaths on one lane, crossfire triggers, a Bayesian "which entrance are they coming from" with rotations, gather-then-push retakes, and trade orders for the teammate nearest a kill.
+- **Learning** — in-match: a Thompson bandit over attack/defence plans, an opponent route model, and a per-bot engagement tuner. Across matches (offline / solo training only): plan statistics and a bounded difficulty controller (0.8–1.25× on reaction / aim / pause) that pulls the human's win rate toward 50 %. Online rooms get tactics only.
+
+The layer is explicit glue, not monkey-patching: `main.js` calls `squad.update()` before the bots think and reports kills / shots; `botBrain.actPatrol` follows an order only from the idle branch, so combat always outranks it. Each brain owns a private copy of its parameter set (the presets are shared and read-only). A safety net around `update()` means a bug in the layer can never halt a frame; after repeated failures it falls back to the brains' own patrol. `?botai=0` switches it off. Under `?debug=1` the console object `__squadAI` exposes `.debug()`.
 
 ## Bot Combat AI (v1.11)
 
@@ -132,10 +146,13 @@ build.mjs     esbuild bundle into a single HTML file
 
 ```bash
 npm install        # three@0.170.0 + esbuild
-npm run build      # produces dist/gun-to-gun.html
-npm test           # unit tests (node --test): utils / weapons / attachment / physics / waves / bot AI / navigation / evolution / online protocol & rooms (202 tests)
-npm run test:e2e   # headless Chrome/Edge integration suite (?e2e=1), 76 assertions
+npm run build          # web build → dist/: gun-to-gun.html (~1.1 MB) + assets/characters/{female1,male1}.glb + manifest + icons
+npm run build:single   # one self-contained page → dist-single/gun-to-gun.html (double-click, file://)
+npm run bake:portraits # re-render the operator thumbnails baked into the bundle (after a look change)
+npm test           # unit tests (node --test): utils / weapons / attachment / physics / waves / bot AI / navigation / evolution / KOTH rules / squad AI / online protocol & rooms (236 tests)
+npm run test:e2e   # headless Chrome/Edge integration suite (?e2e=1), 82 assertions
 npm run evolve     # regenerate the GA-tuned bot doctrine (src/botTuning.js)
+npm run test:load   # slow-link loading check (60 KB/s): loading screen, menu, model switch (append -- --gpu for real boot numbers)
 npm run serve      # local server http://127.0.0.1:8137/ (testing only)
 npm run server:dev # local Worker room service (wrangler dev), for online 5v5 testing
 ```
@@ -146,18 +163,20 @@ Built-in verification hooks:
 
 - `?shot=menu|combat|dm|over` — jump straight into a state for screenshot review
 - `?selftest=1` — weapon self-test (primary hit-kill + Desert Eagle semi-auto + UMP-45 full-auto burst); results in the debug bar and console
-- `?e2e=1` — **system integration test**: 76 end-to-end assertions (loading / ADS / recoil ballistics / gravity / landing / crouch / weapons / attachment integrity / crits / XSS / 360° look / **bot perception & memory** / **target priority** / **hearing** / **firing-line blocking** / **difficulty presets** / **DM / KOTH / waves scoreboards** / **player-death scoring** / **online 5v5 AI fill, sides and loopback networking**); results in `window.__e2e` and the debug bar; deterministic, reproducible in background tabs
+- `?e2e=1` — **system integration test**: 82 end-to-end assertions (loading / ADS / recoil ballistics / gravity / landing / crouch / weapons / attachment integrity / crits / XSS / 360° look / **bot perception & memory** / **target priority** / **hearing** / **firing-line blocking** / **difficulty presets** / **DM / KOTH / waves scoreboards** / **KOTH first blood, pacing and hill placement** / **squad orders, whole-map routing, empty-route latch** / **text contrast on every screen** / **player-death scoring** / **online 5v5 AI fill, sides and loopback net**); result on `window.__e2e`
+- `?debug=1` — exposes `__GTG_DEBUG__` (the game), `__squadAI` and `__modelAssets` for the console
 - `?perf=1` — hitch monitor: slow-frame (>25 ms) count and max frame time reported to console periodically
 - `?ipcc=US` / `?ipcc=CN` — force the interface language (default: auto by IP — English overseas / Chinese in China; silent fallback on probe failure)
 
-## Cloud Deployment & Offline Mode
+## Deployment & Loading
 
-When hosting in the cloud, **upload the `dist/` trio together**: `gun-to-gun.html` + `sw.js` + `manifest.webmanifest`.
+When hosting in the cloud, **upload the whole `dist/` folder**: `gun-to-gun.html` + `assets/characters/*.glb` + `manifest.webmanifest` + icons. The character models are separate files in the web build (they are fetched right after the menu is up); uploading only the HTML leaves the game on its procedural characters.
 
-- **Offline mode (PWA)**: a built-in Service Worker caches the game on the first online visit, so it **reopens instantly from cache with no network** (navigation is stale-while-revalidate: the cached copy is served immediately and a fresh copy is fetched in the background for the next visit); also supports browser "install to desktop" for fullscreen play
-- **First-visit loading**: the HTML is ~3.1 MB (1.6 MB gzipped) and ~70 % of it is the four shared rigged character GLBs (v1.10 cut the gzipped payload by ~46 %). The main bundle is placed **before** that payload, so the menu becomes interactive after only ~270 KB of transfer; the models live in inert `<script type="application/octet-stream">` tags read on demand once parsing completes (procedural characters cover the gap). On the ~27 KB/s link measured from mainland China, full download drops from ~111 s to ~60 s while time-to-interactive stays unchanged.
-- **Language detection**: the hosted version detects the UI language from the client IP (English overseas / Chinese in China). This is the only optional external call — it fails silently offline and never affects the game itself (the game body remains zero-external-request)
-- Cross-origin probe requests are never cached; the SW cache is purged automatically by version number on updates. The SW pre-cache list must not contain `./` — `/dist/` has no index and returns 404 on GitHub Pages, which makes `caches.addAll()` reject the whole install
+- **Loading, step by step** (measured at 60 KB/s on a slow link, `npm run test:load`): the first bytes already paint a static loading screen with the eight operator faces (baked thumbnails ride in the HTML, no JS needed) → after the ~1.1 MB program download the menu appears with the same faces → the two rigs (0.85 MB) finish and the cards / characters switch to the live models. Before v1.13 the whole 3.3 MB page — 2 MB of it base64 models — had to arrive before anything ran.
+- **No offline worker**: the service worker was removed; revisits rely on the host's normal HTTP cache. Returning visitors may still have the old worker registered, so the page unregisters it once and drops its cache.
+- **Language detection**: the hosted version detects the UI language from the client IP (English overseas / Chinese in China). This is the only optional external call — it fails silently and never affects the game itself.
+- **Single-file build**: `npm run build:single` embeds the rigs after the bundle (inert `<script>` tags read on demand) for play from `file://`; it makes no separate requests at all.
+
 
 ## Production Hardening
 
@@ -198,6 +217,7 @@ Security / stability / performance work done to a ship-ready standard:
 - [x] Behavior-tree bot combat AI: view cone / LOS / smoke occlusion / gunfire hearing / damage alerts / bounded memory
 - [x] Bot tactics: target priority, ballistic lead, strafe/flank, tactical reload, low-health cover retreat, last-known search, objective patrol, firing-line hold fire
 - [x] Offline GA self-tuning of bot tactical doctrine (`npm run evolve`) with bounded parameters and a committed winning genome
+- [x] Squad command layer: nav grid, tactical map, influence map, plans / roles / rotations / retakes, per-bot parameter isolation, whole-map routing fallback
 - [x] Mode-aware scoreboards: DM/KOTH team tables with live HUD scores, waves run panel, player deaths credited to the killing bot, stale boards cleared on transitions
 - [x] Production hardening: nickname XSS escaping, dirty-storage fallbacks, context-loss recovery, exception circuit breaker, zero-allocation hot paths, map-switch disposal
-- [x] Zero console errors; single-file build ~3.1 MB (1.6 MB gzipped, 4 shared rigged GLBs); zero external requests; playable offline
+- [x] Zero console errors; web build ~1.1 MB page + 0.85 MB character rigs loaded after the menu, two shared rigs (one male, one female); single-file build available (`build:single`); static loading screen with operator faces; no install

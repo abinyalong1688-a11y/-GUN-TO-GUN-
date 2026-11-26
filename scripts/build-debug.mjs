@@ -20,7 +20,7 @@ const result = await esbuild.build({
 
 let js = result.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
 
-const SHARED_MODELS = ['female1', 'male1', 'male11', 'female11'];
+const SHARED_MODELS = ['female1', 'male1'];
 let glbTags = '';
 for (const g of SHARED_MODELS) {
   try {

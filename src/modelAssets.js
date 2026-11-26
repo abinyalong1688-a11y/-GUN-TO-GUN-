@@ -1,6 +1,10 @@
 // modelAssets.js — GLB character asset pipeline (rigged models):
-//   preloadCharacters()  start loading the shared rigs once at boot; inert data-URL tags in
-//                        the single-file build (window.__GTG_GLB__ legacy), relative fetch in dev.
+//   preloadCharacters()  start loading the shared rigs once at boot. Sources, in order:
+//                        1. inert data-URL tag in the single-file build (GTG_SINGLE=1),
+//                        2. legacy window.__GTG_GLB__,
+//                        3. relative fetch of assets/characters/<rig>.glb (web build / dev server).
+//                        The web build keeps the rigs OUT of the page: the menu comes up after the
+//                        ~1.3 MB bundle and the models stream in behind it, with retries.
 //   cloneCharacter(g)    instance a normalized template via SkeletonUtils.clone, with
 //                        per-instance cloned materials (hit flash / corpse fade stay independent).
 //   mode()               'gltf' when models are ready and not forced off → character.js
@@ -69,9 +73,9 @@ const tagOf=name=>{
   const el=document.getElementById('gtg-glb-'+name);
   return el&&el.textContent.length>TAG_LEN?el.textContent.trim():null;
 };
-/* Wait for a tag that is still streaming in: the build puts the GLB tags AFTER the bundle,
-   so each rig becomes decodable as its bytes arrive — long before DOMContentLoaded fires.
-   Polling ends the moment parsing finishes without the tag (dev server has no tags at all). */
+/* A tag is complete only once its closing </script> has been parsed; while the document is still
+   streaming (single-file build) poll until it is. In the web build there is no tag at all and the
+   document is small, so this resolves on the first poll and the fetch starts right away. */
 function waitForTag(name){
   const hit=tagOf(name);
   if(hit||typeof document==='undefined'||document.readyState!=='loading')
@@ -80,18 +84,29 @@ function waitForTag(name){
     const poll=()=>{
       const hit=tagOf(name);
       if(hit)return res(hit);
-      if(document.readyState!=='loading')return res(null); // parsing done, no tag → dev fallback
+      if(document.readyState!=='loading')return res(null); // parsing done, no tag → fetch
       setTimeout(poll,60);
     };
     poll();
   });
 }
+/* Cache-buster so a new deploy never reuses a stale rig from the HTTP cache (set by preloadCharacters) */
+let _ver='';
+/* Build flag (build.mjs): false in the web build → no tag will ever appear, so the rig fetch
+   starts immediately instead of polling until the document finishes parsing. Undefined in the
+   debug bundle → fall back to polling. */
+const EMBEDDED=typeof __GTG_RIGS_EMBEDDED__!=='undefined'?__GTG_RIGS_EMBEDDED__:null;
 async function glbSource(name){
+  if(EMBEDDED===false)return `assets/characters/${name}.glb${_ver?'?v='+encodeURIComponent(_ver):''}`;
   const legacy=(typeof window!=='undefined')&&window.__GTG_GLB__&&window.__GTG_GLB__[name];
   if(legacy)return legacy;
   const tag=await waitForTag(name);
   if(tag)return tag;
-  return `assets/characters/${name}.glb`; // dev server / extracted build: fetch relative GLBs
+  /* file:// has no tag in the web build and Chrome blocks fetch() of local files: fail fast
+     (procedural fallback) instead of burning retries. Double-click play = the single-file
+     build (npm run build:single), whose tag is found above. */
+  if(typeof location!=='undefined'&&location.protocol==='file:')throw new Error('no embedded model for '+name+' under file://');
+  return `assets/characters/${name}.glb${_ver?'?v='+encodeURIComponent(_ver):''}`;
 }
 function toArrayBuffer(src){
   if(src.startsWith('data:')){
@@ -101,10 +116,23 @@ function toArrayBuffer(src){
     for(let i=0;i<bin.length;i++)buf[i]=bin.charCodeAt(i);
     return Promise.resolve(buf.buffer);
   }
-  return fetch(src).then(r=>{
-    if(!r.ok)throw new Error(`HTTP ${r.status}`);
-    return r.arrayBuffer();
-  });
+  /* fetch() only resolves once the WHOLE body is in, so a rig is never parsed from a truncated
+     download. A dropped / flaky request is retried with backoff instead of giving up for good. */
+  return fetchBytes(src,3);
+}
+async function fetchBytes(src,tries){
+  let lastErr=null;
+  for(let i=0;i<tries;i++){
+    try{
+      const r=await fetch(src,{cache:'no-cache'});
+      if(!r.ok)throw new Error(`HTTP ${r.status}`);
+      return await r.arrayBuffer();
+    }catch(e){
+      lastErr=e;
+      if(i<tries-1)await new Promise(res=>setTimeout(res,400*(i+1)));
+    }
+  }
+  throw lastErr;
 }
 /* One loader, meshopt-capable: compressed GLBs (EXT_meshopt_compression) need the decoder.
    Cache the SETUP PROMISE, not the instance — male/female load concurrently and the second
@@ -126,26 +154,23 @@ function loader(){
   return _loaderP;
 }
 
-/* Cross-shared gender pools: 4 rigs, each used once per faction, so all four operators on
-   a team have a different silhouette. Team identity now comes from FACTION_PALETTES
-   (jacket / armour / cloth / accent), not from which rig a faction owns.
-     female pool: female1  → frost (Nova), viper (Rogue)
-                  female11 → swift (Nova), fox   (Rogue)
-     male   pool: male1    → snowwolf (Nova), vulture (Rogue)
-                  male11   → thunder  (Nova), raven   (Rogue)
-   Unused source rigs stay in assets/ so the 8-rig build can be restored by changing
-   this map + build.mjs SHARED_MODELS. */
-const MODEL_KEYS=['female1','male1','male11','female11'];
+/* ONE male + ONE female rig are shared by the whole 8-operator roster (per-operator identity
+   comes from FACTION_PALETTES, camos and addExtrasGLTF). Loading two files instead of four is
+   what lets the web build show the menu early and finish the models soon after.
+   Adding rigs back = extend this map + SHARED_MODELS in build.mjs. */
+const MODEL_KEYS=['female1','male1'];
 const MODEL_MAP={
-  frost:'female1',swift:'female11',snowwolf:'male1',thunder:'male11',
-  raven:'male11',fox:'female11',vulture:'male1',viper:'female1',
+  frost:'female1',swift:'female1',snowwolf:'male1',thunder:'male1',
+  raven:'male1',fox:'female1',vulture:'male1',viper:'female1',
 };
 
-export function preloadCharacters(){
+export function preloadCharacters({version=''}={}){
   if(state.loading||state.ready)return;
+  _ver=version||_ver;
   state.loading=true;
   const load=async key=>{
-    const buf=await toArrayBuffer(await glbSource(key));
+    const src=await glbSource(key);
+    const buf=await toArrayBuffer(src);
     const l=await loader();
     const gltf=await new Promise((res,rej)=>l.parse(buf,'',gltf=>res(gltf),rej));
     state.models[key]=normalizeTemplate(key,gltf.scene);

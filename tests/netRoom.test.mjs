@@ -162,10 +162,15 @@ test('koth: 6 seats, kills do not move the score, capture ticks do',()=>{
   R.start(s,NOW,{});
   const r=R.recordKill(s,{killerId:'h',victimId:'bB1',seq:1});
   assert.deepEqual(r.score,{A:0,B:0},'kills are only K/D in koth');
-  for(let i=0;i<149;i++)R.addPoint(s,'A');
-  assert.equal(s.score.A,149);
+  // one tick = one second of holding the hill (KOTH_RATE in modes.js); the target is the mode's winKills
+  const target=s.winKills;
+  assert.equal(target,200,'King of the Hill is first to 200 capture points');
+  for(let i=0;i<target-2;i++)R.addPoint(s,'A');
+  assert.equal(s.score.A,target-2);
+  assert.equal(R.addPoint(s,'A').end,null,'one short of the target the match runs on');
+  assert.equal(s.score.A,target-1);
   const end=R.addPoint(s,'A');
-  assert.equal(end.end,'A','150 point ticks end the match');
+  assert.equal(end.end,'A',target+' point ticks end the match');
 });
 
 test('dm: 10 seats, first to 25 kills, bots fill the remainder',()=>{

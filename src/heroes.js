@@ -762,6 +762,10 @@ export class HeroBot{
   _walkToGoal(goal,speedScale,dt){
     const plan=NAV_FRAME%3===this.id%3;
     let wx=goal.x,wz=goal.z;
+    // An EMPTY waypoint list is "no route": it is truthy, so without this it latched forever —
+    // the bot never re-planned and walked straight into whatever blocked the direct line
+    // (a bot standing at its spawn for a whole match, "engaging" someone across the map).
+    if(this._route&&!this._route.length)this._route=null;
     if(this._route&&this._route.length){
       wx=this._route[0].x;wz=this._route[0].z;
       if(Math.hypot(wx-this.pos.x,wz-this.pos.z)<.4){
@@ -778,6 +782,10 @@ export class HeroBot{
         this._routeT=.35;
         if(!this._segFree(this.pos.x,this.pos.z,goal.x,goal.z)){
           this._route=this._planPath(goal.x,goal.z);
+          if(this._route&&!this._route.length)this._route=null;
+          // Local window too small (spawn pocket behind a building): ask the squad layer's
+          // whole-map grid for a route instead of grinding into the wall forever.
+          if(!this._route&&this.game.squad&&this.game.squad.route)this._route=this._globalRoute(goal.x,goal.z);
           if(this._route&&this._route.length){
             this._routeGX=goal.x;this._routeGZ=goal.z;this._turnT=.2;
             this.detourT=0;this._escTot=0; // a route supersedes the blind sideways escape
@@ -848,6 +856,19 @@ export class HeroBot{
      the fallback for anything a 10 m window cannot see around. */
   _planPath(gx,gz){
     return this._gridPath(gx,gz)||this._cornerRoute(gx,gz);
+  }
+
+  /* Whole-map route from the squad layer (squadAI.route → NavGrid A*), as the same waypoint
+     list _walkToGoal consumes. Re-planned by the caller every .35 s while it is in use. */
+  _globalRoute(gx,gz){
+    const pts=this.game.squad.route(this,gx,gz);
+    if(!pts||!pts.length)return null;
+    // the first stretch of a smoothed path can start behind the bot: skip waypoints we already passed
+    let i=0;
+    while(i<pts.length-1&&Math.hypot(pts[i][0]-this.pos.x,pts[i][1]-this.pos.z)<.6)i++;
+    const out=[];
+    for(;i<pts.length;i++)out.push({x:pts[i][0],z:pts[i][1]});
+    return out.length?out:null;
   }
 
   /* P3.2 local grid A*: a 10×10 m window of .5 m cells centred on the bot, rebuilt for every
@@ -1025,6 +1046,7 @@ export class HeroBot{
     this.fx.tracer(from,dir,from.distanceTo(end));
     this.audio.botShot(this.game.player.pos.distanceTo(this.pos));
     this._shotT=this.game.time||0;
+    if(this.game.squad)this.game.squad.onBotShot(this,target,dist,!miss);
     if(!miss){
       if(target==='player'){
         this.game.damagePlayerFromBot(P.dmgP,this.name,this.pos);

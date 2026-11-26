@@ -33,12 +33,19 @@ function heightToNormal(heightCanvas,strength=1){
   const src=heightCanvas.getContext('2d').getImageData(0,0,w,h).data;
   const out=document.createElement('canvas');out.width=w;out.height=h;
   const g=out.getContext('2d'),img=g.createImageData(w,h),d=img.data;
-  const H=(x,y)=>src[(((y+h)%h)*w+((x+w)%w))*4]/255;
-  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
-    const dx=(H(x+1,y)-H(x-1,y))*strength,dy=(H(x,y+1)-H(x,y-1))*strength;
-    const n=new THREE.Vector3(-dx,-dy,1).normalize();
-    const i=(y*w+x)*4;
-    d[i]=(n.x*.5+.5)*255;d[i+1]=(n.y*.5+.5)*255;d[i+2]=(n.z*.5+.5)*255;d[i+3]=255;
+  // Height field once, then an allocation-free loop: ~8M pixels of normal maps are generated at
+  // boot, and a Vector3 per pixel made that several seconds of main-thread time.
+  const H=new Float32Array(w*h);
+  for(let p=0,i=0;i<H.length;i++,p+=4)H[i]=src[p]/255;
+  for(let y=0;y<h;y++){
+    const row=y*w,yu=((y||h)-1)*w,yd=((y+1)%h)*w;
+    for(let x=0;x<w;x++){
+      const xl=(x||w)-1,xr=(x+1)%w;
+      const dx=(H[row+xr]-H[row+xl])*strength,dy=(H[yd+x]-H[yu+x])*strength;
+      const inv=1/Math.sqrt(dx*dx+dy*dy+1);
+      const i=(row+x)*4;
+      d[i]=(-dx*inv*.5+.5)*255;d[i+1]=(-dy*inv*.5+.5)*255;d[i+2]=(inv*.5+.5)*255;d[i+3]=255;
+    }
   }
   g.putImageData(img,0,0);
   const t=new THREE.CanvasTexture(out);

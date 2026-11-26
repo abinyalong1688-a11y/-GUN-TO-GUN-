@@ -11,7 +11,7 @@ export const MODE = {
 
 /* Endless waves is single-player only now: it never joins the online protocol. */
 export const MODES = {
-  koth:  { id:'koth',  teamSize:3, minHumans:1, duration:240, winKills:150, botFill:true  },  // winKills = capture points
+  koth:  { id:'koth',  teamSize:3, minHumans:1, duration:240, winKills:200, botFill:true  },  // winKills = capture points (1 point / s of holding the hill)
   dm:    { id:'dm',    teamSize:5, minHumans:1, duration:300, winKills:25, botFill:true  },
 };
 export const DEFAULT_MODE = MODE.DM;

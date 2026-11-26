@@ -52,7 +52,10 @@ export class BotBrain {
   constructor(bot) {
     this.bot = bot;
     this.difficulty = bot.difficulty || 'normal';
-    this.params = getBotParams(this.difficulty, bot.faction);
+    /* The preset is a shared, read-only cache. The brain works on its OWN copy, so the squad
+       layer can tune one bot's engagement range / aggression without touching its teammates. */
+    this.baseParams = getBotParams(this.difficulty, bot.faction);
+    this.params = { ...this.baseParams, range: this.baseParams.range.slice() };
     this.sensor = new BotSensor();
     this.sensor.obscured = p => !!(bot.game && bot.game.grenades && bot.game.grenades.inSmoke(p));
     this.tree = buildBotTree();
@@ -89,6 +92,11 @@ export class BotBrain {
     this._candidates = [];
     this.blockedLineT = 0;   // fire temporarily held: a friendly body is on the line
     this.blockedBy = null;
+    /* Squad command layer (squadAI.js): the order this bot is currently given, or null. It is
+       only followed from the idle branch (actPatrol) — combat always comes first. */
+    this.squadOrder = null;
+    this._squadGoal = new THREE.Vector3();
+    this._squadLook = new THREE.Vector3();
   }
 
   /* Respawn / operator swap: drop every memory and intent, keep the cached parameters. */
@@ -124,6 +132,8 @@ export class BotBrain {
   /* Called by HeroBot.takeDamage with the attacker's position (exact for the player's shot). */
   onDamaged(pos, entity, time) {
     if (!pos) return;
+    // Intel for the squad layer: hit by someone it may not even see yet
+    if (this.bot.game && this.bot.game.squad) this.bot.game.squad.onDamaged(this.bot, entity, pos);
     const id = entity === 'player' ? 'player' : (entity ? 'h' + entity.id : null);
     if (id) {
       const team = entity === 'player' ? this.bot.game.playerTeam : entity.team;
@@ -149,7 +159,8 @@ export class BotBrain {
     this.losCheck = losCheck;
     if (bot.difficulty && (bot.difficulty !== this.difficulty || bot.faction !== this.params.faction)) {
       this.difficulty = bot.difficulty;
-      this.params = getBotParams(this.difficulty, bot.faction);
+      this.baseParams = getBotParams(this.difficulty, bot.faction);
+      this.params = { ...this.baseParams, range: this.baseParams.range.slice() };
     }
     if (bot.reactionT > 0) bot.reactionT = Math.max(0, bot.reactionT - dt);
     if (bot.fireT > 0) bot.fireT = Math.max(0, bot.fireT - dt);
@@ -559,6 +570,8 @@ export class BotBrain {
   actPatrol(bot) {
     this.state = 'patrol';
     bot.prio = 2;
+    const order = this.squadOrder;
+    if (order) { this._followSquadOrder(bot, order); return BTStatus.RUNNING; }
     if (this._patrolWait > 0) {
       this._patrolWait -= this.dt;
       this.hold();
@@ -581,6 +594,25 @@ export class BotBrain {
       this.faceYaw = bot.yaw + .5 / Math.max(1, this.params.turnRate || 6);
     }
     return BTStatus.RUNNING;
+  }
+
+  /* Squad order → intent. 'move': walk (or sprint) to the order's goal along the game's own
+     navigation; anything else: stand. Either way face where the order says (usually an entrance
+     or the objective). Reusable vectors: nothing is allocated per frame. */
+  _followSquadOrder(bot, order) {
+    const P = this.params;
+    if (order.kind === 'move' && order.goal) {
+      this._squadGoal.set(order.goal[0], 0, order.goal[1]);
+      this.setNav(this._squadGoal, order.sprint ? 1.12 : .92);
+    } else {
+      this.hold();
+    }
+    if (order.lookAt) {
+      this._squadLook.set(order.lookAt[0], bot.pos.y + 1.4, order.lookAt[1]);
+      this.face(this._squadLook);
+    } else {
+      this.faceYaw = bot.yaw + .5 / Math.max(1, P.turnRate || 6);
+    }
   }
 
   /* Objective-aware idle: contest the hill in KOTH, otherwise push toward the enemy half.

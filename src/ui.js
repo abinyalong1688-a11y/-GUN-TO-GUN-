@@ -145,6 +145,7 @@ export class UI{
     return c;
   }
   buildOperators(){
+    if(typeof performance!=='undefined'&&performance.mark)performance.mark('gtg:operators');
     const box=this.el.mOperators;
     if(!box)return;
     const s=this.sel;
@@ -624,7 +625,7 @@ export class UI{
     g.fillStyle='#f0a860';g.fillRect(64,60,6,96);
     g.font='bold 62px "Segoe UI",sans-serif';g.fillStyle='#fff';g.fillText('GUN TO GUN',92,116);
     g.font='20px "Segoe UI",sans-serif';g.fillStyle='#9ba7c0';
-    g.fillText(isEN()?'TACTICAL FPS · OFFLINE':'战术阵营射击 · 离线可玩',94,152);
+    g.fillText(isEN()?'TACTICAL FPS · NO INSTALL':'战术阵营射击 · 无需安装',94,152);
     let art=null;
     try{if(op&&this.portraits)art=this.portraits.renderCanvas(op,'default',512,{frame:'bust'});}catch(e){}
     if(art){

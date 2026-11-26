@@ -1,2 +1,7 @@
 node_modules/
 GUN-TO-GUN-*-src.zip
+dist-single/
+dist/e2e/
+dist/bake/
+dist/diag/
+dist/loadcheck/

@@ -4,12 +4,15 @@
     "three": "^0.170.0"
   },
   "name": "gun-to-gun",
-  "version": "1.12.1",
+  "version": "1.13.0",
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
+    "build:single": "node build.mjs --single",
+    "bake:portraits": "node scripts/bake-portraits.mjs",
     "test": "node --test",
     "test:e2e": "node scripts/e2e.mjs",
+    "test:load": "node scripts/load-check.mjs 60",
     "evolve": "node scripts/evolve-bots.mjs",
     "serve": "node serve.mjs",
     "server:dev": "npx wrangler dev --local --config server/wrangler.toml",
