@@ -34,7 +34,7 @@ export const WEAPON_DEFS={
    kick:.0088,kickAds:.004,recoilV:.0105,recoilH:.004,auto:true,
    tracer:0xffd27f,tracerW:.026,tracerSpeed:450,scope:true,scopeFov:34,reloadDur:3.28,speedMul:.85},
   awp:{id:'awp',name:'LONGBOW · .338 Lapua Magnum',slotName:'LONGBOW',rpm:41,dmg:115,mag:10,reserve:30,
-   spreadHip:.06,spreadAds:.0008,moveSpread:.02,heatShot:.02,heatMax:.04,
+   spreadHip:.06,spreadAds:.0008,moveSpread:.02,heatShot:.004,heatMax:.008,
    kick:.045,kickAds:.03,recoilV:.05,recoilH:.012,auto:false,
    tracer:0xbfe3ff,tracerW:.05,tracerSpeed:640,scope:true,scopeFov:16,reloadDur:3.6,speedMul:.80},
   mp5:{id:'mp5',name:'MP5 · 9×19MM',slotName:'MP5',rpm:800,dmg:26,mag:30,reserve:120,

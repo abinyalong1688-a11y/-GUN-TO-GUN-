@@ -521,6 +521,35 @@ const LAYOUTS={
       world.add(roof);shootStatics.push(roof);
       colliders.push({minX:tx-2.4,maxX:tx+2.4,minZ:tz-1.6,maxZ:tz+1.6,top:1.9});
     }
+
+    /* v1.14 cover pass: the old layout left three sight-lines open from base to base.
+       A broken centre wall now cuts the N–S lane, waist-high drums give mid-field peek cover,
+       and a camo-net platform rewards the west flank with a climbable sniper perch. */
+    // Broken wall across the middle (two segments with a gap at x≈-1.4..2.0):
+    // shades the west push lane and the centre-east crossing while leaving the KOTH
+    // capture point, the separation cluster at the origin, the east flick lane and the
+    // pre-existing crate cluster near (2.3,3.9) clear.
+    addBox(world,shootStatics,colliders,{w:3.6,h:2.3,d:.8,mat:M.concrete,x:-3.2,y:1.15,z:3.4,ry:.06,surface:'concrete'});
+    addBox(world,shootStatics,colliders,{w:3.4,h:2.3,d:.8,mat:M.concrete,x:3.9,y:1.15,z:5.2,ry:-.08,surface:'concrete'});
+    // Waist-high drum cluster mid-east (peek cover for the push through the gap); the solo
+    // drum sits south of the pre-existing barrel row (its collider spans x 10.2..12, z -1..3.4)
+    for(const [x,z,mi] of [[6.8,-2.4,0],[7.7,-2.9,1],[7.2,-1.4,1],[10.9,-2.6,0]]){
+      const b=new THREE.Mesh(barrelGeo,contMats[mi]);
+      b.position.set(x,.55,z);b.castShadow=b.receiveShadow=true;
+      b.userData.surface='metal';
+      world.add(b);shootStatics.push(b);
+    }
+    colliders.push({minX:6.3,maxX:8.2,minZ:-3.4,maxZ:-.9,top:1.1});
+    colliders.push({minX:10.4,maxX:11.4,minZ:-3.1,maxZ:-2.1,top:1.1});
+    // Camo-net platform on the west lane: tier2 is a half-slab offset north (tier1 keeps a
+    // standable ring — the old same-footprint stack left nothing to stand on at 1.10), and the
+    // rail runs at 1.6 so the E–W sight-line stays open over the post top.
+    addBox(world,shootStatics,colliders,{w:2.4,h:1.1,d:2.4,mat:M.wood,x:-14,y:.55,z:0,surface:'wood'});
+    addBox(world,shootStatics,colliders,{w:2.4,h:1.1,d:1.3,mat:M.wood,x:-14,y:1.65,z:-.55,surface:'wood'});
+    addBox(world,shootStatics,colliders,{w:.14,h:1.2,d:2.4,mat:M.metal,x:-12.9,y:2.3,z:0,surface:'metal'});
+    // Paired hesco ears around the platform: a low shoot-over lip to the south, a blocker to the north
+    addBox(world,shootStatics,colliders,{w:2.2,h:1.35,d:1.35,mat:M.hesco,x:-14,y:.675,z:3.2,ry:.15,surface:'concrete'});
+    addBox(world,shootStatics,colliders,{w:2.2,h:1.35,d:1.35,mat:M.hesco,x:-11.6,y:.675,z:-5.4,ry:-.4,surface:'concrete'});
   },
 
   /* Glacier Lake — "crevasse ridge": a diagonal wall of glacial ice ridges west of centre, a fractured
@@ -586,6 +615,38 @@ const LAYOUTS={
       pile.scale.y=.42;pile.receiveShadow=true;
       world.add(pile);
     }
+
+    /* v1.14 cover pass: the east plain and the E–W centre lane were rifle-ranges.
+       An ice arch blocks the centre view, a broken serac wall hides the north-east push,
+       and two snow walls give the lake shore waist-high peek cover. */
+    // Ice arch across the east lane (columns + lintel, walkable under, shootable over).
+    // Kept clear of the KOTH capture point (0,0), the spawn gates, the frozen crate stack
+    // at (11,-8) and the iceberg at (10,-4): the first cut welded the arch's slab into
+    // that iceberg into one solid 4 m wall. Collision follows the visual opening (two pillar
+    // discs, no lintel collider — the lintel underside sits at 3.7).
+    {
+      for(const sd of[-1,1]){
+        const col=new THREE.Mesh(new THREE.CylinderGeometry(.7,.85,3.2,7),M.ice);
+        col.position.set(10.5+sd*3,1.6,-10.4);
+        col.castShadow=col.receiveShadow=true;
+        col.userData.surface='ice';
+        world.add(col);shootStatics.push(col);
+        colliders.push({minX:10.5+sd*3-.9,maxX:10.5+sd*3+.9,minZ:-11.2,maxZ:-9.6,top:3.2});
+      }
+      const lintel=new THREE.Mesh(new THREE.BoxGeometry(7.6,1,1.5),M.ice);
+      lintel.position.set(10.5,3.6,-10.4);lintel.castShadow=true;
+      lintel.userData.surface='ice';
+      world.add(lintel);shootStatics.push(lintel);
+    }
+    // Broken serac wall north-east (staggered blocks with a crouch gap)
+    addBox(world,shootStatics,colliders,{w:3.2,h:2.1,d:1,mat:M.ice,x:10,y:1.05,z:-1.5,ry:-.3,surface:'ice'});
+    addBox(world,shootStatics,colliders,{w:2.2,h:1.7,d:1,mat:M.ice,x:7.6,y:.85,z:-3,ry:.25,surface:'ice'});
+    // Lake-shore snow walls (waist-high peek cover, E–W lanes). Snow-block material:
+    // the shared ground texture repeats at 36 m/tile and would smear on a 4 m box.
+    if(!M.snowBlock)M.snowBlock=new THREE.MeshStandardMaterial({color:0xe8f0f8,roughness:.85,metalness:0});
+    ownMats.push(M.snowBlock);
+    addBox(world,shootStatics,colliders,{w:4,h:.9,d:1,mat:M.snowBlock,x:0,y:.45,z:7.5,ry:.12,surface:'concrete'});
+    addBox(world,shootStatics,colliders,{w:4,h:.9,d:1,mat:M.snowBlock,x:-6,y:.45,z:-7,ry:-.2,surface:'concrete'});
 
     /* Distant icebergs */
     for(const [x,z,s] of [[-52,-40,13],[48,-52,11],[-38,58,15],[58,42,12]]){
@@ -737,6 +798,25 @@ const LAYOUTS={
       }
     }
 
+    /* v1.14 cover pass: the main street was a 26 m shooting gallery. A staggered crossing
+       container splits the lane, the dock office gives the west yard a climbable vantage,
+       and jersey twins slow the north push.
+       Climb tiers are h=1.10: the discrete jump integration tops out at 1.11 m at 60 fps,
+       a 1.15 crate is 4 cm out of reach on EVERY frame rate. */
+    // Crossing barrier mid-street (slab wall: split the lane, jump-up peek platform).
+    // Kept out of the street's jersey barriers (1,-6) / (1,-13) and the canyon walls.
+    addBox(world,shootStatics,colliders,{w:2.44,h:2.2,d:3,mat:charcoal,x:1.2,y:1.1,z:-9.4,ry:.06,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:1.15,h:1.1,d:1.15,mat:M.wood,x:2.8,y:.55,z:-12.5,ry:.3,surface:'wood',collide:true}); // step box to climb the wall
+    // Dock office cabin in the west yard (climbable crate tier up to its roof); crate2
+    // leans clear of the cabin AABB (same-height collider overlap reads as a seam)
+    addBox(world,shootStatics,colliders,{w:3,h:2.2,d:2.4,mat:seaBlue,x:-17.5,y:1.1,z:9,ry:.2,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:1.15,h:1.1,d:1.15,mat:M.wood,x:-15.2,y:.55,z:7.0,ry:-.2,surface:'wood'});
+    addBox(world,shootStatics,colliders,{w:1.15,h:1.1,d:1.15,mat:M.wood,x:-15.2,y:1.65,z:7.0,ry:.1,surface:'wood',collide:true});
+    // Jersey speed bumps at the street mouths: one at the north bend (off-centre, keeps a
+    // ≥2 m lane), one at the south mouth — they slow pushes, never seal the street.
+    addBox(world,shootStatics,colliders,{w:2.2,h:1.1,d:1.1,mat:M.concrete,x:-1.15,y:.55,z:-14.8,ry:.12,surface:'concrete'});
+    addBox(world,shootStatics,colliders,{w:2.2,h:1.1,d:1.1,mat:M.concrete,x:1.6,y:.55,z:-2.2,ry:.25,surface:'concrete'});
+
     lamp(ctx,-10,13,.7);lamp(ctx,9,3,2.4);
   },
 
@@ -882,6 +962,35 @@ const LAYOUTS={
       ownMats.push(rim.material);
       worldAnim.push(t=>{rim.material.color.setHSL(.05,1,.45+.12*Math.sin(t*1.3));});
     }
+
+    /* v1.14 cover pass: the east fields were open ground between column clusters. A second
+       basalt arch mid-east breaks the sight-line, a slab barrier walls the fissure field,
+       and pillar twins guard the northern gate approach. */
+    // Second basalt arch mid-east (mirrors the south one: two pillars + lintel).
+    // Collision follows the VISUAL opening: two pillar discs; no lintel collider — its
+    // underside (3.7) is far above head height, the old single slab filled the walk-through
+    // gap with an invisible wall while LOS baked the pillars as an openable.
+    {
+      for(const sd of[-1,1]){
+        const col=new THREE.Mesh(new THREE.CylinderGeometry(.8,1,3.8,7),M.column);
+        col.position.set(11.5+sd*3.2,1.9,4);
+        col.castShadow=col.receiveShadow=true;
+        col.userData.surface='concrete';
+        world.add(col);shootStatics.push(col);
+        colliders.push({minX:11.5+sd*3.2-1,maxX:11.5+sd*3.2+1,minZ:3,maxZ:5,top:3.8});
+      }
+      const lintel=new THREE.Mesh(new THREE.BoxGeometry(8,1,1.7),M.column);
+      lintel.position.set(11.5,4.2,4);lintel.castShadow=true;
+      lintel.userData.surface='concrete';
+      world.add(lintel);shootStatics.push(lintel);
+    }
+    // Slab barrier walling the fissure field (broken: two segments + a crouch gap),
+    // placed clear of the arch pillars to the east
+    addBox(world,shootStatics,colliders,{w:1.4,h:1.9,d:4.5,mat:M.column,x:6,y:.95,z:-1,ry:.1,surface:'concrete'});
+    addBox(world,shootStatics,colliders,{w:1.4,h:1.5,d:2.2,mat:M.column,x:8,y:.75,z:1.4,ry:-.35,surface:'concrete'});
+    // Northern gate-approach pillars (waist-high, shootable cover)
+    addBox(world,shootStatics,colliders,{w:1.4,h:1.1,d:1.4,mat:M.column,x:-6,y:.55,z:-19,surface:'concrete'});
+    addBox(world,shootStatics,colliders,{w:1.4,h:1.1,d:1.4,mat:M.column,x:12,y:.55,z:-17.5,ry:.3,surface:'concrete'});
 
     lamp(ctx,11,-11,.7);lamp(ctx,-13,14,2.4);
   },

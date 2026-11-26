@@ -82,5 +82,8 @@ ${lines}
 };
 `;
   writeFileSync('src/botTuning.js', out);
-  console.log('wrote src/botTuning.js');
+  // botConfig caches the merged presets per (difficulty|faction|opId); the new genome only
+  // reaches a live page after a reload (getBotParams re-imports the fresh module). Tests call
+  // clearBotParamsCache() explicitly — production picks the new values up on the next boot.
+  console.log('wrote src/botTuning.js (reload the page: getBotParams caches merged presets)');
 }

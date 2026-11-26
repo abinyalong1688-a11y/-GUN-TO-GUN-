@@ -54,7 +54,7 @@ export class BotBrain {
     this.difficulty = bot.difficulty || 'normal';
     /* The preset is a shared, read-only cache. The brain works on its OWN copy, so the squad
        layer can tune one bot's engagement range / aggression without touching its teammates. */
-    this.baseParams = getBotParams(this.difficulty, bot.faction);
+    this.baseParams = getBotParams(this.difficulty, bot.faction, bot.opId);
     this.params = { ...this.baseParams, range: this.baseParams.range.slice() };
     this.sensor = new BotSensor();
     this.sensor.obscured = p => !!(bot.game && bot.game.grenades && bot.game.grenades.inSmoke(p));
@@ -157,9 +157,15 @@ export class BotBrain {
     this.now = time;
     this.dt = dt;
     this.losCheck = losCheck;
-    if (bot.difficulty && (bot.difficulty !== this.difficulty || bot.faction !== this.params.faction)) {
+    // Live reload on difficulty/faction change — plus a rifle-identity change: setOperator
+    // swaps a hero's gun in place, and only a sniper↔non-sniper swap actually changes the
+    // preset (the non-sniper cache entry is shared, so comparing raw opIds would rebuild
+    // the params object every frame).
+    const isSniper = bot.opId === 'vulture';
+    if (bot.difficulty && (bot.difficulty !== this.difficulty || bot.faction !== this.params.faction
+      || (this.baseParams.style === 'sniper') !== isSniper)) {
       this.difficulty = bot.difficulty;
-      this.baseParams = getBotParams(this.difficulty, bot.faction);
+      this.baseParams = getBotParams(this.difficulty, bot.faction, bot.opId);
       this.params = { ...this.baseParams, range: this.baseParams.range.slice() };
     }
     if (bot.reactionT > 0) bot.reactionT = Math.max(0, bot.reactionT - dt);
@@ -208,7 +214,8 @@ export class BotBrain {
       list.push({
         id: 'h' + h.id, entity: h, team: h.team,
         pos: h.pos, vel: h.vel, hp: h.hp, maxHp: h.maxHp,
-        point: {x: h.pos.x, y: h.pos.y + 1.1, z: h.pos.z},
+        // Chest height (+1.05), same as the player candidate below: inside the body sphere.
+        point: {x: h.pos.x, y: h.pos.y + 1.05, z: h.pos.z},
       });
     }
     const pl = bot.game.player;
@@ -217,7 +224,9 @@ export class BotBrain {
       list.push({
         id: 'player', entity: 'player', team: playerTeam,
         pos: pl.pos, vel: pl.vel, hp: pl.health, maxHp: pl.maxHealth,
-        point: {x: pl.pos.x, y: pl.pos.y + 1.35, z: pl.pos.z},
+        // Chest height (+1.05): the aim point sits inside the body sphere (r .42 at +.95).
+        // The old +1.35 eye height aimed at the head, past the top of the hit sphere.
+        point: {x: pl.pos.x, y: pl.pos.y + 1.05, z: pl.pos.z},
       });
     }
     this.sensor.sense(bot, list, time, losCheck, this.params);
@@ -257,6 +266,7 @@ export class BotBrain {
     if (!best) {
       this.target = null;
       this.targetId = null;
+      bot._lastTargetId = null; // release the claimed stand-off point with the target
       this.targetVisible = false;
       this.targetDist = Infinity;
       this._wasVisible = false;
@@ -265,6 +275,10 @@ export class BotBrain {
     const id = best.id;
     if (id !== this.targetId) {
       this.targetId = id;
+      // Claim a personal stand-off point on the new target: teammates attacking the same
+      // entity pick different angles/radii so they fan out instead of stacking on one spot.
+      bot._lastTargetId = id;
+      if (bot._claimSpot) bot._claimSpot();
       bot.bark('bark_spot');
       this.aimSettle = 0;
       bot.burst = 0;
@@ -296,11 +310,14 @@ export class BotBrain {
     if (t.visible) {
       _eye.set(this.bot.pos.x, this.bot.pos.y + 1.4, this.bot.pos.z);
       leadPoint(_eye, t.point, t.vel, this.params.lead, _lead);
+      // A scoped marksman settles fast behind the glass: the bolt cycle doubles as aim time,
+      // so the follow-up shot is a correction, not a re-acquisition.
+      const settle = this.params.style === 'sniper' ? Math.max(.05, this.params.aimTime * .5) : this.params.aimTime;
       aimErrorOffset(this.params, this.aimSettle, this.targetDist, _err);
       this.aimPoint.copy(_lead).add(_err);
       if (this.aimPoint.y < .3) this.aimPoint.y = .3;
       this.hasAim = true;
-      this.aimSettle = Math.min(1, this.aimSettle + dt / Math.max(.05, this.params.aimTime));
+      this.aimSettle = Math.min(1, this.aimSettle + dt / Math.max(.05, settle));
     } else {
       // Memory: look where the target was last seen/heard (peeking around cover).
       this.aimPoint.copy(t.point);
@@ -315,7 +332,10 @@ export class BotBrain {
     if (bot.reloadT > 0) return true;
     if (bot.ammo <= 0) return true;
     const frac = bot.ammo / Math.max(1, bot.magSize);
-    if (this.targetVisible && this.targetDist < 18) return frac < .12;
+    // A marksman reloads on its own band scale: 18 m is deep inside a 10–30 m lane, and a
+    // 10-round magazine must not dump 42 % into every quiet stretch.
+    const near = this.params.style === 'sniper' ? this.params.range[0] + 8 : 18;
+    if (this.targetVisible && this.targetDist < near) return frac < .12;
     return frac < .42;
   }
 
@@ -329,7 +349,10 @@ export class BotBrain {
       this._retreatReadyAt = this.now + this.params.retreatHold * 2;
     }
     if (this.now < this.retreatUntil) return true;
-    if (bot.reloadT > 0 && this.targetVisible && this.targetDist < 26) return true;
+    // Reload-cover triggers inside the whole engagement band (a 26 m cut missed the sniper's
+    // own 26–30 m stretch: it stood in the open chambering rounds it could have covered).
+    const coverDist = this.params.style === 'sniper' ? this.params.range[1] + 2 : 26;
+    if (bot.reloadT > 0 && this.targetVisible && this.targetDist < coverDist) return true;
     return false;
   }
 
@@ -420,6 +443,10 @@ export class BotBrain {
     const dist = Math.max(.001, Math.hypot(dx, dz));
     const nx = dx / dist, nz = dz / dist;
     const [rmin, rmax] = this.params.range;
+    // Each bot holds its OWN stand-off radius (claimed at target acquisition), clamped into
+    // the band. Two bots on one target no longer converge to the same distance and then
+    // shove each other with RVO — they occupy different rings from the first step.
+    const personal = clamp(bot.holdD || (rmin + rmax) / 2, rmin, rmax);
     /* Close the distance through the navigation stack (local A* / corner routes), not by
        pushing a raw velocity at the wall. Hysteresis stops advance/strafe flip-flopping on
        the range line. */
@@ -435,14 +462,24 @@ export class BotBrain {
     if (dist < rmin) radial = -.9;
     const hp = bot.hp / bot.maxHp;
     const tHp = t.maxHp > 0 ? t.hp / t.maxHp : 1;
-    if (radial === 0 && hp > tHp + .15 && dist > rmin + 1) radial = this.params.aggression * .55;
+    /* Hold the personal claimed radius (different per teammate), not one shared band anchor.
+       Health advantage nudges INWARD only while still outside that personal radius — it never
+       drags a marksman into SMG range just because the shared band's midpoint is closer. */
+    if (radial === 0 && dist > personal + 1) radial = .55;
+    else if (radial === 0 && hp > tHp + .15 && dist > personal + .5)
+      radial = this.params.aggression * .3;
+    else if (radial === 0 && dist < personal - 1.5) radial = -.6;
     let mateCloser = false;
     for (const h of bot.game.heroes.list) {
       if (h === bot || !h.alive || h.team !== bot.team) continue;
       if (h._targetId !== this.targetId) continue;
       if (Math.hypot(h.pos.x - t.pos.x, h.pos.z - t.pos.z) < dist - 1.5) { mateCloser = true; break; }
     }
-    const tang0 = this.params.strafe * (.35 + this.params.flankBias * (mateCloser ? 1 : .55));
+    // Bias the strafe toward this bot's claimed angle on the target (a signed side picked
+    // at acquisition) so two bots on one target peel to opposite flanks.
+    const flankSign = bot._offA != null ? (Math.sin(bot._offA) < 0 ? -1 : 1) : bot.strafeDir;
+    const tang0 = this.params.strafe * (.35 + this.params.flankBias * (mateCloser ? 1 : .55))
+      * (flankSign === bot.strafeDir ? 1 : .7);
     // A friendly body on the firing line: open the angle harder and step away from it.
     let tang = tang0;
     if (this.blockedLineT > 0) {

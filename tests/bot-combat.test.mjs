@@ -136,3 +136,38 @@ test('scoreCoverPoint rewards blocking and the preferred stand-off distance', ()
   const far = scoreCoverPoint({x: 30, z: 0}, {botPos, threatPos: threat, coverBias: .8, preferCoverDist: 13, blocked: true});
   assert.ok(far < blocked, 'a spot far from the preferred distance scores lower');
 });
+
+/* ---- sniper identity: the Longbow operator fights like a marksman, not a spray SMG ---- */
+import {getBotParams, clearBotParamsCache} from '../src/botConfig.js';
+
+test('sniper override: vulture gets a one-shot bolt rhythm and long engagement band', () => {
+  clearBotParamsCache();
+  const p = getBotParams('normal', 't', 'vulture');
+  assert.equal(p.burst, 1, 'a bolt rifle fires one aimed round per cycle');
+  assert.equal(p.dmgP, 62, 'sniper dmgP override, got ' + p.dmgP);
+  assert.equal(p.dmgH, 78, 'sniper dmgH override, got ' + p.dmgH);
+  assert.ok(p.range[0] >= 10 && p.range[1] >= 25, 'snipers hold the long lane: ' + p.range.join('-'));
+  assert.ok(p.missK < 1, 'the marksman discipline should tighten accuracy, missK ' + p.missK);
+  // Non-sniper operators keep the faction spray table (raven dmgP 9 stays asserted by e2e).
+  const r = getBotParams('normal', 't', 'raven');
+  assert.equal(r.dmgP, 9, 'the spray table must not leak to non-snipers');
+  const v2 = getBotParams('hard', 't', 'vulture');
+  assert.ok(v2.dmgP > p.dmgP, 'difficulty should still scale sniper damage, hard ' + v2.dmgP + ' vs normal ' + p.dmgP);
+  // Easy must not two-tap a fresh player: the heavy rifle punch is eased and the bolt slows.
+  const e = getBotParams('easy', 't', 'vulture');
+  assert.equal(e.dmgP, 37, 'easy sniper dmgP eased, got ' + e.dmgP);
+  assert.ok(e.burstT > p.burstT, 'easy sniper bolt is slower, ' + e.burstT + ' vs ' + p.burstT);
+  assert.ok(e.range[1] < p.range[1], 'easy sniper holds a shorter lane, ' + e.range[1] + ' vs ' + p.range[1]);
+});
+
+test('sniper accuracy model: ≈75%+ single-shot hit at 20 m, one bolt cycle between shots', () => {
+  const P = getBotParams('normal', 't', 'vulture');
+  let hit = 0;
+  const N = 4000;
+  for (let i = 0; i < N; i++) {
+    const miss = shotMissChance(P, {dist: 20, targetSpeed: 0, settle: 1, smoke: false, moving: false});
+    if (Math.random() >= miss) hit++;
+  }
+  assert.ok(hit / N > .70, 'a settled sniper shot at 20 m should hit ≈75%+ of the time, got ' + (hit / N * 100).toFixed(1) + '%');
+  assert.ok(P.burstT > 1.2, 'the bolt cycle must pace the follow-up (burstT ' + P.burstT + ')');
+});

@@ -4,9 +4,10 @@
 //   · senses  — how the bot perceives (view cone / range / memory / hearing)
 //   · combat  — how it fights (accuracy, reaction, burst discipline, lead, strafe)
 //   · tactics — where it goes (aggression, cover bias, flank bias, engagement band)
-// `getBotParams(difficulty, faction)` merges a difficulty preset with the faction's weapon
-// style and the offline-tuned tactical weights, and caches the result: a settings change or
-// a respawn must not allocate a fresh parameter object every frame.
+// `getBotParams(difficulty, faction, opId)` merges a difficulty preset with the faction's
+// weapon style, the operator's rifle identity (the Longbow carrier gets SNIPER_OVERRIDES)
+// and the offline-tuned tactical weights, and caches the result: a settings change or a
+// respawn must not allocate a fresh parameter object every frame.
 
 import {BOT_TUNED} from './botTuning.js';
 
@@ -23,8 +24,8 @@ const DIFFICULTY = {
   },
   normal: {
     fov: 2.30, viewRange: 46, memoryTime: 4.0, hearing: 24, proximity: 5.2, senseInterval: .10,
-    reaction: .28, aimTime: .62, accuracy: .83, lead: .65, aimJitter: .028, settleError: .42,
-    burstScale: 1, pauseScale: 1, damageScale: 1, turnRate: 6.0,
+    reaction: .24, aimTime: .50, accuracy: .83, lead: .80, aimJitter: .022, settleError: .38,
+    burstScale: 1, pauseScale: 1, damageScale: 1, turnRate: 6.5,
     aggression: .62, coverBias: .70, flankBias: .35, strafe: .48,
     preferCoverDist: 13, lowHealthThresh: .35, retreatHold: 2.6, reactionSpread: 1,
   },
@@ -42,6 +43,21 @@ const DIFFICULTY = {
 const FACTION = {
   ct: {burst: 3, burstT: .13, pause: 1.20, range: [7, 16], dmgP: 6, dmgH: 12, missK: 1.00, style: 'burst'},
   t:  {burst: 5, burstT: .11, pause: 1.50, range: [6, 13], dmgP: 9, dmgH: 15, missK: 1.35, style: 'spray'},
+};
+
+/* Sniper operator override (Longbow .338). Without this the AWPosition bot fights with the
+   faction spray table — a 5-round SMG burst of 15 dmg rounds inside a 6–13 m band, which
+   reads as a useless sniper. The override gives the rifle its identity back: one aimed shot,
+   long engagement band, bolt-action pacing. `style:'sniper'` also widens the aim retention in
+   botBrain (the bot keeps the target scoped through the bolt cycle instead of re-acquiring). */
+const SNIPER_OVERRIDES = {
+  burst: 1,
+  burstT: 1.9,            // bolt cycle + rechamber: one shot, then track
+  pause: .6,              // follow-up after the bolt, not a fresh reaction
+  range: [10, 30],        // snipers hold the long lane; closing to SMG range is a mistake
+  dmgP: 62, dmgH: 78,     // heavy single hits, still not a one-tap on 100 hp (no cheap deaths)
+  missK: .78,             // the accurate discipline of a dedicated marksman
+  style: 'sniper',
 };
 
 /* Parameter space used by the genetic algorithm (botEvolution.js). All values are clamped
@@ -102,11 +118,15 @@ export function listDifficulties() {
   return Object.keys(DIFFICULTY);
 }
 
-/* Merge: difficulty + faction style + (hard only) evolved tactics. Cached per pair. */
-export function getBotParams(difficulty, faction) {
+/* Merge: difficulty + faction style + operator weapon identity + (hard only) evolved tactics.
+   Cached per (difficulty|faction|opId) triple: a settings change or a respawn must not
+   allocate a fresh parameter object every frame. */
+export function getBotParams(difficulty, faction, opId = null) {
   const diff = DIFFICULTY[difficulty] ? difficulty : 'normal';
   const fac = FACTION[faction] ? faction : 'ct';
-  const key = diff + '|' + fac;
+  // Sniper identity: only the operator who actually carries the Longbow gets the override.
+  const isSniper = opId === 'vulture';
+  const key = diff + '|' + fac + (isSniper ? '|awp' : '');
   let p = CACHE.get(key);
   if (p) return p;
   const base = DIFFICULTY[diff];
@@ -123,6 +143,25 @@ export function getBotParams(difficulty, faction) {
     faction: fac,
     viewFOV: base.fov, // legacy naming used by the design brief / perception docs
   };
+  if (isSniper) {
+    // Sniper override replaces the combat-rhythm keys wholesale (the faction burst/spray
+    // numbers are meaningless for a bolt rifle); difficulty still scales pause/damage.
+    // The range array is copied, never shared: the cached preset (and the constant it came
+    // from) must not be mutable through a consumer holding the preset.
+    Object.assign(p, SNIPER_OVERRIDES, {range: [...SNIPER_OVERRIDES.range]});
+    p.pause = SNIPER_OVERRIDES.pause * base.pauseScale;
+    p.dmgP = Math.max(1, Math.round(SNIPER_OVERRIDES.dmgP * base.damageScale));
+    p.dmgH = Math.max(1, Math.round(SNIPER_OVERRIDES.dmgH * base.damageScale));
+    p.missK = SNIPER_OVERRIDES.missK;
+    // Easy must not feel like being farmed by a marksman: one heavy rifle hit already takes
+    // half a fresh player's HP there, so ease the punch further and slow the bolt follow-up.
+    if (diff === 'easy') {
+      p.dmgP = Math.max(1, Math.round(p.dmgP * .7));
+      p.dmgH = Math.max(1, Math.round(p.dmgH * .7));
+      p.burstT = SNIPER_OVERRIDES.burstT * 1.4;
+      p.range = [SNIPER_OVERRIDES.range[0] * .8, SNIPER_OVERRIDES.range[1] * .8];
+    }
+  }
   const tuned = tunedFor(diff);
   if (tuned) {
     for (const k of TACTICAL_KEYS) {
