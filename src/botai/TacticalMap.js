@@ -170,7 +170,10 @@ export class TacticalMap {
    */
   defensePositions(cx, cz, radius, entr, count = 6, team = 'B') {
     const key = `${cx.toFixed(1)},${cz.toFixed(1)}|${radius}|${team}|${entr.length}`;
-    if (this.defCache.has(key)) return this.defCache.get(key);
+    // Return a COPY: callers sort/splice the result (SquadDirector._planDefense did exactly
+    // that and permanently consumed one anchor per plan — the cache drained over time).
+    const cached = this.defCache.get(key);
+    if (cached) return cached.map((p) => ({ ...p, covers: p.covers ? p.covers.slice() : [] }));
     const nav = this.nav;
     const cands = this.coversNear(cx, cz, radius + 9).filter((c) => dist(c.x, c.z, cx, cz) >= radius * 0.55 && dist(c.x, c.z, cx, cz) <= radius + 9);
     const scored = [];
@@ -199,7 +202,7 @@ export class TacticalMap {
       }
     }
     this.defCache.set(key, picked);
-    return picked;
+    return picked.map((p) => ({ ...p, covers: p.covers ? p.covers.slice() : [] }));
   }
 
   clearCache() { this.laneCache.clear(); this.defCache.clear(); }

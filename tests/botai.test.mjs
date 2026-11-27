@@ -46,6 +46,12 @@ test('botai/tactics: cover, lanes, entrances and defensive positions come out of
   assert.ok(entr.length >= 2 && entr.length <= 5, `entrances: ${entr.length}`);
   assert.ok(dp.length >= 3, `defensive positions: ${dp.length}`);
     for (const p of dp) assert.ok(Math.hypot(p.x, p.z) < 20, 'defensive positions sit around the hill');
+  // The cached array must survive a caller that sorts/splices it (SquadDirector._planDefense did
+  // exactly that — every plan permanently consumed one anchor from the cache).
+  const before = dp.length;
+  dp.sort(() => -1); dp.splice(0, 1);
+  const again = ai.tac.defensePositions(0, 0, 8, entr, 8, 'B');
+  assert.equal(again.length, before, 'the cache is not mutated by callers');
 });
 
 /* ---------------- squad director ---------------- */

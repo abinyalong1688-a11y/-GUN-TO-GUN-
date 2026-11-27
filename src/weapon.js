@@ -512,6 +512,7 @@ export class Weapon{
       this._reloadSnd=0;
       this.ui.reloadRing(-1);
     }
+    this._shotBuf=0;this._trigWasDown=false;  // a queued semi shot belongs to the old gun: drop it
     this.switchT=0;
     this._pending=target;
     this.audio.reload(2);
@@ -602,8 +603,11 @@ export class Weapon{
       this.camKickYaw*=Math.max(0,1-6*dt);
       this._slide=Math.max(0,this._slide-dt*9);
       // A click made during the swap still counts for a semi-auto: queue it for after the swap
-      // (same remaining-cooldown rule as the firing block below, so a Longbow click is not lost)
-      if(!this.def.auto&&input.firing&&!this._trigWasDown)
+      // (same remaining-cooldown rule as the firing block below, so a Longbow click is not lost).
+      // Judge by the TARGET gun (`_pending`): the click lands while `cur` is still the old one,
+      // and an auto→semi swap used to swallow the click entirely.
+      const nd=this._pending!==undefined?this.defs[this._pending]:this.def;
+      if(nd&&!nd.auto&&input.firing&&!this._trigWasDown)
         this._shotBuf=Math.max(this._shotBuf,Math.max(.25,this.fireT+.05));
       this._trigWasDown=!!input.firing;
       return;
@@ -796,6 +800,11 @@ export class Weapon{
     this.fireT=0;this.camKick=0;this.camKickYaw=0;this.heat=0;
     this._shotBuf=0;this._trigWasDown=false;   // a queued semi shot must not survive a restart
     this._equip(0,true);
+  }
+  /* Respawn (DM/KOTH): ammo persists by design, but the trigger state must not — a queued
+     semi shot frozen mid-death would otherwise fire by itself ~1.4 s after respawn. */
+  onRespawn(){
+    this._shotBuf=0;this._trigWasDown=false;
   }
   addReserve(n){
     this.defs.forEach((d,i)=>{

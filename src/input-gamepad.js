@@ -11,6 +11,7 @@ export class GamepadAdapter{
     this.game=game;
     this.prev={};
     this.deadzone=.18;
+    this._moveKeys=new Set();   // WASD keys the stick currently holds (never touches touch-input keys)
   }
 
   update(dt){this.poll(dt);}
@@ -25,8 +26,14 @@ export class GamepadAdapter{
     this.gamePadButtons=pad.buttons;
 
     const ax=pad.axes[0]||0,ay=pad.axes[1]||0;
-    this._key('KeyA',ax<-.18);this._key('KeyD',ax>.18);
-    this._key('KeyW',ay<-.18);this._key('KeyS',ay>.18);
+    // Movement keys are OWNED by the stick: only ever touch a key the stick itself wrote
+    // last frame. An idle (centred) stick used to delete the touch-stick's WASD every frame
+    // on hybrid devices (this adapter polls before the touch adapter).
+    const want={KeyA:ax<-.18,KeyD:ax>.18,KeyW:ay<-.18,KeyS:ay>.18};
+    for(const code in want){
+      if(want[code]){g.keys.add(code);this._moveKeys.add(code);}
+      else if(this._moveKeys.has(code)){g.keys.delete(code);this._moveKeys.delete(code);}
+    }
 
     const rx=pad.axes[2]||0,ry=pad.axes[3]||0;
     if(Math.hypot(rx,ry)>.18)g.applyLook(rx*dt*950,ry*dt*950);
@@ -58,4 +65,10 @@ export class GamepadAdapter{
 
   // Sync button references before polling so _edge can read them
   sync(pad){this.gamePadButtons=pad.buttons;}
+
+  detach(){
+    // Release the movement keys the stick was holding so a disconnected pad cannot leave keys stuck
+    for(const code of this._moveKeys)this.game.keys.delete(code);
+    this._moveKeys.clear();
+  }
 }

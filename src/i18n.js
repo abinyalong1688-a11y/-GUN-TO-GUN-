@@ -37,7 +37,6 @@ const STR={
     map_snowtown:'霓虹雨港 · 雨夜',
     map_ember:'熔岩火山口 · 烈焰',
     mode_waves:'无尽波次 · 单人守卫哨站',
-    mode_koth:'占点争夺 · 3v3',
     mode_dm:'团队死斗 · 3v3',
     mode_online:'五五开黑 5v5 · 在线',   // online-only: DEPLOY opens the friends lobby
     room_dm:'五五开黑 · 团队死斗',room_koth:'五五开黑 · 占点争夺',
@@ -177,7 +176,6 @@ const STR={
     map_snowtown:'Neon Docklands · Rain',
     map_ember:'Volcano Caldera',
     mode_waves:'Wave Survival · Solo Outpost Defense',
-    mode_koth:'King of the Hill · 3v3',
     mode_dm:'Team Deathmatch · 3v3',
     mode_online:'Friends 5v5 · Online',   // online-only: DEPLOY opens the friends lobby
     room_dm:'FRIENDS 5V5 · TEAM DEATHMATCH',room_koth:'FRIENDS 5V5 · KING OF THE HILL',

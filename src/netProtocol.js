@@ -59,6 +59,10 @@ export const HIT_DMG_CAP = {
 };
 export const GRENADE_KIND = 'frag';
 export const GRENADE_DMG_CAP = 78;
+/* Frag AoE: the client's DEFS.frag.radius (grenades.js). The DO uses it to sanity-check the
+   distance the thrower claims between the detonation and each victim it damages. */
+export const GRENADE_RADIUS = 6;
+export const GRENADE_FUSE_MS = 1600;  // DEFS.frag.fuse — the minimum time between a throw and damage
 
 /* Authoritative damage: the server recomputes every hit from the weapon's base damage and a
    fixed 2× headshot multiplier. Client-side boost/upgrade multipliers are PvE-only and are NOT

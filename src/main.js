@@ -1055,7 +1055,7 @@ class Game{
     // M3-G2: 15% chance to drop a supply pickup
     if(!e.decor&&Math.random()<.15){
       const type=['ammo','med','boost'][Math.floor(Math.random()*3)];
-      this.pickups.spawn(e.pos,type);
+      this.pickups.drop(e.pos,type);
     }
     // M3-G3: field medic
     if(this.upgrades&&this.upgrades.regen)this.player.heal(5*this.upgrades.regen);
@@ -1101,6 +1101,8 @@ class Game{
       // fromId can be an id *object* ({id,name}); the DO needs the bare id string.
       const kid=(fromId&&typeof fromId==='object')?fromId.id:fromId;
       this.netMatch.reportBotDeath(victimHero,kid||this.netMatch.me?.id);
+      // Weapon drops online ride on the DO's S.KILL frame (drop:), so every client — this one
+      // included — renders exactly one crate out of _onKill. Nothing to do here.
       return;
     }
     if(!this.dm||!this.isArena())return;
@@ -1111,6 +1113,8 @@ class Game{
     if(v)v.deaths++;
     const mine=killerName===this.playerName;
     this.ui.killFeed(killerName,victimHero.name,t('kill_verb'),mine);
+    // Arena rule: a defeated opponent drops their primary (weapon crate + bullets).
+    this.dropWeaponFrom(victimHero);
     if(mine){
       this.stats.kills++;
       if(headshot)this.stats.headshots++;
@@ -1121,6 +1125,19 @@ class Game{
   }
   botDamageFx(hero,pos){
     this.effects.impact(pos,UP,'metal',{decal:false});
+  }
+
+  /* Arena kill drop (dm / koth / online, NOT waves): a defeated opponent drops their primary.
+     Thin forwarders — the logic lives on Pickups so it is unit-testable without a Game. */
+  dropWeaponFrom(victimHero){
+    if(this.matchMode==='waves')return;
+    const rifleId=victimHero&&victimHero.def&&victimHero.def.rifle;
+    if(!rifleId||!this.pickups)return;
+    this.pickups.addDrop(victimHero.pos,rifleId);
+  }
+
+  collectWeaponDrop(rifleId){
+    if(this.pickups)this.pickups.collectWeapon(rifleId);
   }
   /* Single entry point for all incoming damage. `from = {id,name,pos}`; older callers pass a name. */
   damagePlayer(dmg,from,head=false,weapon){
@@ -1408,6 +1425,7 @@ class Game{
              timer instead of the debug `god` flag so a screenshot check cannot be confused with
              a spawn shield and the HUD can show a countdown. `god` is no longer touched here. */
           this.spawnInvulnT=SPAWN_INVULN;
+          this.weapon.onRespawn();       // a queued semi shot must not fire itself after respawn
           this.audio.respawn();
           this.ui.deathFlash();
           this._suppressPauseOnce=false; // the death unlock was consumed; normal lock-loss behaviour resumes
@@ -1500,7 +1518,7 @@ class Game{
       this.ui.setHealth(this.player.health,this.player.maxHealth);
       this.ui.crosshair(this.weapon.spreadRad(this.player),
         this.camera.fov,innerHeight,this.weapon.adsAmt);
-      this.ui.hint(this.weapon.ammo<=8&&!this.weapon.reloading&&this.weapon.st.reserve>0?t('hint_reload'):
+      this.ui.hint(this.weapon.st.ammo<=8&&!this.weapon.reloading&&this.weapon.st.reserve>0?t('hint_reload'):
         (!document.pointerLockElement&&!this.fallbackAim?t('hint_lock'):''));
       if(this.player.alive===false&&!this._deathHandled&&this.state==='playing'){
         this._deathHandled=true;          // death side-effects must not re-run every frame
@@ -1556,8 +1574,13 @@ class Game{
     for(const fn of this.world.worldAnim)fn(this.time);
     this.effects.setCamPos(this.camera.position);
     this.effects.update(dt);
-    this.grenades.update(dt);
-    this.pickups.update(dt,this.player);
+    // Grenades damage and pickups attract: neither may advance while the sim is suspended
+    // (pause / upgrade / tutorial / result) or a stray grenade could end the match from the
+    // pause menu. Effects keep running (pure visuals).
+    if(this.state==='playing'){
+      this.grenades.update(dt);
+      this.pickups.update(dt,this.player);
+    }
     if(this.damageBoostT>0)this.damageBoostT=Math.max(0,this.damageBoostT-dt);
     if(this.empT>0)this.empT=Math.max(0,this.empT-dt);
     // M3-G5: radar (setting toggle + EMP jamming)
@@ -1669,7 +1692,7 @@ class Game{
   }
 
   /* M3-G2: debug-spawn a pickup */
-  debugSpawnPickup(type){return this.pickups.spawn(this.player.pos,type);}
+  debugSpawnPickup(type){return this.pickups.drop(this.player.pos,type);}
 
   /* M3-G1: debug-throw a grenade */
   debugThrow(type){return this.grenades.throw(type);}
@@ -1938,7 +1961,7 @@ class Game{
     await run('pickup-magnet',()=>{
       this.ui.sel.mode='dm';this.startGame();
       this.player.god=true;this.player.health=50;
-      const p=this.pickups.spawn(this.player.pos.clone(),'med');
+      const p=this.pickups.drop(this.player.pos.clone(),'med');
       this.pickups.update(.016,this.player);
       assert(this.player.health>50,'medkit drop should heal');
       assert(!this.pickups.list.includes(p),'a picked-up drop should be removed');
@@ -1946,10 +1969,10 @@ class Game{
     await run('pickup-ammo',()=>{
       this.ui.sel.mode='dm';this.startGame();
       const before=this.weapon.state[this.weapon.cur].reserve;
-      this.pickups.spawn(this.player.pos.clone(),'ammo');
+      this.pickups.drop(this.player.pos.clone(),'ammo');
       this.pickups.update(.016,this.player);
       assert(this.weapon.state[this.weapon.cur].reserve>before,'an ammo drop should add reserve ammo');
-      this.pickups.spawn(this.player.pos.clone(),'boost');
+      this.pickups.drop(this.player.pos.clone(),'boost');
       this.pickups.update(.016,this.player);
       assert(this.damageBoostT>9&&this.playerDamageMul()>=1.4,'a boost drop should raise the damage multiplier');
     });

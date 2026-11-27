@@ -98,6 +98,7 @@ export class Waves{
         g.weapon.addReserve(90);
         g.player.heal(25);
         this._restoreFog();
+        this.modifier=null;   // a rush/fog modifier lasts its wave only (rush used to leak into every later wave)
         g.empT=0;if(g.ui&&g.ui.hideBoss)g.ui.hideBoss();
         // M3-G3: offer a pick-one-of-three upgrade after every 3rd cleared wave
         if(this.n%3===0)g.openUpgrade();

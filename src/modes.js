@@ -155,7 +155,10 @@ export class KothMode extends GameMode{
     const g=this.game;
     if(this.marker)this._syncMarker();
     let a=0,b=0;
-    if(g.player.alive&&this._inside(g.player.pos))a++;
+    // The local player's team: `playerTeam` is authoritative (online the player may hold B —
+    // the old code hard-coded team A, so a Rogue host standing on the point scored for NOVA).
+    const pt=g.playerTeam||'A';
+    if(g.player.alive&&this._inside(g.player.pos)){ if(pt==='A')a++; else b++; }
     for(const h of g.heroes.list){
       if(!h.alive||!this._inside(h.pos))continue;
       if(h.team==='A')a++;else b++;

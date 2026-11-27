@@ -1,7 +1,7 @@
 // netMatch.js — the only module allowed to orchestrate a networked session (lobby → match → result).
 import {
   C, S, PROTO, LIMITS, MODE, DEFAULT_MODE, isMode, modeLimits, ROOM_CODE_RE, HIT_DMG_CAP, PEER_FLAGS, INTERP_DELAY,
-  GRENADE_KIND, GRENADE_DMG_CAP, encodePeer, clamp,
+  GRENADE_KIND, GRENADE_DMG_CAP, encodePeer, clamp, qPos,
 } from './netProtocol.js';
 import { TimeSync } from './interp.js';
 import { NetClient, resolveServerUrl, roomWsUrl, reserveRoomCode } from './net.js';
@@ -367,9 +367,15 @@ export class NetMatch {
     // inherit e.g. the AK's per-shot damage (a grenade passed through requestHit without a
     // source used to be re-scored as a rifle hit *and* checked for LOS from the thrower).
     if (kind === 'frag') {
+      // The blast point rides along so the DO can check victim distance + blast-line LOS;
+      // without it a scripted client could frag anyone through walls anywhere on the map.
+      // The blast is where the GRENADE went off — the victim's own position is the best
+      // client-side estimate (the thrower's client simulates the arc, the victim is in radius).
+      const p = victim.pos || { x:0, y:0, z:0 };
       return this.client.send(C.HIT, {
         target:victim.netId, dmg:clamp(dmg, 0, GRENADE_DMG_CAP), head:0,
         w:GRENADE_KIND, seq:++this._hitSeq, src:'frag',
+        blast:[qPos(p.x||0), qPos(p.y||0), qPos(p.z||0)],
       });
     }
     const wid=(source&&source.w)||this.game.weapon.def?.id;
@@ -412,6 +418,18 @@ export class NetMatch {
       g.stats.kills++;
       if (m.head) g.stats.headshots++;
     }
+    // Arena rule: a defeated opponent drops their primary (weapon crate + bullets). The rifle id
+    // AND the victim's last known position ride on the KILL frame (drop:/dropPos: — the DO
+    // resolves both), so the victim's own client renders the crate too. Purely cosmetic.
+    if (m.drop && g.dropWeaponFrom) {
+      const pos = m.dropPos && typeof m.dropPos.x === 'number'
+        ? { x:m.dropPos.x, y:m.dropPos.y, z:m.dropPos.z } : null;
+      if (pos) g.dropWeaponFrom({ pos, def:{ rifle:m.drop } });
+      else {
+        const proxy = g.heroes.list.find(h => h.netId === vid);
+        if (proxy) g.dropWeaponFrom(proxy);
+      }
+    }
     if (m.score) {
       g.dm.score = m.score;
       g.ui.setDmScore(m.score.A, m.score.B, g.dm.timer);
@@ -432,6 +450,20 @@ export class NetMatch {
       else {
         if (row.id !== r.id) row.id = r.id;       // reconnect: seat id changed, keep the K/D
         if (r.team && row.team !== r.team) row.team = r.team;
+      }
+    }
+    // Roster pruning: a seat that left (or a name re-taken after a reconnect) used to keep its
+    // TAB row and its idle avatar forever — neither had any removal path.
+    const live = new Set(m.roster.map(r => r.id));
+    for (const [name, row] of [...g.dm.scores]) {
+      if (!live.has(row.id)) {
+        g.dm.scores.delete(name);
+        const proxy = g.heroes.list.find(h => h.netId === row.id);
+        if (proxy) {
+          const i = g.heroes.list.indexOf(proxy);
+          proxy.dispose && proxy.dispose();
+          g.heroes.list.splice(i, 1);
+        }
       }
     }
   }

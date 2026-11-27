@@ -1,11 +1,12 @@
-// pickups.js — M3-G2 kill drops and pickups: ammo / medkit / damage boost:
+// pickups.js — M3-G2 kill drops and pickups: ammo / medkit / damage boost / weapon:
 //   · spinning glowing box + halo, 2 m magnet radius, despawns after 20 s;
 //   · geometry/material singletons are shared; each pickup only creates two meshes.
 import * as THREE from 'three';
 import { circleOverlapsCollider, resolveCircleCollisions } from './collision.js';
+import { WEAPON_DEFS } from './weapon.js';
 
-const TYPES=['ammo','med','boost'];
-const COLOR={ammo:0xe8c060,med:0x7fd4a0,boost:0xef6a5a};
+const TYPES=['ammo','med','boost','weapon'];
+const COLOR={ammo:0xe8c060,med:0x7fd4a0,boost:0xef6a5a,weapon:0xf5f5f5};
 
 export class Pickups{
   constructor(game,scene,effects,audio,ui){
@@ -48,8 +49,15 @@ export class Pickups{
     if(Math.abs(p.pos.x-x)>1e-6||Math.abs(p.pos.z-z)>1e-6)this._anchor(p);
   }
 
-  spawn(pos,type='ammo'){
+  /* A defeated opponent's primary as a weapon crate (main.dropWeaponFrom). */
+  addDrop(pos,rifleId){
+    if(!rifleId||!WEAPON_DEFS[rifleId])return null;
+    return this.drop(pos,'weapon',rifleId);
+  }
+
+  drop(pos,type='ammo',rifleId=null){
     if(!this._mats[type])return null;
+    if(type==='weapon'&&(!rifleId||!WEAPON_DEFS[rifleId]))return null;
     const g=new THREE.Group();
     const box=new THREE.Mesh(this._geo,this._mats[type]);
     const ring=new THREE.Mesh(this._ringGeo,this._mats[type]);
@@ -57,7 +65,7 @@ export class Pickups{
     g.add(box,ring);
     g.position.set(pos.x,.5,pos.z);
     this.scene.add(g);
-    const p={type,pos:g.position,group:g,life:20,t:0,surfaceY:0,baseY:.5};
+    const p={type,w:rifleId,pos:g.position,group:g,life:type==='weapon'?25:20,t:0,surfaceY:0,baseY:.5};
     this._anchor(p);
     this.list.push(p);
     return p;
@@ -105,9 +113,34 @@ export class Pickups{
       this.game.damageBoostT=10;
       this.game.damageBoostMul=1.5;
     }
+    else if(p.type==='weapon')this.collectWeapon(p.w);
     this.fx.impact(p.pos,new THREE.Vector3(0,1,0),'metal',{decal:false});
     if(this.audio&&this.audio.pickup)this.audio.pickup();
     return true;
+  }
+
+  /* Arena weapon-drop pickup: take the dropped rifle's ammo and adopt it as the first primary
+     (slot 1 cycles from there). The loadout always carries all faction primaries, so "taking
+     the rifle" is a slot swap + a reserve top-up; the mag ammo state is rebuilt by setLoadout. */
+  collectWeapon(rifleId){
+    const w=this.game.weapon;
+    if(!rifleId||!w||!w.defs)return;
+    const idx=w.defs.findIndex(d=>d.id===rifleId);
+    const isPrimary=idx>=0&&idx<w.primaryCount;
+    if(isPrimary&&idx>0){
+      const ids=w.defs.slice(0,w.primaryCount).map(d=>d.id);
+      const at=ids.indexOf(rifleId);
+      ids.splice(at,1);
+      ids.unshift(rifleId);
+      const oldReserve=w.state[idx].reserve;
+      w.setLoadout(ids,0);
+      w.state[0].reserve=Math.min(w.defs[0].reserve*2,oldReserve+60);
+    }else if(isPrimary){
+      w.state[0].reserve+=60;
+    }else{
+      // Not in the loadout (faction primaries cover everything) — treat as reserve ammo.
+      w.addReserve(60);
+    }
   }
 
   _remove(i){

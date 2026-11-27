@@ -1,8 +1,19 @@
 // worker.js — Cloudflare Worker entry + Durable Object room (Hibernation WebSocket API).
 // The DO is a room registry / message fan-out / authoritative scoreboard. No three.js, no physics, no AI.
 import * as R from './room.js';
-import { C, S, PROTO, LIMITS, MODE, HIT_DMG_CAP, WEAPON_DMG, HEAD_MUL, WORLD_MAX_BOXES, LOS_MAX_DIST, PEER_FLAGS, GRENADE_KIND, GRENADE_DMG_CAP, BOT_RESPAWN_MS, LOS_SPREAD, LOS_HEAD, MAP_HASHES, mapHashValue, isMode, decodePeer, isValidMsg } from '../src/netProtocol.js';
+import { C, S, PROTO, LIMITS, MODE, HIT_DMG_CAP, WEAPON_DMG, HEAD_MUL, WORLD_MAX_BOXES, LOS_MAX_DIST, PEER_FLAGS, GRENADE_KIND, GRENADE_DMG_CAP, GRENADE_RADIUS, BOT_RESPAWN_MS, LOS_SPREAD, LOS_HEAD, MAP_HASHES, mapHashValue, isMode, decodePeer, isValidMsg } from '../src/netProtocol.js';
 import { losBlocked, hashGeo } from './los.js';
+import { byId } from '../src/operators.js';   // pure data: the victim's rifle id for the drop frame
+
+/* The victim's primary rifle (arena weapon-drop rule). Bots are one op per team (BOT_OP),
+   so both the seat op and the bot roster resolve through byId().rifle. */
+const rifleOf = (state, id) => {
+  const seat = state.humans[id];
+  if (seat) return byId(seat.op)?.rifle || '';
+  const bot = (state.bots || []).find(b => b.id === id);
+  return bot ? (byId(bot.op)?.rifle || '') : '';
+};
+
 
 const CORS = {
   'Access-Control-Allow-Origin':'*',
@@ -47,6 +58,9 @@ export class Room {
     this.ctx = ctx; this.env = env;
     this.pending = new Map();     // id → {at, p} latest quantised snapshot (hit origin / liveness)
     this.botShots = {};           // botId → {by, t} last human hit per bot (kill credit window)
+    // Server-owned hp per human seat: id → {hp, diedAt}. Hits drain it; death is judged here.
+    // (Not persisted: after hibernation a seat restarts at full hp, the safe direction.)
+    this.serverHp = new Map();
     // Hibernation: restore the authoritative room state before any event is delivered.
     ctx.blockConcurrencyWhile(async () => {
       const stored = await ctx.storage.get('room');
@@ -76,6 +90,13 @@ export class Room {
   async save(){ await this.ctx.storage.put('room', R.toJSON(this.state)); }
 
   webSocketMessage(ws, raw) {
+    // Room-level budget FIRST (before parsing): the per-connection bucket below cannot see
+    // the aggregate of 10 sockets, and a parse of an oversized frame is CPU an attacker buys.
+    const now0 = Date.now();
+    if (raw.length > LIMITS.bytesPerMsg) return;
+    this._roomTok = this._roomTok || { t: now0, n: 0 };
+    if (now0 - this._roomTok.t >= 1000) { this._roomTok.t = now0; this._roomTok.n = 0; }
+    if (++this._roomTok.n > LIMITS.msgPerRoomPerSec) return;   // whole-room budget: drop silently
     let m; try { m = JSON.parse(raw); } catch { return; }
     if (!isValidMsg(m)) return;
     const at = this.attachment(ws);
@@ -166,6 +187,11 @@ export class Room {
         while(h.length&&now-h[0].t>500)h.shift();
         this.attachment(ws,{...at,history:h});
         this.pending.set(at.id, { at:now, p:m.s });
+        // Respawn: the client came back ALIVE after a server-side death → refill the hp pool.
+        const hpRec=this.serverHp.get(at.id);
+        if(hpRec&&hpRec.diedAt&&(p[7]&PEER_FLAGS.ALIVE)&&now-hpRec.diedAt>1000){
+          hpRec.hp=100;hpRec.diedAt=0;
+        }
         // Broadcast every snapshot at most once per ~66 ms (15 Hz), not per raw message
         if (!this._snapAt || now-this._snapAt >= 60) {
           this._snapAt = now;
@@ -189,6 +215,9 @@ export class Room {
             const last=this.respawned[bot.id]||0;
             if(now-last>=BOT_RESPAWN_MS){bot.alive=true;this.respawned[bot.id]=now;}
           }
+          // Latest bot position per id (weapon-drop payload for S.KILL; ~free, one small object per frame)
+          this.botPending = this.botPending || new Map();
+          this.botPending.set(bot.id, { at:now, p:snap });
         }
         this.broadcast({ t:S.BOTS, st:now/1000, b:m.b }, at.id);
         return;
@@ -228,6 +257,9 @@ export class Room {
         const isBot = this.isBotId(m.target);
         const shooter=this.pending.get(at.id);
         if (!shooter || !(shooter.p[7]&PEER_FLAGS.ALIVE)) return;   // dead shooters cannot hit
+        // A seat the SERVER has marked dead cannot shoot, whatever its snapshot claims.
+        const shooterHp = this.serverHp.get(at.id);
+        if (shooterHp && shooterHp.diedAt) return;
         if (!(m.w in HIT_DMG_CAP)) return;                          // weapon whitelist
         if (typeof m.dmg!=='number'||!Number.isFinite(m.dmg)||m.dmg<=0) return;
         const seq=Math.max(0,Math.min(1e9,m.seq|0));
@@ -235,13 +267,16 @@ export class Room {
         if (now-at.dmgAt<60) return;                                // minimum fire interval
         // Authoritative adjudication — the server recomputes damage and rejects wall shots.
         // The client-supplied m.dmg is treated only as a "hit request", never as truth.
-        // A frag is thrown at a spot, not aimed at a body: the thrower's own falloff value is
-        // bounded by the grenade cap, and LOS is not evaluated from the thrower's position.
+        // A frag is thrown at a spot: the DO checks the claimed blast point against the
+        // victim (range) and against the thrower (blast-line LOS), so a scripted client can
+        // no longer frag anyone through walls anywhere on the map. Damage itself is
+        // recomputed from the thrower→victim distance with the same falloff the client uses.
         const isFrag = m.w === GRENADE_KIND;
         let dmg;
         if (isFrag) {
-          dmg = Math.min(m.dmg, GRENADE_DMG_CAP);
-          if (dmg <= 0) return;
+          const v = this.validateFrag(at, m);
+          if (!v.ok) return;
+          dmg = v.dmg;
         } else if (isBot) {
           // Bot target: authoritative damage only (bot position lives on the host client).
           dmg = (WEAPON_DMG[m.w] || 0) * (m.head ? HEAD_MUL : 1);
@@ -262,13 +297,45 @@ export class Room {
         if (!isBot) {
           const on = (this.hitOn = this.hitOn || {});
           on[m.target] = { by:at.id, t:now };
+          // Server-owned hp: drain the pool and judge death HERE, never by the victim alone.
+          const hpRec = this.serverHp.get(m.target) || { hp:100, diedAt:0 };
+          if (!hpRec.diedAt) {                       // hp does not drain while waiting for respawn
+            hpRec.hp -= dmg;
+            if (hpRec.hp <= 0) {
+              hpRec.hp = 0; hpRec.diedAt = now;
+              // The victim's own report may lag; a server death broadcasts the KILL itself.
+              const killer = this.normalizeKiller({ id: at.id });
+              const r = R.recordKill(this.state, {
+                killerId: at.id, victimId: m.target, killerName: this.nameOf(at.id),
+                victimName: this.nameOf(m.target), weapon: m.w, head: m.head, seq: 0,
+              });
+              if (!r.err) {
+                this.broadcast({ t:S.KILL,
+                  killer:{ id:at.id, name:this.nameOf(at.id) },
+                  victim:{ id:m.target, name:this.nameOf(m.target) },
+                  w:m.w, head:m.head, score:r.score, ...this.killDropInfo(m.target) });
+                if (r.end) this.endMatch(r.end, 'kills');
+              }
+            }
+          }
+          this.serverHp.set(m.target, hpRec);
         }
         return this.relayHit(at, m, dmg);
       }
       case C.DIED: {
         if (!at.joined || this.state.phase !== 'live') return;
-        // The victim only reports that it died; the killer must be corroborated by an earlier
-        // hit, otherwise a client could hand 25 free kills to the enemy team by dying on cue.
+        /* Server-side HP tracking: hits drain a server-owned hp pool per seat; the death is
+           judged HERE, not by the victim. C.DIED is only honoured when the server's own hp
+           is ≤ 0 (a live client that "dies on cue" without damage can no longer hand out
+           kills), or within a short grace window after server death (client beat the wire). */
+        const hpAt = this.serverHp.get(at.id);
+        if (hpAt && now - hpAt.diedAt < 5000) {
+          // already recorded as dead by the server: replays of C.DIED stay idempotent (seq gate below)
+        } else if (hpAt && hpAt.hp > 0) {
+          return;                              // server hp disagrees: ignore the premature death report
+        }
+        // The killer must be corroborated by an earlier hit, otherwise a client could hand 25
+        // free kills to the enemy team by dying on cue.
         const killerId = this.creditKiller(at.id, m.killer);
         if (!killerId) return;
         const seq = Math.max(0, Math.min(1e9, m.seq|0));
@@ -277,10 +344,11 @@ export class Room {
           victimName:this.nameOf(at.id), weapon:m.w, head:m.head, seq,
         });
         if (r.err) return;                       // duplicate / unknown killer: no kill broadcast
+        this.markDead(at.id, now);
         this.broadcast({ t:S.KILL,
           killer:{ id:killerId, name:this.nameOf(killerId) },
           victim:{ id:at.id, name:this.nameOf(at.id) },
-          w:m.w, head:m.head, score:r.score });
+          w:m.w, head:m.head, score:r.score, ...this.killDropInfo(at.id) });
         if (r.end) this.endMatch(r.end, 'kills');
         return this.save();
       }
@@ -307,7 +375,7 @@ export class Room {
         this.broadcast({ t:S.KILL,
           killer:{ id:killerId, name:this.nameOf(killerId) },
           victim:{ id:m.bot, name:this.nameOf(m.bot) },
-          w:m.w, head:0, score:r.score });
+          w:m.w, head:0, score:r.score, ...this.killDropInfo(m.bot) });
         if (r.end) this.endMatch(r.end, 'kills');
         return this.save();
       }
@@ -317,6 +385,11 @@ export class Room {
         // koth only, host only: the host is the node that actually simulates the point.
         if (!at.joined || this.state.phase !== 'live' || this.state.hostId !== at.id) return;
         if (this.state.mode !== 'koth') return;
+        // 1 Hz per team: the host legitimately reports one capture tick per second of holding.
+        // (Without a cap a scripted host pushed 320 points/s and won KOTH in under a second.)
+        at.pointAt = at.pointAt || {};
+        if (now - (at.pointAt[m.team] || 0) < 900) return;
+        at.pointAt[m.team] = now;
         const n = Math.max(1, Math.min(10, m.n | 0 || 1));
         let last = null;
         for (let i = 0; i < n && !last?.end; i++) last = R.addPoint(this.state, m.team);
@@ -327,7 +400,20 @@ export class Room {
       }
       case C.FX: {
         if (!at.joined) return;
-        const { t: _ignored, ...fx } = m;          // spreading m after t would restore 'c:fx'
+        // Whitelist + bounds: an FX frame is cosmetic only. Forwarding arbitrary client JSON
+        // used to let one connection amplify ~1 MB/s of fan-out to the whole room.
+        const kind = m.fx;
+        if (kind !== 'shot' && kind !== 'impact' && kind !== 'explosion') return;
+        const fx = { fx:kind, from:at.id };
+        if (Array.isArray(m.p) && m.p.length === 3 &&
+            m.p.every(v => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) < 200)) {
+          fx.p = m.p.map(v => Math.round(v * 100) / 100);
+        }
+        // Room-level rate limit: cosmetic frames may not dominate the fan-out budget.
+        this._fxTick = this._fxTick || {};
+        const bucket = this._fxTick[at.id] = this._fxTick[at.id] || { t:now, n:0 };
+        if (now - bucket.t > 1000) { bucket.t = now; bucket.n = 0; }
+        if (++bucket.n > 8) return;
         return this.broadcast({ ...fx, t:S.FX }, at.id);
       }
     }
@@ -364,6 +450,35 @@ export class Room {
   /* True only for an id present in this room's bot roster (see C.HIT). */
   isBotId(id) {
     return !!id && (this.state.bots || []).some(b => b.id === id);
+  }
+
+  /* Frag adjudication: the thrower claims a blast point (blast:[x,y,z] in cm). The victim must
+     be within GRENADE_RADIUS of it, the blast line (thrower eye → blast) must not pierce a
+     wall, and the damage is recomputed from the actual distance with the client's falloff. */
+  validateFrag(at, m) {
+    const blast = m.blast;
+    if (!Array.isArray(blast) || blast.length !== 3 ||
+        blast.some(v => typeof v !== 'number' || !Number.isFinite(v))) return { ok:false };
+    const bx = blast[0]/100, by = blast[1]/100, bz = blast[2]/100;
+    if (Math.abs(bx) > 120 || Math.abs(bz) > 120 || by < -5 || by > 60) return { ok:false };
+    // The thrower must have been near the blast (a throw is ~15 m/s for 1.6 s max flight,
+    // but keep the check generous: the thrower's CURRENT snapshot is at most one snap old).
+    const sh = this.pending.get(at.id);
+    if (!sh) return { ok:false };
+    const sp = decodePeer(sh.p);
+    const throwDist = Math.hypot(bx - sp.x, bz - sp.z);
+    if (throwDist > 30) return { ok:false };
+    // Blast-line LOS: a grenade cannot detonate behind a wall relative to the thrower.
+    if (this.state.worldGeo &&
+        losBlocked(this.state.worldGeo, sp.x, sp.y + 1.6, sp.z, bx, by + .2, bz)) return { ok:false };
+    // Victim range + recomputed damage (linear falloff to zero at the AoE edge).
+    const t = this.pending.get(m.target);
+    if (!t) return { ok:false };
+    const tp = decodePeer(t.p);
+    const d = Math.hypot(tp.x - bx, tp.z - bz);
+    if (d > GRENADE_RADIUS) return { ok:false };
+    const dmg = Math.round(GRENADE_DMG_CAP * (1 - d / GRENADE_RADIUS));
+    return dmg > 0 ? { ok:true, dmg } : { ok:false };
   }
 
   /* Killer ids arrive either as a string, an id object ({id,name}) or a nested object; normalise. */
@@ -482,6 +597,28 @@ export class Room {
     if (bytes > LIMITS.bytesPerMsg || at.tokens < 1) return false;
     at.tokens -= 1;
     return true;
+  }
+
+  /* Record a server-side death (drain bookkeeping around serverHp). The seat revives when the
+     client's next snapshot carries the ALIVE flag again — respawn goes through the same
+     C.SNAP channel, so no extra message is needed. */
+  markDead(id, now) {
+    const rec = this.serverHp.get(id) || { hp:0, diedAt:0 };
+    rec.hp = 0; rec.diedAt = now;
+    this.serverHp.set(id, rec);
+  }
+
+  /* Weapon-drop payload for a S.KILL frame: the victim's rifle id + the victim's latest known
+     position (bots ride the host's botSnap broadcast; humans their own c:snap). */
+  killDropInfo(id) {
+    const p = this.pending.get(id) || (this.botPending && this.botPending.get(id));
+    const pos = p ? decodePeer(p.p) : null;
+    return {
+      drop: rifleOf(this.state, id),
+      dropPos: pos
+        ? { x: Math.round(pos.x * 100) / 100, y: Math.round(pos.y * 100) / 100, z: Math.round(pos.z * 100) / 100 }
+        : null,
+    };
   }
 
   drop(id) {
