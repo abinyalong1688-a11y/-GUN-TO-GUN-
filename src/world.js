@@ -112,6 +112,7 @@ export class ColliderGrid extends SpatialGrid{
 function addBox(scene,shootStatics,colliders,{w,h,d,mat,x,y,z,ry=0,surface='concrete',collide=true,shadow=true}){
   const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
   m.position.set(x,y,z);m.rotation.y=ry;
+  m.name=`world-box-${x.toFixed(2)}-${y.toFixed(2)}-${z.toFixed(2)}`;
   m.castShadow=shadow;m.receiveShadow=true;
   m.userData.surface=surface;
   m.userData.losBox=true;                 // exact OBB already emitted below — skip the AABB fallback
@@ -123,7 +124,7 @@ function addBox(scene,shootStatics,colliders,{w,h,d,mat,x,y,z,ry=0,surface='conc
     const c=Math.abs(Math.cos(ry)),s=Math.abs(Math.sin(ry));
     const hx=c*w*.5+s*d*.5,hz=s*w*.5+c*d*.5;
     // Keep the AABB for cheap height/support queries, plus the true OBB for horizontal push-out.
-    colliders.push({x,z,w,d,ry,minX:x-hx,maxX:x+hx,minZ:z-hz-.01,maxZ:z+hz+.01,top:y+h/2});
+    colliders.push({x,z,w,d,ry,minX:x-hx,maxX:x+hx,minZ:z-hz-.01,maxZ:z+hz+.01,bottom:y-h/2,top:y+h/2});
   }
   return m;
 }
@@ -245,15 +246,19 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
   world.add(ground);shootStatics.push(ground);
 
   /* ------- Distant terrain: mounds, or a city skyline on the docks ------- */
+  const mounds=[];
   if(map.mounds!==false){
     for(let i=0;i<7;i++){
-      const a=i/7*Math.PI*2+.4,r=86+((i*53)%30);
-      const mound=new THREE.Mesh(new THREE.SphereGeometry(20+(i%3)*9,16,12),assets.ground[map.ground]);
+      const a=i/7*Math.PI*2+.4,r=86+((i*53)%30),radius=20+(i%3)*9;
+      // The caldera already owns the northern horizon; a generic mound there merged into it.
+      if(mapKey==='ember'&&Math.abs(Math.atan2(Math.sin(a+Math.PI/2),Math.cos(a+Math.PI/2)))<.45)continue;
+      const mound=new THREE.Mesh(new THREE.SphereGeometry(radius,16,12),assets.ground[map.ground]);
       mound.position.set(Math.cos(a)*r,-2,Math.sin(a)*r);
       mound.scale.y=.28;
-      world.add(mound);
+      world.add(mound);mounds.push({x:mound.position.x,z:mound.position.z,r:radius});
     }
   }
+  ctx.mounds=mounds;
 
   /* ------- Scattered rocks / shards (mat per map; docks is urban and skips them) ------- */
   if(map.rock){
@@ -261,12 +266,14 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
     for(let i=0;i<14;i++){
       const a=(i*137.5)*Math.PI/180,r=22+((i*67)%24);
       const rock=new THREE.Mesh(rockGeo,M[map.rock]);
+      rock.name='scattered-rock';
       rock.position.set(Math.cos(a)*r,.1+(i%3)*.15,Math.sin(a)*r);
       rock.scale.set(.7+(i%4)*.5,.5+(i%3)*.4,.7+(i%2)*.6);
       rock.rotation.y=i;rock.castShadow=true;rock.receiveShadow=true;
       rock.userData.surface='concrete';
       world.add(rock);shootStatics.push(rock);
-      if(i%3===0)colliders.push({minX:rock.position.x-1,maxX:rock.position.x+1,minZ:rock.position.z-1,maxZ:rock.position.z+1,top:1});
+      const bounds=new THREE.Box3().setFromObject(rock);
+      colliders.push({minX:bounds.min.x,maxX:bounds.max.x,minZ:bounds.min.z,maxZ:bounds.max.z,bottom:0,top:bounds.max.y});
     }
   }
 
@@ -277,26 +284,35 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
     const adBackMat=new THREE.MeshBasicMaterial({map:assets.tex.adBack});
     ownMats.push(adMat,adBackMat); // freed together with the world on map switch
     const postGeo=new THREE.CylinderGeometry(.09,.12,3.2,8);
-    const frame=new THREE.BoxGeometry(6.2,3.2,.08);
-    const spots=[[17,14],[-17,-14],[-16,12]];
+    // The frame overhangs the artwork, so its supports sit outside the printable faces instead
+    // of stabbing through the front/back billboards.
+    const frame=new THREE.BoxGeometry(6.8,3.2,.08);
+    const spots=mapKey==='ember'?[[17,14],[-17,-14],[-19,13]]
+      :mapKey==='snowtown'?[[20,14],[-20,-18],[-19,14]]
+      :[[17,14],[-17,-14],[-16,12]];
     for(const [x,z] of spots){
       const ry=Math.atan2(-x,-z); // face the arena centre
       const grp=new THREE.Group();
+      grp.name=`sponsor-${x}-${z}`;
       const board=new THREE.Mesh(adGeo,adMat);
+      board.name='sponsor-front';
       board.position.y=2.6;
       board.userData.surface='metal';
       grp.add(board);
       const back=new THREE.Mesh(adGeo,adBackMat); // separate content on the back face
+      back.name='sponsor-back';
       back.position.set(0,2.6,-.12);
       back.rotation.y=Math.PI;
       back.userData.surface='metal';
       grp.add(back);
       const beam=new THREE.Mesh(frame,M.metal);
+      beam.name='sponsor-frame';
       beam.position.set(0,2.6,-.05);
       grp.add(beam);
       for(const sd of[-1,1]){
         const post=new THREE.Mesh(postGeo,M.metal);
-        post.position.set(sd*2.6,1.6,0);
+        post.name='sponsor-post';
+        post.position.set(sd*3.25,1.6,0);
         post.castShadow=true;
         post.userData.surface='metal';
         grp.add(post);
@@ -305,11 +321,11 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
       grp.position.set(x,0,z);
       grp.rotation.y=ry;
       world.add(grp);
-      shootStatics.push(board);
-      // Thin panel collider
-      const hw=Math.abs(Math.cos(ry))*3+Math.abs(Math.sin(ry))*.1;
-      const hd=Math.abs(Math.sin(ry))*3+Math.abs(Math.cos(ry))*.1;
-      colliders.push({minX:x-hw,maxX:x+hw,minZ:z-hd,maxZ:z+hd,top:4.2});
+      shootStatics.push(board,back);
+      // Thin panel collider. Keep the supports inside the same footprint.
+      const hw=Math.abs(Math.cos(ry))*3.4+Math.abs(Math.sin(ry))*.12;
+      const hd=Math.abs(Math.sin(ry))*3.4+Math.abs(Math.cos(ry))*.12;
+      colliders.push({x,z,w:6.8,d:.24,ry,minX:x-hw,maxX:x+hw,minZ:z-hd,maxZ:z+hd,bottom:1.1,top:4.2});
     }
   }
 
@@ -407,11 +423,13 @@ export function buildWorld(scene,assets,quality,mapKey='desert'){
 
 /* Street lamp (shared shape, per-map palette from MAPS[mapKey].lamp) */
 function lamp(ctx,x,z,ry){
-  const {world,shootStatics,ownMats,M,map}=ctx;
+  const {world,shootStatics,colliders,ownMats,M,map}=ctx;
   const pole=new THREE.Mesh(new THREE.CylinderGeometry(.06,.08,4.6,8),M.metal);
+  pole.name='street-lamp-pole';
   pole.position.set(x,2.3,z);pole.castShadow=true;
   pole.userData.surface='metal';
   world.add(pole);shootStatics.push(pole);
+  colliders.push({minX:x-.1,maxX:x+.1,minZ:z-.1,maxZ:z+.1,bottom:0,top:4.6});
   const head=new THREE.Mesh(new THREE.BoxGeometry(.5,.14,.3),M.metal);
   head.position.set(x+Math.sin(ry)*.3,4.6,z+Math.cos(ry)*.3);head.rotation.y=ry;
   world.add(head);
@@ -448,48 +466,53 @@ const LAYOUTS={
 
     for(let i=0;i<7;i++){
       const a=Math.PI*.72+i*Math.PI*.09;
-      addBox(world,shootStatics,colliders,{w:1.1,h:.55,d:.8,mat:M.hesco,x:Math.cos(a)*7.4,y:.275,z:Math.sin(a)*7.4-1,ry:-a+Math.PI/2,surface:'concrete',collide:false});
-      addBox(world,shootStatics,colliders,{w:1.1,h:.55,d:.8,mat:M.hesco,x:Math.cos(a)*7.4+.4,y:.82,z:Math.sin(a)*7.4-.8,ry:-a+Math.PI/2+.2,surface:'concrete',collide:false});
+      // Keep the ring east of the container stack; the old centre put four bags inside it.
+      addBox(world,shootStatics,colliders,{w:1.1,h:.55,d:.8,mat:M.hesco,x:Math.cos(a)*7.4+2.5,y:.275,z:Math.sin(a)*7.4-1,ry:-a+Math.PI/2,surface:'concrete'});
+      addBox(world,shootStatics,colliders,{w:1.1,h:.55,d:.8,mat:M.hesco,x:Math.cos(a)*7.4+2.9,y:.825,z:Math.sin(a)*7.4-.8,ry:-a+Math.PI/2+.2,surface:'concrete'});
     }
 
     addBox(world,shootStatics,colliders,{w:1.1,h:1.1,d:1.1,mat:M.wood,x:1.8,y:.55,z:4.2,ry:.4,surface:'wood'});
     addBox(world,shootStatics,colliders,{w:1.1,h:1.1,d:1.1,mat:M.wood,x:2.9,y:.55,z:3.6,ry:.1,surface:'wood'});
-    addBox(world,shootStatics,colliders,{w:1.1,h:1.1,d:1.1,mat:M.wood,x:2.3,y:1.65,z:3.9,ry:.7,surface:'wood',collide:false});
+    addBox(world,shootStatics,colliders,{w:1.1,h:1.1,d:1.1,mat:M.wood,x:2.3,y:1.65,z:3.9,ry:.7,surface:'wood'});
 
     const barrelGeo=new THREE.CylinderGeometry(.42,.42,1.1,14);
-    for(const [x,z,mi] of [[10.6,2.4,0],[11.5,2.9,1],[11,-.6,1]]){
+    for(const [x,z,mi] of [[9.2,2.4,0],[10.1,2.9,1],[9.6,-.6,1]]){
       const b=new THREE.Mesh(barrelGeo,contMats[mi]);
+      b.name='supply-barrel';
       b.position.set(x,.55,z);b.castShadow=b.receiveShadow=true;
       b.userData.surface='metal';
       world.add(b);shootStatics.push(b);
+      colliders.push({minX:x-.42,maxX:x+.42,minZ:z-.42,maxZ:z+.42,bottom:0,top:1.1});
     }
-    colliders.push({minX:10.2,maxX:12,minZ:-1,maxZ:3.4,top:1.1});
 
     /* Watchtower */
     {
       const tx=17,tz=-13;
-      const legGeo=new THREE.CylinderGeometry(.09,.12,5.2,8);
+      const legGeo=new THREE.CylinderGeometry(.09,.12,5.11,8);
       for(const [dx,dz] of [[-1.1,-1.1],[1.1,-1.1],[-1.1,1.1],[1.1,1.1]]){
         const leg=new THREE.Mesh(legGeo,M.metal);
-        leg.position.set(tx+dx,2.6,tz+dz);leg.castShadow=true;
+        leg.position.set(tx+dx,2.555,tz+dz);leg.castShadow=true;
         leg.userData.surface='metal';
         world.add(leg);shootStatics.push(leg);
+        colliders.push({minX:tx+dx-.12,maxX:tx+dx+.12,minZ:tz+dz-.12,maxZ:tz+dz+.12,bottom:0,top:5.11});
       }
       const plat=new THREE.Mesh(new THREE.BoxGeometry(3,.18,3),M.wood);
-      plat.position.set(tx,5.2,tz);plat.castShadow=plat.receiveShadow=true;
+      plat.name='watchtower-platform';plat.position.set(tx,5.2,tz);plat.castShadow=plat.receiveShadow=true;
       world.add(plat);
+      colliders.push({x:tx,z:tz,w:3,d:3,ry:0,minX:tx-1.5,maxX:tx+1.5,minZ:tz-1.5,maxZ:tz+1.5,bottom:5.11,top:5.29});
       const cab=new THREE.Mesh(new THREE.BoxGeometry(2.6,1,2.6),contMats[0]);
-      cab.position.set(tx,5.8,tz);cab.castShadow=true;
+      cab.name='watchtower-cab';cab.position.set(tx,5.8,tz);cab.castShadow=true;
       world.add(cab);
+      colliders.push({x:tx,z:tz,w:2.6,d:2.6,ry:0,minX:tx-1.3,maxX:tx+1.3,minZ:tz-1.3,maxZ:tz+1.3,bottom:5.3,top:6.3});
       const roof=new THREE.Mesh(new THREE.ConeGeometry(2.3,1.2,4),contMats[1]);
-      roof.position.set(tx,7,tz);roof.rotation.y=Math.PI/4;roof.castShadow=true;
+      roof.position.set(tx,6.9,tz);roof.rotation.y=Math.PI/4;roof.castShadow=true;
       world.add(roof);
       const ant=new THREE.Mesh(new THREE.CylinderGeometry(.02,.02,2.4,6),M.metal);
-      ant.position.set(tx+1,8.2,tz);world.add(ant);
+      ant.position.set(tx+1,8.7,tz);world.add(ant); // starts at the roof apex (7.5 m), not inside it
       const beacon=new THREE.Mesh(new THREE.SphereGeometry(.09,8,8),new THREE.MeshBasicMaterial({color:0xff3a2a}));
-      beacon.position.set(tx+1,9.4,tz);world.add(beacon);
+      beacon.position.set(tx+1,9.9,tz);world.add(beacon);
       ownMats.push(beacon.material);
-      colliders.push({minX:tx-1.3,maxX:tx+1.3,minZ:tz-1.3,maxZ:tz+1.3,top:5.2});
+
       worldAnim.push(t=>{beacon.material.color.setHex(Math.sin(t*3)>0?0xff3a2a:0x571512);});
     }
 
@@ -503,7 +526,7 @@ const LAYOUTS={
       dish.userData.surface='metal';
       world.add(dish);shootStatics.push(dish);
       worldAnim.push(t=>{dish.rotation.y=Math.sin(t*.6)*1.2;});
-      colliders.push({minX:px-.8,maxX:px+.8,minZ:pz-.8,maxZ:pz+.8,top:3.4});
+      colliders.push({minX:px-.18,maxX:px+.18,minZ:pz-.18,maxZ:pz+.18,bottom:0,top:3.4});
     }
 
     lamp(ctx,-6,7,.7);lamp(ctx,8,-2,2.4);
@@ -514,23 +537,23 @@ const LAYOUTS={
       const g1=new THREE.Mesh(new THREE.BoxGeometry(5,.1,3.4),M.concrete);
       g1.position.set(tx,.05,tz);g1.receiveShadow=true;world.add(g1);
       const roof=new THREE.Mesh(new THREE.CylinderGeometry(1.7,1.7,5,3,1,false,0,Math.PI),M.hesco);
-      roof.rotation.z=Math.PI/2;roof.rotation.y=Math.PI/2;
-      roof.position.set(tx,1.1,tz);roof.scale.set(1,.72,1);
+      roof.rotation.z=Math.PI/2;
+      roof.position.set(tx,1.1,tz);roof.scale.set(1,1,1);
       roof.castShadow=roof.receiveShadow=true;
       roof.userData.surface='concrete';
       world.add(roof);shootStatics.push(roof);
-      colliders.push({minX:tx-2.4,maxX:tx+2.4,minZ:tz-1.6,maxZ:tz+1.6,top:1.9});
+      colliders.push({minX:tx-2.5,maxX:tx+2.5,minZ:tz-1.7,maxZ:tz+1.7,bottom:0,top:2.8});
     }
   },
 
   /* Glacier Lake — "crevasse ridge": a diagonal wall of glacial ice ridges west of centre, a fractured
      ice maze to the north, a half-sunken wreck in the north-west and an open iceberg plain to the east */
   glacier(ctx){
-    const {world,shootStatics,colliders,worldAnim,ownMats,M,assets}=ctx;
+    const {world,shootStatics,colliders,worldAnim,ownMats,M,assets,mounds}=ctx;
     const contMats=ctx.map.containers.map(k=>assets.containers[k]);
 
     /* Diagonal ice ridge (three long walls stepping NW→SE, west of the arena centre) */
-    for(const [x,z] of [[-11,-4.5],[-7.5,-1],[-5,3]])
+    for(const [x,z] of [[-13,-4.5],[-9.5,-1],[-9,3]])
       addBox(world,shootStatics,colliders,{w:7,h:2.2,d:1.4,mat:M.ice,x,y:1.1,z,ry:.45,surface:'ice'});
 
     /* Fractured ice maze to the north */
@@ -540,30 +563,31 @@ const LAYOUTS={
     addBox(world,shootStatics,colliders,{w:2.2,h:1.8,d:1.8,mat:M.ice,x:-8,y:.9,z:-15,ry:.1,surface:'ice'});
 
     /* Half-sunken supply wreck, NW corner */
-    addBox(world,shootStatics,colliders,{w:7,h:1.6,d:3,mat:contMats[1],x:-18,y:.7,z:-7,ry:.9,surface:'metal'});
-    addBox(world,shootStatics,colliders,{w:3,h:1.8,d:2.4,mat:contMats[0],x:-18.6,y:2.3,z:-7.8,ry:1.05,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:7,h:1.6,d:3,mat:contMats[1],x:-20,y:.7,z:-7,ry:.9,surface:'metal'});
+    addBox(world,shootStatics,colliders,{w:3,h:1.8,d:2.4,mat:contMats[0],x:-20.6,y:2.4,z:-7.8,ry:1.05,surface:'metal'});
 
     /* Open iceberg plain to the east */
-    addBox(world,shootStatics,colliders,{w:3.2,h:2.2,d:2.6,mat:M.ice,x:10,y:1.1,z:-4,ry:.15,surface:'ice'});
+    addBox(world,shootStatics,colliders,{w:3.2,h:2.2,d:2.6,mat:M.ice,x:12,y:1.1,z:-4,ry:.15,surface:'ice'});
     addBox(world,shootStatics,colliders,{w:2.4,h:1.6,d:2,mat:M.ice,x:9,y:.8,z:8,ry:-.35,surface:'ice'});
     addBox(world,shootStatics,colliders,{w:2,h:2.8,d:2,mat:M.ice,x:13,y:1.4,z:2,ry:.05,surface:'ice'});
 
     /* Frozen supply crates (the ~1.1 m climbable tier) */
     const stack=(x,z,ry,n=2)=>{
       for(let i=0;i<n;i++)
-        addBox(world,shootStatics,colliders,{w:1.15,h:1.15,d:1.15,mat:M.wood,x,y:.575+i*1.15,z,ry:ry+i*.13,surface:'wood',collide:i===0});
+        addBox(world,shootStatics,colliders,{w:1.15,h:1.15,d:1.15,mat:M.wood,x:x+(i?.9:0),y:.575+i*1.15,z,ry:ry+i*.13,surface:'wood'});
     };
     stack(5,6,.3,2);stack(11,-8,-.2,2);
     stack(-3,8,.1,1);stack(-1.8,9,-.4,1);
-    stack(3.5,-13,.4,1);
+    stack(4,-16.5,.4,1);
 
     /* Frozen trapper hut, north-east */
     {
       const hx=14,hz=-12;
       addBox(world,shootStatics,colliders,{w:3,h:2.3,d:2.6,mat:M.wood,x:hx,y:1.15,z:hz,ry:-.3,surface:'wood'});
       const roof=new THREE.Mesh(new THREE.ConeGeometry(2.3,1.3,4),contMats[0]);
-      roof.position.set(hx,2.95,hz);roof.rotation.y=Math.PI/4;roof.castShadow=true;
+      roof.name='trapper-hut-roof';roof.position.set(hx,2.95,hz);roof.rotation.y=Math.PI/4;roof.castShadow=true;
       world.add(roof);
+      colliders.push({x:hx,z:hz,w:3.3,d:3.3,ry:0,minX:hx-1.65,maxX:hx+1.65,minZ:hz-1.65,maxZ:hz+1.65,bottom:2.3,top:3.6});
     }
 
     /* Signal mast, west edge, cold blinking beacon */
@@ -572,25 +596,36 @@ const LAYOUTS={
       const pole=new THREE.Mesh(new THREE.CylinderGeometry(.08,.11,5.4,8),M.metal);
       pole.position.set(px,2.7,pz);pole.castShadow=true;world.add(pole);
       const beacon=new THREE.Mesh(new THREE.SphereGeometry(.1,8,8),new THREE.MeshBasicMaterial({color:0x7fd4ff}));
-      beacon.position.set(px,5.7,pz);world.add(beacon);
+      beacon.position.set(px,5.5,pz);world.add(beacon);
       ownMats.push(beacon.material);
-      colliders.push({minX:px-.5,maxX:px+.5,minZ:pz-.5,maxZ:pz+.5,top:5.4});
+      colliders.push({minX:px-.14,maxX:px+.14,minZ:pz-.14,maxZ:pz+.14,bottom:0,top:5.4});
       worldAnim.push(t=>{beacon.material.color.setHex(Math.sin(t*2.2)>0?0x7fd4ff:0x16324a);});
     }
 
     /* Snow drifts */
     for(let i=0;i<10;i++){
+      if(i===6)continue; // deterministic drift at (12.64,-9.81) intersected the trapper hut
       const a=(i*53.7)*Math.PI/180,r=12+((i*31)%26);
-      const pile=new THREE.Mesh(new THREE.SphereGeometry(1+(i%3)*.5,10,8),assets.ground.snow);
-      pile.position.set(Math.cos(a)*r,.1,Math.sin(a)*r);
-      pile.scale.y=.42;pile.receiveShadow=true;
+      const radius=1+(i%3)*.5,x=Math.cos(a)*r,z=Math.sin(a)*r;
+      const pile=new THREE.Mesh(new THREE.CircleGeometry(radius,18),assets.ground.snow);
+      pile.name='snow-drift';pile.rotation.x=-Math.PI/2;pile.scale.set(1,.75,1);
+      pile.position.set(x,terrainHeight(x,z)+.018,z);pile.receiveShadow=true;
       world.add(pile);
     }
 
-    /* Distant icebergs */
+    /* Distant icebergs. Nudge them inward/around any generic mound instead of letting two
+       unrelated horizon solids interpenetrate. */
     for(const [x,z,s] of [[-52,-40,13],[48,-52,11],[-38,58,15],[58,42,12]]){
+      let bx=x,bz=z,found=false;
+      const baseR=Math.hypot(x,z),baseA=Math.atan2(z,x);
+      placement:for(const dr of [0,-6,-12,6,12])for(const da of [0,.14,-.14,.28,-.28]){
+        const r=Math.max(60,baseR+dr),a=baseA+da,px=Math.cos(a)*r,pz=Math.sin(a)*r;
+        if(mounds.some(m=>Math.hypot(px-m.x,pz-m.z)<m.r+s*1.4+8))continue;
+        bx=px;bz=pz;found=true;break placement;
+      }
+      if(!found)continue;
       const berg=new THREE.Mesh(new THREE.DodecahedronGeometry(1,0),M.ice);
-      berg.position.set(x,2,z);
+      berg.name='distant-iceberg';berg.position.set(bx,2,bz);
       berg.scale.set(s,s*.68,s*.8);
       berg.rotation.y=x;
       world.add(berg);
@@ -630,9 +665,9 @@ const LAYOUTS={
     addBox(world,shootStatics,colliders,{w:10,h:1.1,d:3,mat:M.concrete,x:-2,y:.55,z:10.5,ry:.06,surface:'concrete'});
     const stack=(x,z,ry,n=2)=>{
       for(let i=0;i<n;i++)
-        addBox(world,shootStatics,colliders,{w:1.15,h:1.15,d:1.15,mat:M.wood,x,y:.575+i*1.15,z,ry:ry+i*.13,surface:'wood',collide:i===0});
+        addBox(world,shootStatics,colliders,{w:1.15,h:1.15,d:1.15,mat:M.wood,x:x+(i?.9:0),y:.575+i*1.15,z,ry:ry+i*.13,surface:'wood'});
     };
-    stack(8,8.5,.3,2);stack(9.3,9.1,-.2,1);
+    stack(8,8.5,.3,2);stack(10.2,9.4,-.2,1);
     stack(-8,6,.1,1);stack(13,-1,.4,2);
 
     /* Jersey barriers in the street and yards */
@@ -642,26 +677,27 @@ const LAYOUTS={
     /* Neon signage mounted inside the canyon (panel + emissive face, shootable) */
     const sign=(mat,x,z,ry,{w=2.6,h=1.3,y=1.5,collide=true}={})=>{
       const back=new THREE.Mesh(new THREE.BoxGeometry(w+.14,h+.14,.12),charcoal);
-      back.position.set(x,y,z);back.rotation.y=ry;
+      back.name='neon-sign-back';back.position.set(x,y,z);back.rotation.y=ry;
       back.castShadow=true;back.userData.surface='metal';
-      world.add(back);
+      world.add(back);shootStatics.push(back);
       const face=new THREE.Mesh(new THREE.PlaneGeometry(w,h),mat);
-      face.position.set(x+Math.sin(ry)*.07,y,z+Math.cos(ry)*.07);
+      face.name='neon-sign-face';face.position.set(x+Math.sin(ry)*.07,y,z+Math.cos(ry)*.07);
       face.rotation.y=ry;
       face.userData.surface='metal';
       world.add(face);shootStatics.push(face);
       if(collide){
-        const hx=Math.abs(Math.cos(ry))*w*.5+.1,hz=Math.abs(Math.sin(ry))*w*.5+.1;
-        colliders.push({minX:x-hx,maxX:x+hx,minZ:z-hz,maxZ:z+hz,top:y+h*.5+.2});
+        const cw=(w+.14)*.5,cd=.06,hx=Math.abs(Math.cos(ry))*cw+Math.abs(Math.sin(ry))*cd,hz=Math.abs(Math.sin(ry))*cw+Math.abs(Math.cos(ry))*cd;
+        colliders.push({x,z,w:w+.14,d:.12,ry,minX:x-hx,maxX:x+hx,minZ:z-hz,maxZ:z+hz,bottom:y-h*.5-.07,top:y+h*.5+.07});
       }
     };
-    sign(M.neonDock,-1.45,-13,Math.PI/2-.25);   // west wall, tilted into the street
-    sign(M.neonCargo,3.5,1.8,-Math.PI/2+.25);   // east wall, tilted into the street
+    sign(M.neonDock,-1.3,-13,Math.PI/2-.25);   // west wall, tilted into the street
+    sign(M.neonCargo,3.35,1.8,-Math.PI/2+.25);   // east wall, tilted into the street
     sign(M.neonDock,10,-13.3,-.04,{y:1.5});     // north yard stack, facing down the street
     {
       const px=-6,pz=-16.5,ry=Math.atan2(6,16.5);
       const pole=new THREE.Mesh(new THREE.CylinderGeometry(.09,.12,4.4,8),M.metal);
-      pole.position.set(px,2.2,pz);pole.castShadow=true;world.add(pole);
+      pole.name='neon-sign-pole';pole.position.set(px,2.2,pz);pole.castShadow=true;world.add(pole);
+      colliders.push({minX:px-.14,maxX:px+.14,minZ:pz-.14,maxZ:pz+.14,bottom:0,top:4.4});
       sign(M.neonFerry,px+Math.sin(ry)*.1,pz+Math.cos(ry)*.1,ry,{y:3.6,collide:false}); // pole-mounted, walk under it
     }
 
@@ -707,7 +743,7 @@ const LAYOUTS={
     {
       const facade=new THREE.MeshStandardMaterial({color:0x1a1f28,roughness:.9,metalness:.05});
       ownMats.push(facade);
-      const spots=[[-58,26,16,15,22],[62,-34,20,13,26],[52,48,14,12,18],[-64,-52,18,11,24],[38,66,16,10,20],[-40,64,13,9,16],[70,10,15,12,23]];
+      const spots=[[-58,26,16,15,22],[62,-34,20,13,26],[52,48,14,12,18],[-64,-52,18,11,24],[30,70,16,10,20],[-40,64,13,9,16],[70,10,15,12,23]];
       let bi=0;
       for(const [x,z,w,h,d] of spots){
         const bld=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),facade);
@@ -715,7 +751,7 @@ const LAYOUTS={
         world.add(bld);
         if(bi%2===0){
           const bc=new THREE.Mesh(new THREE.SphereGeometry(.35,6,6),new THREE.MeshBasicMaterial({color:0xff3355}));
-          bc.position.set(x,h+.4,z);
+          bc.position.set(x,h-1.65,z); // roof top is h-2; beacon radius .35 rests on it
           world.add(bc);ownMats.push(bc.material);
           const phase=bi*1.3;
           worldAnim.push(t=>{bc.material.color.setHex(Math.sin(t*1.6+phase)>0?0xff3355:0x3a0e18);});
@@ -724,15 +760,16 @@ const LAYOUTS={
       }
     }
 
-    /* Reflective rain puddles (y follows the ground noise so they never sink under the undulation) */
+    /* Reflective rain puddles. The playable ground is flat; use the same terrain source as the
+       ground mesh so a future boundary change cannot leave puddles sunk or hovering. */
     {
-      const ns=(x,z)=>Math.sin(x*.045)*Math.cos(z*.038)+Math.sin(x*.11+z*.07)*.5;
       const puddleMat=new THREE.MeshStandardMaterial({color:0x0d1016,roughness:.14,metalness:.35});
       ownMats.push(puddleMat);
       for(const [x,z,r] of [[-1,-6,1.9],[4,-1,1.5],[-5,3,1.8],[5,10.5,2],[-6,-8,1.6],[8,-6,1.7],[0,14,1.8]]){
         const pd=new THREE.Mesh(new THREE.CircleGeometry(r,18),puddleMat);
+        pd.name='rain-puddle';
         pd.rotation.x=-Math.PI/2;
-        pd.position.set(x,ns(x,z)*.5+.03,z);
+        pd.position.set(x,terrainHeight(x,z)+.025,z);
         world.add(pd);
       }
     }
@@ -747,105 +784,143 @@ const LAYOUTS={
     const {world,shootStatics,colliders,worldAnim,ownMats,M,assets,map}=ctx;
     const contMats=ctx.map.containers.map(k=>assets.containers[k]);
 
-    /* Lava river: a chain of rimmed pools snaking north→south west of the arena centre.
-       The northmost pool stays south of z≈19.5 — the shared team bases/respawn jitter
-       (z=±24±4..10) must stay clear of map geometry on every layout. */
-    const ns=(x,z)=>Math.sin(x*.045)*Math.cos(z*.038)+Math.sin(x*.11+z*.07)*.5;
-    const river=[[-6,-18,3],[-7,-11,3.4],[-6,-3,3.2],[-8,4,3.2],[-6,11,3.4],[-4,15.5,3]];
+    /* Lava river: one continuous ribbon, not overlapping circles. Coplanar pool discs z-fought
+       in their overlaps and the old noise-based Y positions sank parts below the flattened floor.
+       Both the ribbon and its bank rocks now follow terrainHeight(), the ground's source of truth. */
+    const river=[[-8,-18,3],[-9,-11,3.4],[-8,-3,3.2],[-10,4,3.2],[-8,11,3.4],[-4,15.5,3]];
+    const riverCurve=new THREE.CatmullRomCurve3(river.map(([x,z])=>new THREE.Vector3(x,0,z)),false,'centripetal');
+    const riverWidth=t=>{
+      const f=Math.max(0,Math.min(river.length-1,t*(river.length-1)));
+      const i=Math.min(river.length-2,Math.floor(f));
+      return THREE.MathUtils.lerp(river[i][2],river[i+1][2],f-i);
+    };
     const lavaMat=new THREE.MeshStandardMaterial({
       map:assets.tex.lavaPool,emissiveMap:assets.tex.lavaPool,
       emissive:0xffffff,emissiveIntensity:1.15,roughness:1,metalness:0});
     ownMats.push(lavaMat);
-    let lightI=0;
-    for(const [px,pz,r] of river){
-      const pool=new THREE.Mesh(new THREE.CircleGeometry(r,26),lavaMat);
-      pool.rotation.x=-Math.PI/2;
-      pool.position.set(px,ns(px,pz)*.5-.05,pz);
-      world.add(pool);
-      const rimN=Math.round(r*2);
-      for(let i=0;i<rimN;i++){
-        const a=i/rimN*Math.PI*2,rx=px+Math.cos(a)*(r+.8),rz=pz+Math.sin(a)*(r+.8);
-        addBox(world,shootStatics,colliders,{w:2.6,h:1,d:1.6,mat:M.column,x:rx,y:ns(rx,rz)*.5+.35,z:rz,ry:a+Math.PI/2,surface:'concrete'});
+    const RIVER_SEG=84,rv=new Float32Array((RIVER_SEG+1)*2*3),ruv=new Float32Array((RIVER_SEG+1)*2*2),ri=[];
+    for(let i=0;i<=RIVER_SEG;i++){
+      const t=i/RIVER_SEG,p=riverCurve.getPoint(t),tan=riverCurve.getTangent(t).normalize();
+      const nx=-tan.z,nz=tan.x,w=riverWidth(t);
+      for(let side=0;side<2;side++){
+        const s=side===0?1:-1,x=p.x+nx*w*s,z=p.z+nz*w*s,k=(i*2+side)*3;
+        rv[k]=x;rv[k+1]=terrainHeight(x,z)+.025;rv[k+2]=z;
+        ruv[(i*2+side)*2]=x*.12;ruv[(i*2+side)*2+1]=z*.12;
       }
-      if(lightI%2===0){ // keep the light budget sane: every other pool glows
-        const l=new THREE.PointLight(0xff6a20,20,16,2);
-        l.position.set(px,1.4,pz);
-        world.add(l);
-        worldAnim.push(t=>{l.intensity=17+Math.sin(t*2.2+px)*6;});
-      }
-      lightI++;
+      if(i<RIVER_SEG){const a=i*2;ri.push(a,a+2,a+1,a+1,a+2,a+3);}
     }
-    worldAnim.push(t=>{ // slow crust drift (shared texture; all pools scroll together)
-      lavaMat.map.offset.set(t*.014%1,t*.009%1);
+    const lavaGeo=new THREE.BufferGeometry();
+    lavaGeo.setAttribute('position',new THREE.BufferAttribute(rv,3));
+    lavaGeo.setAttribute('uv',new THREE.BufferAttribute(ruv,2));
+    lavaGeo.setIndex(ri);lavaGeo.computeVertexNormals();
+    const lava=new THREE.Mesh(lavaGeo,lavaMat);lava.name='lava-river';world.add(lava);
+    for(let i=0;i<river.length;i+=2){
+      const [px,pz]=river[i],l=new THREE.PointLight(0xff6a20,20,16,2);
+      l.position.set(px,1.4,pz);world.add(l);
+      worldAnim.push(t=>{l.intensity=17+Math.sin(t*2.2+px)*6;});
+    }
+    worldAnim.push(t=>{lavaMat.map.offset.set(t*.014%1,t*.009%1);});
+
+    /* Bank rocks are spaced along the ribbon rather than packed as intersecting 2.6 m boxes.
+       Leave real openings at both bridges, the arch pillars and the northern gate. */
+    const north=riverCurve.getPoint(.2),northTan=riverCurve.getTangent(.2).normalize();
+    const south=riverCurve.getPoint(.6),southTan=riverCurve.getTangent(.6).normalize();
+    const northRy=Math.atan2(-northTan.z,northTan.x),southRy=Math.atan2(-southTan.z,southTan.x);
+    // 8.5 m spans the local river width plus a safe landing on both banks.
+    const bridges=[[north.x,north.z,northRy,8.5,2.8],[south.x,south.z,southRy,8.5,2.8]];
+    const archPillars=[-1,1].map(sd=>({x:south.x+Math.sin(southRy)*3*sd,z:south.z+Math.cos(southRy)*3*sd}));
+    const inBridge=(x,z,margin)=>bridges.some(([bx,bz,ry,w,d])=>{
+      const dx=x-bx,dz=z-bz,co=Math.cos(ry),si=Math.sin(ry);
+      return Math.abs(dx*co-dz*si)<w*.5+margin&&Math.abs(dx*si+dz*co)<d*.5+margin;
     });
+    const bankCenters=[];
+    for(let i=0;i<=RIVER_SEG;i+=4){
+      const t=i/RIVER_SEG,p=riverCurve.getPoint(t),tan=riverCurve.getTangent(t).normalize();
+      const nx=-tan.z,nz=tan.x,w=riverWidth(t),ry=Math.atan2(-tan.z,tan.x);
+      for(const side of[-1,1]){
+        const x=p.x+nx*(w+.62)*side,z=p.z+nz*(w+.62)*side;
+        if(inBridge(x,z,1.15))continue;
+        if(archPillars.some(p=>Math.hypot(x-p.x,z-p.z)<2.15))continue;
+        if(Math.hypot(x+2,z+22)<2.1||Math.hypot(x-7,z+20)<2.1)continue;
+        // Circumradius is .80 m; 1.65 m centre spacing guarantees separate rotated boxes.
+        if(bankCenters.some(p=>Math.hypot(x-p.x,z-p.z)<1.65))continue;
+        bankCenters.push({x,z});
+        addBox(world,shootStatics,colliders,{w:1.25,h:1,d:1,mat:M.column,x,y:.5,z,ry,surface:'concrete'});
+      }
+    }
 
-    /* Rock-slab bridges across the river (jumpable ledges) */
-    for(const [bx,bz,ry] of [[-6.5,-11,0],[-6.5,11,Math.PI/2]])
-      addBox(world,shootStatics,colliders,{w:4.5,h:.9,d:3.4,mat:M.column,x:bx,y:.45,z:bz,ry,surface:'concrete'});
+    /* Rock-slab bridges follow the local river tangent and reach both banks. */
+    for(const [bx,bz,ry,w,d] of bridges){
+      const bridge=addBox(world,shootStatics,colliders,{w,h:.9,d,mat:M.column,x:bx,y:.45,z:bz,ry,surface:'concrete'});
+      bridge.name='river-bridge';
+    }
 
-    /* Basalt arch spanning the south bridge */
+    /* Basalt arch follows the south bridge. Only the pillars block a grounded actor; the lintel
+       is overhead geometry, not an invisible wall across the bridge. */
     {
-      for(const sd of[-1,1]){
+      for(const {x,z} of archPillars){
         const col=new THREE.Mesh(new THREE.CylinderGeometry(.8,1,3.8,7),M.column);
-        col.position.set(-6.5+sd*3.6,1.9,11);
+        col.name='basalt-arch-pillar';col.position.set(x,1.9,z);
         col.castShadow=col.receiveShadow=true;
         col.userData.surface='concrete';
         world.add(col);shootStatics.push(col);
+        colliders.push({minX:x-1.05,maxX:x+1.05,minZ:z-1.05,maxZ:z+1.05,bottom:0,top:3.8});
       }
-      const lintel=new THREE.Mesh(new THREE.BoxGeometry(8.6,1,1.7),M.column);
-      lintel.position.set(-6.5,4.2,11);lintel.castShadow=true;
+      const ry=southRy+Math.PI/2,lintel=new THREE.Mesh(new THREE.BoxGeometry(7.2,1,1.4),M.column);
+      lintel.name='basalt-arch-lintel';lintel.position.set(south.x,4.3,south.z);lintel.rotation.y=ry;lintel.castShadow=true;
       lintel.userData.surface='concrete';
       world.add(lintel);shootStatics.push(lintel);
-      colliders.push({minX:-10.9,maxX:-2.1,minZ:10.1,maxZ:11.9,top:3.8});
+      const co=Math.abs(Math.cos(ry)),si=Math.abs(Math.sin(ry)),hw=co*3.6+si*.7,hz=si*3.6+co*.7;
+      colliders.push({x:south.x,z:south.z,w:7.2,d:1.4,ry,minX:south.x-hw,maxX:south.x+hw,minZ:south.z-hz,maxZ:south.z+hz,bottom:3.8,top:4.8});
     }
 
-    /* East basalt column fields (hex prisms) */
+    /* East basalt column fields (hex prisms). Each column owns a matching collider; the old
+       cluster-sized AABB blocked the empty gaps and the crowded offsets made prisms intersect. */
     const colGeo=new THREE.CylinderGeometry(.85,1,1,6);
     const cluster=(cx,cz,list)=>{
-      let top=0;
       for(const [dx,dz,h] of list){
-        const col=new THREE.Mesh(colGeo,M.column);
-        col.scale.y=h;
-        col.position.set(cx+dx,h/2,cz+dz);
+        const x=cx+dx,z=cz+dz,col=new THREE.Mesh(colGeo,M.column);
+        col.name='basalt-column';col.scale.y=h;
+        col.position.set(x,h/2,z);
         col.rotation.y=dx*1.7;
         col.castShadow=col.receiveShadow=true;
         col.userData.surface='concrete';
         world.add(col);shootStatics.push(col);
-        top=Math.max(top,h);
+        colliders.push({minX:x-1,maxX:x+1,minZ:z-1,maxZ:z+1,bottom:0,top:h});
       }
-      colliders.push({minX:cx-1.6,maxX:cx+1.6,minZ:cz-1.6,maxZ:cz+1.6,top:top});
     };
-    cluster(10,-8,[[0,0,4.2],[1.3,.5,3.1],[-.9,1.2,2.4],[.5,-1.1,3.6]]);
-    cluster(14,2,[[0,0,3.4],[1.2,.7,2.3],[-.8,-.9,2.9]]);
-    cluster(8,10,[[0,0,4.5],[1.1,-.8,2.8],[-.9,.9,3.2]]);
-    cluster(18,-3,[[0,0,2.6],[.9,.9,1.9]]);
+    cluster(10,-8,[[0,0,4.2],[2,-.2,3.1],[-1.8,1.3,2.4],[.5,-2.5,3.6]]);
+    cluster(15,2,[[0,0,3.4],[2,.5,2.3],[-1.9,-.7,2.9]]);
+    cluster(8,10,[[0,0,4.5],[2,-.6,2.8],[-1.8,1,3.2]]);
+    cluster(18,-3,[[0,0,2.6],[2,.8,1.9]]);
 
     /* Northern gate pillars */
     for(const [x,z] of [[-2,-22],[7,-20]]){
       const col=new THREE.Mesh(new THREE.CylinderGeometry(1,1.2,4.5,6),M.column);
-      col.position.set(x,2.25,z);
+      col.name='northern-gate-pillar';col.position.set(x,2.25,z);
       col.castShadow=col.receiveShadow=true;
       col.userData.surface='concrete';
       world.add(col);shootStatics.push(col);
-      colliders.push({minX:x-1.2,maxX:x+1.2,minZ:z-1.2,maxZ:z+1.2,top:4.5});
+      colliders.push({minX:x-1.2,maxX:x+1.2,minZ:z-1.2,maxZ:z+1.2,bottom:0,top:4.5});
     }
 
     /* Scorched supply cache south-east + crates (the ~1.1 m climbable tier) */
     addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:contMats[0],x:4,y:1.3,z:16,ry:.2,surface:'metal'});
     addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:contMats[1],x:-11,y:1.3,z:19,ry:-.15,surface:'metal'});
-    for(const [x,z,ry] of [[-1,-6,.4],[12,-3,.1],[-13,-2,-.3],[10,14,.5]]){
+    for(const [x,z,ry] of [[0,-7,.4],[12,-3,.1],[-14,-3,-.3],[11,14,.5]]){
       addBox(world,shootStatics,colliders,{w:1.15,h:1.15,d:1.15,mat:M.wood,x,y:.575,z,ry,surface:'wood'});
     }
 
     /* Obsidian slabs */
-    for(const [x,z,s,ry] of [[5,-13,2.2,.4],[16,7,2.4,-.3],[-14,8,2,.9],[0,20,2,-.6]]){
+    for(const [x,z,s,ry] of [[5,-13,2.2,.4],[16,7,2.4,-.3],[-18,7,2,.9],[2.5,21,2,-.6]]){
       const slab=new THREE.Mesh(new THREE.DodecahedronGeometry(1,0),M.obsidian);
-      slab.position.set(x,.6,z);
+      slab.name='obsidian-slab';slab.position.set(x,.6,z);
       slab.scale.set(s,s*.5,s*.7);
       slab.rotation.y=ry;slab.castShadow=slab.receiveShadow=true;
       slab.userData.surface='concrete';
       world.add(slab);shootStatics.push(slab);
-      colliders.push({minX:x-s*.6,maxX:x+s*.6,minZ:z-s*.6,maxZ:z+s*.6,top:1.4});
+      const bounds=new THREE.Box3().setFromObject(slab);
+      colliders.push({minX:bounds.min.x,maxX:bounds.max.x,minZ:bounds.min.z,maxZ:bounds.max.z,bottom:0,top:bounds.max.y});
     }
 
     /* Lava fissures (thin glowing cracks + flickering light) */
@@ -857,8 +932,9 @@ const LAYOUTS={
         const a=i*73.4*Math.PI/180,r=10+((i*37)%30);
         const len=3+(i%4)*3;
         const cr=new THREE.Mesh(crackGeo,crackMat);
-        cr.rotation.x=-Math.PI/2;cr.rotation.z=(i*1.7)%Math.PI;
-        cr.position.set(Math.cos(a)*r,.03,Math.sin(a)*r);
+        cr.name='lava-fissure';cr.rotation.x=-Math.PI/2;cr.rotation.z=(i*1.7)%Math.PI;
+        const x=Math.cos(a)*r,z=Math.sin(a)*r;
+        cr.position.set(x,terrainHeight(x,z)+.03,z);
         cr.scale.set(len,.8+(i%3)*.4,1);
         world.add(cr);
         if(i%4===0){
@@ -870,20 +946,23 @@ const LAYOUTS={
       }
     }
 
-    /* The volcano cone on the horizon, crater glowing */
+    /* Hollow volcano on the horizon. The old glowing disc sat inside a solid cone and read as a
+       yellow shelf through its tip; a lathed crater keeps the glow on a real surface. */
     {
-      const cone=new THREE.Mesh(new THREE.ConeGeometry(26,30,24),M.column);
-      cone.position.set(0,13,-88);
-      world.add(cone);
-      const rim=new THREE.Mesh(new THREE.CircleGeometry(7,20),new THREE.MeshBasicMaterial({color:0xff5a18}));
-      rim.rotation.x=Math.PI/2; // face up out of the crater
-      rim.position.set(0,27.4,-88);
-      world.add(rim);
-      ownMats.push(rim.material);
-      worldAnim.push(t=>{rim.material.color.setHSL(.05,1,.45+.12*Math.sin(t*1.3));});
+      const profile=[[0,-2],[26,-2],[24,2],[19,12],[12,22],[8.5,26],[7.6,25.7],[7.1,24.8],[6.2,24],[0,24]]
+        .map(([r,y])=>new THREE.Vector2(r,y));
+      const cone=new THREE.Mesh(new THREE.LatheGeometry(profile,24),M.column);
+      cone.name='volcano-cone';cone.position.set(0,0,-88);world.add(cone);
+      const glowMat=new THREE.MeshBasicMaterial({color:0xff5a18});
+      const crater=new THREE.Mesh(new THREE.CircleGeometry(6.2,24),glowMat);
+      crater.name='volcano-crater';crater.rotation.x=-Math.PI/2;crater.position.set(0,24.03,-88);world.add(crater);
+      const rim=new THREE.Mesh(new THREE.TorusGeometry(7.6,.14,6,32),glowMat);
+      rim.name='volcano-glow-rim';rim.rotation.x=Math.PI/2;rim.position.set(0,25.7,-88);world.add(rim);
+      ownMats.push(glowMat);
+      worldAnim.push(t=>{glowMat.color.setHSL(.05,1,.45+.12*Math.sin(t*1.3));});
     }
 
-    lamp(ctx,11,-11,.7);lamp(ctx,-13,14,2.4);
+    lamp(ctx,12,-12,.7);lamp(ctx,-13,14,2.4);
   },
 };
 

@@ -14,15 +14,17 @@ test('the whole playable disc is exactly flat (no boot-burying rise)',()=>{
   assert.ok(ARENA_FLAT_RADIUS>=57,'flat radius must cover the r=56 player bound plus one mesh ring');
 });
 
-test('the flat apron extends past the boundary, so mesh interpolation cannot leak a rise inward',()=>{
+test('the flat apron covers whole low-quality ground triangles',()=>{
   for(let a=0;a<Math.PI*2;a+=Math.PI/16){
-    const x=Math.cos(a)*57,z=Math.sin(a)*57;
-    assert.equal(terrainHeight(x,z),0,'flat apron at r=57 must still be 0');
+    const x=Math.cos(a)*(ARENA_FLAT_RADIUS-1),z=Math.sin(a)*(ARENA_FLAT_RADIUS-1);
+    assert.equal(terrainHeight(x,z),0,'the full mesh-cell apron must still be flat');
   }
+  assert.ok(ARENA_FLAT_RADIUS>=56+Math.hypot(11.25,11.25)-1e-6,
+    'flat radius must cover every vertex of a triangle touching the player boundary');
   // Just past the apron the field starts to move, but continuously (no visible cliff).
   let max=0;
   for(let a=0;a<Math.PI*2;a+=Math.PI/16)
-    max=Math.max(max,Math.abs(terrainHeight(Math.cos(a)*60,Math.sin(a)*60)));
+    max=Math.max(max,Math.abs(terrainHeight(Math.cos(a)*(ARENA_FLAT_RADIUS+1),Math.sin(a)*(ARENA_FLAT_RADIUS+1))));
   assert.ok(max>0,'dunes should resume outside the arena');
   assert.ok(max<.05,'the blend should be gradual, got '+max.toFixed(3));
 });

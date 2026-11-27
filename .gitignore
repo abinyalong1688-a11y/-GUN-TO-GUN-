@@ -5,3 +5,5 @@ dist/e2e/
 dist/bake/
 dist/diag/
 dist/loadcheck/
+gtg-deploy-*.tar.gz
+.mimosa/

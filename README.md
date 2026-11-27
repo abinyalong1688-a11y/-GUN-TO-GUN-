@@ -66,6 +66,8 @@ Four hand-built arenas, each a distinct scene with its own layout, sky, lighting
 - **Neon Docklands** — rain night: two container walls forming a canyon street with staggered crossings, neon signage, floodlight masts, a gantry crane and a dark skyline
 - **Volcano Caldera** — ember: a snaking lava river forded by two rock bridges (one under a basalt arch), basalt column fields and the glowing volcano cone on the horizon
 
+Latest four-map clipping/collision audit: [`docs/MAP-CLIPPING-AUDIT.md`](docs/MAP-CLIPPING-AUDIT.md).
+
 ## Movement Physics
 
 - Constant gravitational acceleration + integrated jump impulse (jump height ≈ 1.16 m): hop onto crates, climb crate stacks to reach container tops
@@ -149,7 +151,7 @@ npm install        # three@0.170.0 + esbuild
 npm run build          # web build → dist/: gun-to-gun.html (~1.1 MB) + assets/characters/{female1,male1}.glb + manifest + icons
 npm run build:single   # one self-contained page → dist-single/gun-to-gun.html (double-click, file://)
 npm run bake:portraits # re-render the operator thumbnails baked into the bundle (after a look change)
-npm test           # unit tests (node --test): utils / weapons / attachment / physics / waves / bot AI / navigation / evolution / KOTH rules / squad AI / online protocol & rooms (236 tests)
+npm test           # unit tests (node --test): utils / weapons / attachment / physics / waves / bot AI / navigation / evolution / KOTH rules / squad AI / online protocol & rooms (254 tests)
 npm run test:e2e   # headless Chrome/Edge integration suite (?e2e=1), 82 assertions
 npm run evolve     # regenerate the GA-tuned bot doctrine (src/botTuning.js)
 npm run test:load   # slow-link loading check (60 KB/s): loading screen, menu, model switch (append -- --gpu for real boot numbers)

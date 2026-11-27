@@ -2,10 +2,11 @@
 // accuracy, and cover-point generation/evaluation.
 //
 // Everything here is deliberately free of scene/DOM dependencies so it can be unit-tested in
-// Node and reused by the offline evolution tool. The world is described as plain AABB
-// colliders ({minX,maxX,minZ,maxZ,top}), the same structure world.js already produces.
+// Node and reused by the offline evolution tool. The world is described as plain AABB/OBB
+// colliders ({minX,maxX,minZ,maxZ,top,bottom,x,z,w,d,ry}), as produced by world.js.
 
 import * as THREE from 'three';
+import { circleOverlapsCollider } from './collision.js';
 
 const BULLET_SPEED = 110; // m/s — matches the bots' fast tracer feel (not a real projectile)
 
@@ -116,27 +117,26 @@ const COVER_MIN_TOP = 1.2;
 
 /** True when the 2D segment a→b crosses a tall-enough box (a wall between us and the threat). */
 export function segmentBlocked(ax, az, bx, bz, colliders, minTop = COVER_MIN_TOP, ignore = null) {
-  const dx = bx - ax, dz = bz - az;
   for (const c of colliders) {
-    if (c === ignore || c.top < minTop) continue;
-    let t0 = 0, t1 = 1;
-    // X slab
-    if (Math.abs(dx) < 1e-9) {
-      if (ax < c.minX || ax > c.maxX) continue;
+    if (c === ignore || c.top < minTop || (c.bottom != null && c.bottom >= 1.8)) continue;
+    let lax = ax, laz = az, lbx = bx, lbz = bz, hx = (c.maxX - c.minX) / 2, hz = (c.maxZ - c.minZ) / 2;
+    if (c.ry && c.w && c.d) {
+      const co = Math.cos(c.ry), si = Math.sin(c.ry);
+      lax = (ax - c.x) * co - (az - c.z) * si; laz = (ax - c.x) * si + (az - c.z) * co;
+      lbx = (bx - c.x) * co - (bz - c.z) * si; lbz = (bx - c.x) * si + (bz - c.z) * co;
+      hx = c.w / 2; hz = c.d / 2;
     } else {
-      let ta = (c.minX - ax) / dx, tb = (c.maxX - ax) / dx;
-      if (ta > tb) { const s = ta; ta = tb; tb = s; }
-      t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
-      if (t0 > t1) continue;
+      const cx = (c.minX + c.maxX) / 2, cz = (c.minZ + c.maxZ) / 2;
+      lax -= cx; laz -= cz; lbx -= cx; lbz -= cz;
     }
-    // Z slab
-    if (Math.abs(dz) < 1e-9) {
-      if (az < c.minZ || az > c.maxZ) continue;
-    } else {
-      let ta = (c.minZ - az) / dz, tb = (c.maxZ - az) / dz;
+    const dx = lbx - lax, dz = lbz - laz;
+    let t0 = 0, t1 = 1;
+    for (const [p, d, half] of [[lax, dx, hx], [laz, dz, hz]]) {
+      if (Math.abs(d) < 1e-9) { if (p < -half || p > half) { t0 = 1; t1 = 0; break; } continue; }
+      let ta = (-half - p) / d, tb = (half - p) / d;
       if (ta > tb) { const s = ta; ta = tb; tb = s; }
       t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
-      if (t0 > t1) continue;
+      if (t0 > t1) break;
     }
     if (t1 - t0 > 1e-4) return true;
   }
@@ -145,12 +145,10 @@ export function segmentBlocked(ax, az, bx, bz, colliders, minTop = COVER_MIN_TOP
 
 export function isPointClear(x, z, colliders, radius = .46) {
   for (const c of colliders) {
+    if (c.bottom != null && c.bottom >= 1.8) continue;
     // Bots cannot climb, so even a waist-high crate is an obstacle for navigation and a
-    // hiding spot placed inside one is unreachable.
-    const cx = Math.max(c.minX, Math.min(x, c.maxX));
-    const cz = Math.max(c.minZ, Math.min(z, c.maxZ));
-    const dx = x - cx, dz = z - cz;
-    if (dx * dx + dz * dz < radius * radius) return false;
+    // hiding spot placed inside one is unreachable. Rotated boxes use their true footprint.
+    if (circleOverlapsCollider(x, z, radius, c)) return false;
   }
   return true;
 }
@@ -162,7 +160,7 @@ export function isPointClear(x, z, colliders, radius = .46) {
  */
 export function coverPointsFor(world) {
   if (!world || !Array.isArray(world.colliders)) return [];
-  const cols = world.colliders;
+  const cols = world.colliders.filter(c => c.bottom == null || c.bottom < 1.8);
   const sig = coverSignature(cols);
   if (world._botCoverCache && world._botCoverSig === sig) return world._botCoverCache;
   const pts = [];

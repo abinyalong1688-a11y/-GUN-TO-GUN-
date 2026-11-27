@@ -596,12 +596,12 @@ export class BotBrain {
     return BTStatus.RUNNING;
   }
 
-  /* Squad order → intent. 'move': walk (or sprint) to the order's goal along the game's own
+  /* Squad order → intent. Any temporary order with a goal moves; only hold stands.
      navigation; anything else: stand. Either way face where the order says (usually an entrance
      or the objective). Reusable vectors: nothing is allocated per frame. */
   _followSquadOrder(bot, order) {
     const P = this.params;
-    if (order.kind === 'move' && order.goal) {
+    if (order.kind !== 'hold' && order.goal) {
       this._squadGoal.set(order.goal[0], 0, order.goal[1]);
       this.setNav(this._squadGoal, order.sprint ? 1.12 : .92);
     } else {

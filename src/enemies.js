@@ -1,6 +1,7 @@
 // enemies.js — three drone classes: WASP kamikaze / REAPER roaming shooter / WARDEN heavy suppressor
 // Performance: geometry cached and shared per type (no allocation spike on spawn), hot-path vectors reused
 import * as THREE from 'three';
+import { pushCircleOut } from './collision.js';
 
 const UP=new THREE.Vector3(0,1,0);
 const BOLT_GEO=new THREE.SphereGeometry(.08,8,8),BOLT_GEO_BIG=new THREE.SphereGeometry(.12,8,8);
@@ -240,6 +241,19 @@ export class Enemies{
     this.audio.boltShoot();
   }
 
+  _resolveStatic(e,fromX=e.pos.x,fromZ=e.pos.z){
+    const radius=e.T.radius,toX=e.pos.x,toZ=e.pos.z,dist=Math.hypot(toX-fromX,toZ-fromZ);
+    const steps=Math.max(1,Math.ceil(dist/Math.max(.18,radius*.45)));
+    for(let i=1;i<=steps;i++){
+      const t=i/steps;e.pos.x=THREE.MathUtils.lerp(fromX,toX,t);e.pos.z=THREE.MathUtils.lerp(fromZ,toZ,t);
+      for(const c of this._colliders||[]){
+        const bottom=c.bottom??0;
+        if(e.pos.y-radius>=c.top||e.pos.y+radius<=bottom)continue;
+        pushCircleOut(e.pos,radius,c);
+      }
+    }
+  }
+
   _steer(e,target,dt,maxSpeed,accel=3.2){
     const des=this._tmp.copy(target).sub(e.pos);
     const d=des.length();
@@ -257,7 +271,11 @@ export class Enemies{
         e.vel.x+=dx*f*dt*10;e.vel.z+=dz*f*dt*10;
       }
     }
+    const px=e.pos.x,pz=e.pos.z;
     e.pos.addScaledVector(e.vel,dt);
+    // Swept sphere-vs-box push-out. Repulsion alone let diving/turning drones tunnel through
+    // container walls and basalt columns between frames.
+    this._resolveStatic(e,px,pz);
     if(e.pos.y<1.1)e.pos.y=1.1;
     if(e.pos.y>6.5)e.pos.y=6.5;
     const r=Math.hypot(e.pos.x,e.pos.z);
@@ -293,6 +311,7 @@ export class Enemies{
       // Entry descent
       if(e.state==='enter'){
         e.pos.y-=(5.5)*dt;
+        this._resolveStatic(e);
         if(e.pos.y<=e.alt)e.state='active';
         e.group.position.copy(e.pos);
         for(const r of e.rotors)r.rotation.z+=dt*(30*e.stateT);

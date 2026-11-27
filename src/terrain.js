@@ -4,12 +4,16 @@
 // ground used to undulate by ±0.5 m across that same area, so boots visibly sank into (or
 // hovered above) the terrain — a pure art/collision mismatch, not a capsule problem. The
 // playable disc is therefore geometrically flat; dunes fade in only beyond the arena boundary
-// (the player is clamped to r = 56, bots to r = 52).
+// (the player is clamped to r = 56, bots to r = 52). The extra ring also covers whole low-quality
+// ground triangles, not just the height-field sample at the player's centre.
 //
 // Keep this module free of three.js: world.js and the tests share it; movement stays on y=0.
 
-export const ARENA_FLAT_RADIUS = 58;      // one 3.27 m ground-mesh ring beyond the r=56 player bound
-export const TERRAIN_BLEND_RADIUS = 72;   // full dune amplitude resumes here
+// A low-quality ground cell is 11.25 m wide (15.91 m diagonal). Every triangle that can touch
+// the r=56 player boundary must have all three vertices inside the flat region, otherwise linear
+// interpolation still tilts the rendered floor under the boots. 72 m covers that full cell.
+export const ARENA_FLAT_RADIUS = 72;
+export const TERRAIN_BLEND_RADIUS = 88;   // full dune amplitude resumes here
 const smoothstep = (a, b, x) => {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);

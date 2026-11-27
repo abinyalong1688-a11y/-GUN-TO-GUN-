@@ -26,8 +26,16 @@ export const KOTH_WIN = 200;
 export const KOTH_RATE = 1;        // points per second while one team owns the hill
 export const KOTH_CONTEST_BONUS = 2;
 
-/* Distance from (x,z) to an axis-aligned box footprint: > 0 outside, < 0 inside (to the nearest edge). */
+/* Signed distance to a box footprint: > 0 outside, < 0 inside. Rotated cover uses its true OBB. */
 function boxDistance(x,z,c){
+  if(c.ry&&c.w&&c.d){
+    const co=Math.cos(c.ry),si=Math.sin(c.ry),dx=x-c.x,dz=z-c.z;
+    const lx=dx*co-dz*si,lz=dx*si+dz*co,hw=c.w*.5,hd=c.d*.5;
+    const qx=Math.max(-hw,Math.min(hw,lx)),qz=Math.max(-hd,Math.min(hd,lz));
+    const ox=lx-qx,oz=lz-qz;
+    if(ox||oz)return Math.hypot(ox,oz);
+    return -Math.min(hw-Math.abs(lx),hd-Math.abs(lz));
+  }
   const dx=Math.max(c.minX-x,0,x-c.maxX),dz=Math.max(c.minZ-z,0,z-c.maxZ);
   if(dx>0||dz>0)return Math.hypot(dx,dz);
   return -Math.min(x-c.minX,c.maxX-x,z-c.minZ,c.maxZ-z);
@@ -35,12 +43,13 @@ function boxDistance(x,z,c){
 /* Most open spot near the arena centre. Candidates on a `step` grid within ±`span`; each scores
    by its clearance to the nearest obstacle (capped at the hill radius) minus a small pull toward
    the centre, so an equally open site closer to the middle wins. Deterministic. */
-export function pickHill(colliders,{radius=KOTH_RADIUS,cx=0,cz=0,span=30,step=2,minTop=1}={}){
-  // Only things nobody can walk over count as obstacles: low rocks / kerbs inside the zone are
-  // just bumps (and a bit of cover) — a player standing on them is still on the hill.
-  const solid=colliders.filter(c=>(c.top==null||c.top>minTop));
+export function pickHill(colliders,{radius=KOTH_RADIUS,cx=0,cz=0,span=30,step=2,minTop=.32,spawns=[],spawnClearance=1.5}={}){
+  // Only things nobody can walk over count as obstacles. A 1 m bank rock is not a step-up
+  // (.32 m), and an overhead lintel is not a ground obstacle.
+  const solid=colliders.filter(c=>(c.top==null||c.top>minTop)&&(c.bottom==null||c.bottom<1.8));
   let best=null,bestScore=-Infinity;
   for(let z=cz-span;z<=cz+span+1e-6;z+=step)for(let x=cx-span;x<=cx+span+1e-6;x+=step){
+    if(spawns.some(p=>Math.hypot(x-p.x,z-p.z)<radius+spawnClearance))continue;
     let clear=radius;
     for(const c of solid){const d=boxDistance(x,z,c);if(d<clear){clear=d;if(clear<=-radius)break;}}
     const score=Math.min(clear,radius)*10-Math.hypot(x-cx,z-cz);
@@ -79,10 +88,11 @@ export class KothMode extends GameMode{
 
   /* Put the hill on open ground (see pickHill). Without a world (unit tests) it stays at the origin. */
   place(){
-    const w=this.game&&this.game.world;
+    const g=this.game,w=this.game&&this.game.world;
     const colliders=w&&(w.colliders||w.kothColliders);
     if(colliders&&colliders.length){
-      const spot=pickHill(colliders,{radius:this.radius});
+      const spawns=[...(g?.spawns?Object.values(g.spawns):[]),...(g?.player?[g.player.pos]:[])];
+      const spot=pickHill(colliders,{radius:this.radius,spawns});
       this.pos.set(spot.x,0,spot.z);
       this.clearance=spot.clearance;
     }else this.pos.set(0,0,0);

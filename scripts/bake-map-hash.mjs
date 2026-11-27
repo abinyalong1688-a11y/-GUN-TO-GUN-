@@ -43,11 +43,15 @@ if (process.argv.includes('--write')) {
   const path = 'src/netProtocol.js';
   const src = readFileSync(path, 'utf8');
   const body = MAPS.map(k => `  ${k}:${' '.repeat(Math.max(1, 9 - k.length))}'${table[k]}',`).join('\n');
-  const next = src.replace(/export const MAP_HASHES = \{[\s\S]*?\};/,
-    `export const MAP_HASHES = {\n${body}\n};`);
-  if (next === src) {
+  const pattern = /export const MAP_HASHES = \{[\s\S]*?\};/;
+  if (!pattern.test(src)) {
     console.error('✗ could not find the MAP_HASHES block in src/netProtocol.js');
     process.exit(1);
+  }
+  const next = src.replace(pattern, `export const MAP_HASHES = {\n${body}\n};`);
+  if (next === src) {
+    console.log('✓ MAP_HASHES already current');
+    process.exit(0);
   }
   writeFileSync(path, next);
   console.log('✓ MAP_HASHES updated in src/netProtocol.js — re-run the build');

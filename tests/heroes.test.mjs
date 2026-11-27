@@ -243,8 +243,8 @@ test('_separate: overlapping bots split to R, dead and distant pairs untouched, 
   const a=P(0,0),b=P(.2,0); // overlapping pair
   team.list=[a,b];team._separate();
   const d=a.pos.distanceTo(b.pos);
-  assert.ok(Math.abs(d-.72)<.02,'overlapping bots should end R=.72 apart, got '+d.toFixed(3));
-  assert.ok(Math.abs(a.pos.x+.26)<.02&&Math.abs(b.pos.x-.46)<.02,'the push should be symmetric (half each)');
+  assert.ok(Math.abs(d-.96)<.02,'overlapping bots should end at their .45+.45+.06 radius sum, got '+d.toFixed(3));
+  assert.ok(Math.abs(a.pos.x+.38)<.02&&Math.abs(b.pos.x-.58)<.02,'the push should be symmetric (half each)');
   const c=P(5,0),e=P(20,0); // distant pair untouched
   team.list=[c,e];team._separate();
   assert.equal(c.pos.x,5);assert.equal(e.pos.x,20);
@@ -254,9 +254,9 @@ test('_separate: overlapping bots split to R, dead and distant pairs untouched, 
   g.player.alive=true;g.player.pos.set(0,0,0);
   const w=P(.3,0); // the player is solid as well: the bot yields fully, the player is nudged half
   team.list=[w];team._separate();
-  assert.ok(Math.abs(w.pos.x-.72)<.02,'the bot should be pushed out of the player circle, got '+w.pos.x.toFixed(3));
-  assert.ok(Math.abs(g.player.pos.x+.21)<.02,'the player should take the soft half push, got '+g.player.pos.x.toFixed(3));
-  const z1=P(0,0),z2=P(0,0); // coincident bots (d²<1e-6) are skipped — no NaN
+  assert.ok(Math.abs(w.pos.x-.91)<.02,'the bot should be pushed out of the player circle, got '+w.pos.x.toFixed(3));
+  assert.ok(Math.abs(g.player.pos.x+.305)<.02,'the player should take the soft half push, got '+g.player.pos.x.toFixed(3));
+  const z1=P(0,0),z2=P(0,0); // coincident bots split deterministically — no NaN
   team.list=[z1,z2];team._separate();
   assert.ok(Number.isFinite(z1.pos.x)&&Number.isFinite(z2.pos.x),'coincident bots must not produce NaN');
 });

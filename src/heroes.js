@@ -2,7 +2,7 @@
 //   looks are built by character.js from operator definitions (8 operators / camos / silhouettes);
 //   combat style by faction (Nova steady bursts / Rogue heavy spray); death: fall → limbs land flat → fade out → respawn.
 import * as THREE from 'three';
-import { pushCircleOut } from './collision.js';
+import { circleOverlapsCollider, circleContact, resolveCircleCollisions } from './collision.js';
 import {t,isEN} from './i18n.js';
 import {byId,byFaction,DEFAULT_OP} from './operators.js';
 import {SnapshotBuffer} from './interp.js';
@@ -12,6 +12,7 @@ import {rigInit,poseRot,posePos,poseReset} from './rig.js';
 import {BotBrain} from './botBrain.js';
 import {findBestCover} from './botCombat.js';
 import {ColliderGrid,SpatialGrid} from './world.js';
+import {findSafeSpawn} from './spawn.js';
 
 /* Compatibility layer: legacy code reads base stats per faction; the data lives in operators.js */
 const _opCT=byId('frost'),_opT=byId('raven');
@@ -341,9 +342,7 @@ export class HeroBot{
     let ground=.06;
     const cols=this.game.world&&this.game.world.colliders;
     if(cols)for(const c of cols)
-      if(c.top<=y0&&c.top+.06>ground
-        &&r.position.x>=c.minX&&r.position.x<=c.maxX
-        &&r.position.z>=c.minZ&&r.position.z<=c.maxZ)ground=c.top+.06;
+      if(c.top<=y0&&c.top+.06>ground&&circleOverlapsCollider(r.position.x,r.position.z,.06,c))ground=c.top+.06;
     if(r.position.y<=ground){
       r.position.y=ground;
       this._rifleVel.set(0,0,0);
@@ -381,9 +380,8 @@ export class HeroBot{
     this.group.rotation.x=0;this.group.rotation.z=0;
     const base=this.spawnBase || (this.game.spawns ? this.game.spawns[this.team]
       : (this.team==='A'?new THREE.Vector3(0,0,24):new THREE.Vector3(0,0,-24)));
-    this.place(base.clone().add(new THREE.Vector3((Math.random()-.5)*8,0,(Math.random()-.5)*8)),
+    this.place(findSafeSpawn(base,this.game.world.colliders,{jitter:4,radius:this.radius}),
       this.team==='A'?Math.PI:0);
-    this._collide(this.game.world.colliders); // jittered spawn can land on map geometry (caldera gate pillars)
     this._stuckT=0;this.detourT=0;this._escTot=0;this._turnT=0;this._blockT=0;
     this._route=null;this._routeT=0;
     this.audio.respawn();
@@ -403,17 +401,9 @@ export class HeroBot{
      grinding into it. Returns {hitX, hitZ} — which axes were blocked this frame — so the
      movement code can decide a detour when both are blocked (a corner / dead-end). */
   _collide(colliders){
-    const r=this.radius;
-    let hitX=false,hitZ=false;
-    for(const c of colliders){
-      if(this.pos.y>c.top)continue;
-      // OBB-aware push-out; the resulting position delta tells us which axes were blocked.
-      const bx=this.pos.x,bz=this.pos.z;
-      if(pushCircleOut(this.pos,r,c)){
-        if(Math.abs(this.pos.x-bx)>1e-6)hitX=true;
-        if(Math.abs(this.pos.z-bz)>1e-6)hitZ=true;
-      }
-    }
+    const bx=this.pos.x,bz=this.pos.z;
+    resolveCircleCollisions(this.pos,this.radius,colliders,1.8);
+    const hitX=Math.abs(this.pos.x-bx)>1e-6,hitZ=Math.abs(this.pos.z-bz)>1e-6;
     const dd=Math.hypot(this.pos.x,this.pos.z);
     if(dd>52){const k=52/dd;this.pos.x*=k;this.pos.z*=k;}
     return {hitX,hitZ};
@@ -500,8 +490,8 @@ export class HeroBot{
     if(x*x+z*z>51.5*51.5)return false;
     for(const c of this._nearColliders(x,z,NAV_R)){
       if(c.top<=this.pos.y)continue;
-      const cx=Math.max(c.minX,Math.min(x,c.maxX)),cz=Math.max(c.minZ,Math.min(z,c.maxZ));
-      if((x-cx)*(x-cx)+(z-cz)*(z-cz)<NAV_R*NAV_R)return false;
+      if(c.bottom!=null&&this.pos.y+1.8<=c.bottom+.01)continue;
+      if(circleOverlapsCollider(x,z,NAV_R,c))return false;
     }
     return true;
   }
@@ -526,31 +516,17 @@ export class HeroBot{
     const dl=Math.hypot(desX,desZ);
     let block=0;
     for(let pass=0;pass<2;pass++){
-      let bc=null,bnx=0,bnz=0,bpen=0,bd2=1;
+      let contact=null;
       for(const c of cols){
         if(c.top<=y)continue;
-        const cx=c.minX>this.pos.x?c.minX:c.maxX<this.pos.x?c.maxX:this.pos.x;
-        const cz=c.minZ>this.pos.z?c.minZ:c.maxZ<this.pos.z?c.maxZ:this.pos.z;
-        const dx=this.pos.x-cx,dz=this.pos.z-cz,d2=dx*dx+dz*dz;
-        if(d2>=r*r)continue;
-        const pen=r-Math.sqrt(d2);
-        if(pen>bpen){bc=c;bpen=pen;bd2=d2;bnx=dx;bnz=dz;}
+        if(c.bottom!=null&&y+1.8<=c.bottom+.01)continue;
+        const hit=circleContact(this.pos.x,this.pos.z,r,c);
+        if(hit&&(!contact||hit.penetration>contact.penetration))contact=hit;
       }
-      if(!bc)break;
-      let nx,nz;
-      if(bd2<1e-12){
-        // Centre inside the box: pop to the nearest face + r (no meaningful escape axis from dead-centre)
-        const dl2=this.pos.x-bc.minX,dr=bc.maxX-this.pos.x,dn=this.pos.z-bc.minZ,df=bc.maxZ-this.pos.z;
-        const m=Math.min(dl2,dr,dn,df);
-        if(m===dr){this.pos.x=bc.maxX+r;nx=1;nz=0;}
-        else if(m===dl2){this.pos.x=bc.minX-r;nx=-1;nz=0;}
-        else if(m===df){this.pos.z=bc.maxZ+r;nx=0;nz=1;}
-        else{this.pos.z=bc.minZ-r;nx=0;nz=-1;}
-      }else{
-        const d=Math.sqrt(bd2);nx=bnx/d;nz=bnz/d;
-        const k=bpen>r*.25?1:.4;
-        this.pos.x+=nx*bpen*k;this.pos.z+=nz*bpen*k;
-      }
+      if(!contact)break;
+      const {nx,nz,penetration:bpen}=contact;
+      const k=bpen>r*.25?1:.4;
+      this.pos.x+=nx*bpen*k;this.pos.z+=nz*bpen*k;
       /* Velocity: drop the part going into the surface; the tangential part keeps 90 % of the
          approach speed, so a bot that hits a wall at an angle runs along it */
       const vn=this.vel.x*nx+this.vel.z*nz;
@@ -845,8 +821,8 @@ export class HeroBot{
       const t=i/n,px=ax+(bx-ax)*t,pz=az+(bz-az)*t;
       for(const c of cols){
         if(c.top<=this.pos.y)continue;
-        const cx=Math.max(c.minX,Math.min(px,c.maxX)),cz=Math.max(c.minZ,Math.min(pz,c.maxZ));
-        if((px-cx)*(px-cx)+(pz-cz)*(pz-cz)<NAV_R*NAV_R)return false;
+        if(c.bottom!=null&&this.pos.y+1.8<=c.bottom+.01)continue;
+        if(circleOverlapsCollider(px,pz,NAV_R,c))return false;
       }
     }
     return true;
@@ -1145,6 +1121,8 @@ export class HeroBot{
     const dx=s.x-this.pos.x,dz=s.z-this.pos.z;
     this.vel.set(dt>0?dx/dt:0,0,dt>0?dz/dt:0);
     this.pos.set(s.x,s.y,s.z);
+    if(s.alive&&this.game.world?.colliders)
+      resolveCircleCollisions(this.pos,this.radius,this.game.world.colliders,s.crouch?1.3:1.8);
     this.yaw=s.yaw;
     if(this.nameTag){
       const d=this.game.camera.position.distanceTo(this.pos);
@@ -1239,9 +1217,8 @@ export class HeroTeam{
     const hasOpts=!!opts&&!!(opts.sizes||opts.roster||opts.bots||opts.humans||opts.playerTeam);
     const place=(h,team,spread=10)=>{
       const base=h.spawnBase||(g.spawns?g.spawns[team]:new THREE.Vector3(0,0,team==='A'?24:-24));
-      h.place(base.clone().add(new THREE.Vector3((Math.random()-.5)*spread,0,(Math.random()-.5)*spread)),
+      h.place(findSafeSpawn(base,g.world.colliders,{jitter:spread*.5,radius:h.radius}),
         team==='A'?Math.PI:0);
-      h._collide(g.world.colliders); // jittered spawn can land on map geometry (caldera gate pillars)
     };
     if(!hasOpts){
       // Offline deathmatch / KOTH (3v3): 2 bot teammates + the player vs 3 enemies.
@@ -1347,32 +1324,34 @@ export class HeroTeam{
      clusters otherwise pass through each other (visible clipping in 3v3). Overlapping alive
      pairs are pushed apart on XZ only; the lower-priority bot takes the larger share (P2). */
   _separate(){
-    const L=this.list,R=.72;
+    const L=this.list;
     for(let i=0;i<L.length;i++)for(let j=i+1;j<L.length;j++){
       const a=L[i],b=L[j];
-      // A net-driven proxy belongs to another client: never displace it locally.
-      if(!a.alive||!b.alive||a.netDriven||b.netDriven)continue;
-      const dx=b.pos.x-a.pos.x,dz=b.pos.z-a.pos.z;
-      const d2=dx*dx+dz*dz;
-      if(d2>=R*R||d2<1e-6)continue;
-      const d=Math.sqrt(d2),push=(R-d)/d,ta=(a.prio||1)+ (b.prio||1),ka=(b.prio||1)/ta;
+      if(!a.alive||!b.alive||(a.netDriven&&b.netDriven))continue;
+      const R=(a.radius??.45)+(b.radius??.45)+.06;
+      let dx=b.pos.x-a.pos.x,dz=b.pos.z-a.pos.z,d2=dx*dx+dz*dz;
+      if(d2>=R*R)continue;
+      if(d2<1e-6){const ang=(((a.id??i)*31+(b.id??j)*17)%360)*Math.PI/180;dx=Math.cos(ang);dz=Math.sin(ang);d2=1;}
+      const d=Math.sqrt(d2),push=(R-d)/d,ta=(a.prio||1)+(b.prio||1);
+      // A remote proxy is authoritative on its own client: yield locally, but never rewrite its
+      // interpolated position. Two remote proxies are left to server-authoritative movement.
+      const ka=a.netDriven?0:b.netDriven?1:(b.prio||1)/ta;
       a.pos.x-=dx*push*ka;a.pos.z-=dz*push*ka;
       b.pos.x+=dx*push*(1-ka);b.pos.z+=dz*push*(1-ka);
-      a._sepDirty=b._sepDirty=true;
+      if(!a.netDriven)a._sepDirty=true;if(!b.netDriven)b._sepDirty=true;
     }
-    // The player is solid as well: bots yield fully out of the player's circle, and the player
-    // gets a soft half push — walking straight through a bot is no longer possible
+    // The player is solid as well. Use the actual radius sum, not the old .72 m soft radius.
     if(this.game.player&&this.game.player.alive){
       const pp=this.game.player.pos;
       for(const h of L){
-        if(!h.alive||h.netDriven)continue;
-        const dx=h.pos.x-pp.x,dz=h.pos.z-pp.z;
-        const d2=dx*dx+dz*dz;
-        if(d2<R*R&&d2>1e-6){
-          const d=Math.sqrt(d2),push=(R-d)/d;
-          h.pos.x+=dx*push;h.pos.z+=dz*push;h._sepDirty=true;
-          pp.x-=dx*push*.5;pp.z-=dz*push*.5;
-        }
+        if(!h.alive)continue;
+        const R=(h.radius??.45)+(this.game.player.radius??.4)+.06;
+        let dx=h.pos.x-pp.x,dz=h.pos.z-pp.z,d2=dx*dx+dz*dz;
+        if(d2>=R*R)continue;
+        if(d2<1e-6){dx=1;dz=0;d2=1;}
+        const d=Math.sqrt(d2),push=(R-d)/d,playerShare=h.netDriven?0:.5;
+        h.pos.x+=dx*push;h.pos.z+=dz*push;h._sepDirty=true;
+        pp.x-=dx*push*playerShare;pp.z-=dz*push*playerShare;
       }
     }
   }

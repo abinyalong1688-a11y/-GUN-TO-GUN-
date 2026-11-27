@@ -1,7 +1,7 @@
 // player.js — first-person movement: gravity / jumping / crouching / climbing (hop onto crates and containers)
 // Real-world physics: constant gravity, jump impulse, reduced air control, natural falls off edges
 import * as THREE from 'three';
-import { pushCircleOut, circleOverlapsCollider } from './collision.js';
+import { circleOverlapsCollider, resolveCircleCollisions } from './collision.js';
 
 const GRAVITY=14;        // gravity in m/s² (a bit stronger than 9.8 for game feel)
 const JUMP_V=5.7;        // jump take-off speed in m/s (≈1.16 m jump, enough for a 1.15 m crate)
@@ -31,10 +31,12 @@ export class Player{
     this.boundsR=56;
     this.god=false; // invulnerability for screenshot checks
   }
-  reset(){
-    this.pos.set(0,0,7);this.vel.set(0,0,0);
+  reset(spawn=null){
+    if(spawn){this.pos.set(spawn.x,0,spawn.z);this.yaw=spawn.z>=0?0:Math.PI;}
+    else{this.pos.set(0,0,7);this.yaw=0;}
+    this.vel.set(0,0,0);
     this.velY=0;this.grounded=true;this.crouching=false;this.eyeHCur=EYE_STAND;
-    this.yaw=0;this.pitch=-.05;
+    this.pitch=-.05;
     this.health=this.maxHealth;this.alive=true;this.lastHurt=-99;
   }
   get eye(){
@@ -76,11 +78,8 @@ export class Player{
   }
 
   _collide(){
-    const r=this.radius;
-    for(const c of this.colliders){
-      if(this.pos.y>=c.top-.01)continue; // already standing on top: no horizontal push
-      pushCircleOut(this.pos,r,c);      // OBB-aware push-out (no invisible corner walls)
-    }
+    const bodyH=this.crouching?1.2:1.8;
+    resolveCircleCollisions(this.pos,this.radius,this.colliders,bodyH);
     // Arena boundary
     const d=Math.hypot(this.pos.x,this.pos.z);
     if(d>this.boundsR){

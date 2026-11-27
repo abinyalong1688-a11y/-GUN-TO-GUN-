@@ -17,7 +17,8 @@ import {attachmentIslands} from './attach.js';
 import {Enemies} from './enemies.js';
 import {Waves} from './waves.js';
 import {HeroTeam} from './heroes.js';
-import {circleOverlapsCollider} from './collision.js';
+import {circleOverlapsCollider,verticalBodyOverlap} from './collision.js';
+import {findSafeSpawn,spawnPointClear} from './spawn.js';
 import {UI} from './ui.js';
 import {SaveSystem} from './save.js';
 import {Leaderboard} from './leaderboard.js';
@@ -681,7 +682,7 @@ class Game{
     this.ui.setHero(this.playerName,`${t('faction_'+hero)} · ${isEN()?op.name.en:op.name.zh}`);
     this.ui.abilityCd(-1);
 
-    this.player.reset();
+    this.player.reset(this.matchMode==='waves'?null:findSafeSpawn(this.spawns[this.playerTeam||'A'],this.world.colliders,{jitter:0,radius:this.player.radius,bound:this.player.boundsR}));
     this.weapon.resetAmmo();
     this.enemies.clearAll();
     this.heroes.clear();
@@ -866,8 +867,8 @@ class Game{
   _spawnClear(){
     const p=this.player.pos,r=this.player.radius+.05;
     for(const c of this.world.colliders){
-      if(p.y>=c.top-.01)continue;
-      if(p.x>c.minX-r&&p.x<c.maxX+r&&p.z>c.minZ-r&&p.z<c.maxZ+r)return false;
+      if(!verticalBodyOverlap(p.y,this.player.crouching?1.2:1.8,c))continue;
+      if(circleOverlapsCollider(p.x,p.z,r,c))return false;
     }
     return true;
   }
@@ -1368,13 +1369,8 @@ class Game{
         if(this.dmRespawnT<=0){
           this.dmRespawnT=-1;
           const base=this.spawns[this.playerTeam]||new THREE.Vector3(0,0,24);
-          // Jittered spawns can land inside map geometry (e.g. caldera gate pillars).
-          // Retry a few times and always run the collision push-out before releasing control.
-          for(let i=0;i<8;i++){
-            this.player.pos.set(base.x+(Math.random()-.5)*6,0,base.z+(Math.random()-.5)*6);
-            this.player._collide(this.world.colliders);
-            if(this._spawnClear())break;
-          }
+          // Sample a genuinely free point instead of spawning inside geometry and popping out.
+          this.player.pos.copy(findSafeSpawn(base,this.world.colliders,{jitter:3,radius:this.player.radius,bound:this.player.boundsR}));
           this.player.yaw=0;this.player.pitch=0;
           this.player.vel.set(0,0,0);
           this.player.velY=0;this.player.grounded=true;this.player.airborne=false;
@@ -2065,11 +2061,14 @@ class Game{
         this.ui.sel.map=k;this.ui.sel.mode='koth';this.startGame();
         const p=this.koth.pos,r=this.koth.radius;
         assert(Math.hypot(p.x,p.z)<=30,k+': hill should stay near the middle of the arena');
+        for(const spawn of Object.values(this.spawns))
+          assert(Math.hypot(p.x-spawn.x,p.z-spawn.z)>=r+1.4,k+': hill overlaps a team spawn envelope');
         // ember is dense: its best site keeps tall obstacles ≥ 7.5 m from the centre (a sliver of
         // cover may poke into the outer edge of the ring); the other three maps get the full 8 m
         assert(this.koth.clearance>=r-.5,k+': hill should sit on open ground (clearance '+this.koth.clearance.toFixed(1)+')');
         for(const c of this.world.colliders){
-          if(c.top<=1)continue; // low rocks / kerbs can be walked over
+          if(c.top<=.32)continue; // only the actual .32 m auto-step is walkable
+          if(c.bottom!=null&&c.bottom>=1.8)continue; // overhead geometry does not block the hill
           const dx=Math.max(c.minX-p.x,0,p.x-c.maxX),dz=Math.max(c.minZ-p.z,0,p.z-c.maxZ);
           assert(Math.hypot(dx,dz)>=r-.5,k+': collider overlaps the hill: '+JSON.stringify([c.minX,c.maxX,c.minZ,c.maxZ])+' hill '+p.x.toFixed(1)+','+p.z.toFixed(1));
         }
@@ -2894,11 +2893,8 @@ class Game{
           else assert(Math.abs(h.yaw)<1e-6,'team B should face the enemy side after respawn on '+k);
           // ±4 jitter + up to ~.9 m of spawn pop-out from map geometry (caldera rims/pillars)
           assert(Math.hypot(h.pos.x,h.pos.z-baseZ)<=7,k+' respawn strayed from the base: '+h.name+' at '+h.pos.x.toFixed(1)+','+h.pos.z.toFixed(1));
-          for(const c of this.world.colliders){
-            if(h.pos.y>c.top)continue;
-            // OBB-aware test: the old AABB corner check false-positives on rotated cover.
-            assert(!circleOverlapsCollider(h.pos.x,h.pos.z,.44,c),`${h.name} respawned inside map geometry on ${k}`);
-          }
+          assert(spawnPointClear(h.pos.x,h.pos.z,this.world.colliders,h.radius,1.8,52),
+            `${h.name} respawned inside map geometry on ${k}`);
         }
       }
       this.ui.sel.map=m0;this.startGame();
@@ -2955,15 +2951,32 @@ class Game{
     });
     await run('foot-platform',()=>{
       this.ui.sel.mode='dm';this.startGame();
-      const c=this.world.colliders.find(c=>c.top>1&&c.top<2.5&&(c.maxX-c.minX)>2&&(c.maxZ-c.minZ)>1.5);
-      assert(c,'a standable crate/container top should exist');
+      const ray=new THREE.Raycaster(),down=new THREE.Vector3(0,-1,0),from=new THREE.Vector3();
+      const surfaces=[this.world.ground,...this.world.shootStatics];
+      const surfaceAt=(x,z)=>{
+        ray.set(from.set(x,30,z),down);ray.far=60;
+        const hit=ray.intersectObjects(surfaces,false)[0];
+        return hit?hit.point.y:0;
+      };
+      let platform=null,renderedTop=0,centre=null;
+      for(const o of this.world.shootStatics){
+        if(o.geometry?.type!=='BoxGeometry')continue;
+        const b=new THREE.Box3().setFromObject(o),p=o.geometry.parameters,c=b.getCenter(new THREE.Vector3());
+        if(p.width<=2||p.depth<=1.3)continue;
+        const top=surfaceAt(c.x,c.z);
+        if(top>1&&top<3.3){platform=o;renderedTop=top;centre=c;break;}
+      }
+      assert(platform,'a standable crate/container top should exist');
+      const c=this.world.colliders.find(c=>Math.abs(c.top-renderedTop)<.03&&
+        centre.x>=c.minX&&centre.x<=c.maxX&&centre.z>=c.minZ&&centre.z<=c.maxZ);
+      assert(c,`collider top must match the rendered platform at ${renderedTop.toFixed(3)} m`);
       const h=this.heroes.list[0];
-      h.place(new THREE.Vector3((c.minX+c.maxX)/2,c.top,(c.minZ+c.maxZ)/2),0);
+      h.place(new THREE.Vector3(centre.x,renderedTop,centre.z),0);
       h.moveK=0;h.walkT=0;h._animate(0,0,0);
       this.scene.updateMatrixWorld(true);
-      const r=auditFeet(h,()=>c.top);
+      const r=auditFeet(h,surfaceAt);
       assert(r.count>=20,'expected rendered foot vertices on the platform');
-      assert(r.maxPenetration<=.002,`sole penetrates the ${c.top.toFixed(2)} m platform by ${(r.maxPenetration*100).toFixed(1)} cm`);
+      assert(r.maxPenetration<=.002,`sole penetrates the ${renderedTop.toFixed(2)} m rendered platform by ${(r.maxPenetration*100).toFixed(1)} cm`);
     });
 
     /* ---------------- Friends 5v5 online ---------------- */

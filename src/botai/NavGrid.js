@@ -1,6 +1,7 @@
 // 全局导航栅格：把 AABB 碰撞盒烘焙成可行走栅格 + 清晰度(clearance)，提供 A*、视线、平滑
 // 适配 GUN TO GUN：地图是半径 52 的圆形竞技场，碰撞体为 {minX,maxX,minZ,maxZ,top}
 import { MinHeap, clamp } from './util.js';
+import { circleOverlapsCollider } from '../collision.js';
 
 const DIRS = [
   [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
@@ -47,9 +48,8 @@ export class NavGrid {
         for (let k = 0; k < colliders.length; k++) {
           const c = colliders[k];
           if (c.top !== undefined && c.top < 0.25) continue; // 过矮的贴地物不挡路
-          const nx = clamp(x, c.minX, c.maxX), nz = clamp(z, c.minZ, c.maxZ);
-          const dx = x - nx, dz = z - nz;
-          if (dx * dx + dz * dz < r * r) { blocked[cy * cols + cx] = 1; break; }
+          if (c.bottom != null && c.bottom >= 1.8) continue; // 拱门横梁等顶部障碍不挡地面导航
+          if (circleOverlapsCollider(x, z, r, c)) { blocked[cy * cols + cx] = 1; break; }
         }
       }
     }
@@ -120,6 +120,7 @@ export class NavGrid {
   findPath(x0, z0, x1, z1, { marginCells = 1, costFn = null, maxIter = 40000, smooth = true } = {}) {
     const { cols } = this;
     let [scx, scy] = this.worldToCell(x0, z0); let [tcx, tcy] = this.worldToCell(x1, z1);
+    const exactGoal = this.walkable(tcx, tcy, marginCells);
     const s = this.nearestFree(scx, scy, marginCells); const t = this.nearestFree(tcx, tcy, marginCells);
     if (!s || !t) return null;
     [scx, scy] = s; [tcx, tcy] = t;
@@ -153,7 +154,7 @@ export class NavGrid {
     if (!found) return null;
     const cells = []; for (let c = ti; c !== -1 && c !== si; c = parent[c]) cells.push(c); cells.push(si); cells.reverse();
     const pts = cells.map((c) => { const cx = c % cols; return this.cellToWorld(cx, (c - cx) / cols); });
-    pts[0] = [x0, z0]; pts[pts.length - 1] = [x1, z1];
+    pts[0] = [x0, z0]; pts[pts.length - 1] = exactGoal ? [x1, z1] : this.cellToWorld(tcx, tcy);
     return smooth ? this.smooth(pts, marginCells) : resampleCells(pts);
   }
 

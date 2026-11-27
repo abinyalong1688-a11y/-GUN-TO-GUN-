@@ -53,12 +53,14 @@ test('pickHill: prefers the open spot closest to the centre and is deterministic
   assert.equal(Math.abs(a.x), 14, 'first grid column clear of the wall plus the radius');
 });
 
-test('pickHill: low rocks inside the zone are bumps, not obstacles', () => {
-  const colliders = [box(-3, 3, -3, 3, 0.7), box(-20, -18, -20, -18, 2)];
+test('pickHill: only auto-step-height bumps are ignored; 1 m bank rocks are obstacles', () => {
+  const colliders = [box(-3, 3, -3, 3, 0.2), box(-20, -18, -20, -18, 2)];
   const spot = pickHill(colliders);
-  assert.deepEqual([spot.x, spot.z], [0, 0], 'a knee-high rock does not push the hill off the centre');
-  const tall = pickHill([box(-3, 3, -3, 3, 1.35), box(-20, -18, -20, -18, 2)]);
-  assert.ok(tall.clearance >= KOTH_RADIUS, 'a crate wall does');
+  assert.deepEqual([spot.x, spot.z], [0, 0], 'a 20 cm lip does not push the hill off the centre');
+  for (const top of [1, 1.35]) {
+    const tall = pickHill([box(-3, 3, -3, 3, top), box(-20, -18, -20, -18, 2)]);
+    assert.ok(tall.clearance >= KOTH_RADIUS, `${top} m cover is not walkable and must be avoided`);
+  }
 });
 
 test('pickHill: still returns a usable site on a cluttered map (best clearance wins)', () => {

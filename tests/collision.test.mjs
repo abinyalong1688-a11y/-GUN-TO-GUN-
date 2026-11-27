@@ -2,7 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import {pushCircleOut, circleOverlapsCollider} from '../src/collision.js';
+import {pushCircleOut, circleOverlapsCollider, resolveCircleCollisions, verticalBodyOverlap} from '../src/collision.js';
 import {Player} from '../src/player.js';
 
 const R = .4;
@@ -105,6 +105,30 @@ test('player: crouch request always wins, standing up is blocked until clear', (
   p.pos.set(3, 0, 3);                                    // step clear of the low collider
   p.update(.016, INPUT, new Set(), 0, AUDIO);
   assert.equal(p.crouching, false);
+});
+
+test('neighbouring colliders converge without residual penetration or order-dependent pops', () => {
+  const cols = [
+    {minX:-1, maxX:1, minZ:-2, maxZ:2, bottom:0, top:3},
+    {minX:.8, maxX:2.8, minZ:-2, maxZ:2, bottom:0, top:3},
+  ];
+  for (const order of [cols, cols.slice().reverse()]) {
+    const p = new THREE.Vector3(.9, 0, 0);
+    const result = resolveCircleCollisions(p, .4, order, 1.8);
+    assert.equal(result.converged, true);
+    assert.equal(circleOverlapsCollider(p.x, p.z, .4, cols[0]), false);
+    assert.equal(circleOverlapsCollider(p.x, p.z, .4, cols[1]), false);
+  }
+});
+
+test('overhead geometry is ignored by body collision but still blocks a body that intersects it', () => {
+  const lintel = {minX:-2, maxX:2, minZ:-1, maxZ:1, bottom:3.8, top:4.8};
+  const ground = new THREE.Vector3(0, 0, 0);
+  assert.equal(verticalBodyOverlap(ground.y, 1.8, lintel), false);
+  assert.equal(resolveCircleCollisions(ground, .4, [lintel], 1.8).converged, true);
+  assert.equal(ground.x, 0);
+  const jumper = new THREE.Vector3(0, 3.7, 0);
+  assert.equal(verticalBodyOverlap(jumper.y, 1.8, lintel), true);
 });
 
 test('footprint: OBB support surface does not extend into the bounding-AABB corner', () => {

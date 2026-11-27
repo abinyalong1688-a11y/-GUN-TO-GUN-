@@ -267,9 +267,9 @@ test('separation: the lower-priority bot takes the larger share of the split',()
   const ax=a.pos.x,bx=b.pos.x;
   team._separate();
   const da=ax-a.pos.x,db=b.pos.x-bx;
-  assert.ok(da>.3&&da<.34,`priority 1 takes three quarters of the split (${da.toFixed(2)} m)`);
+  assert.ok(da>.48&&da<.51,`priority 1 takes three quarters of the split (${da.toFixed(2)} m)`);
   assert.ok(Math.abs(db-da/3)<.01,`priority 3 moves a third of that (${db.toFixed(2)} m)`);
-  assert.ok(Math.abs(da+db-(.72-.3))<.001,'the pair is exactly .72 m apart');
+  assert.ok(Math.abs(da+db-(.96-.3))<.001,'the pair is exactly .96 m apart');
 });
 
 /* ---- P0.1 claim-your-own-spot / P3.2 pathfinding ---- */
