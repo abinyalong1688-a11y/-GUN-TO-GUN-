@@ -253,3 +253,22 @@ test('separate map props do not interpenetrate (intentional assembled fixtures e
     assert.deepEqual(bad, [], `${key} has intersecting props:\n${bad.join('\n')}`);
   }
 });
+
+test('static colliders never overlap by more than 2 cm on any map', () => {
+  const TH = 0.02;
+  for (const key of MAP_KEYS) {
+    const { colliders } = build(key);
+    const bad = [];
+    for (let i = 0; i < colliders.length; i++) for (let j = 0; j < i; j++) {
+      const a = colliders[i], b = colliders[j];
+      const ox = Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX);
+      const oy = Math.min(a.top, b.top) - Math.max(a.bottom ?? 0, b.bottom ?? 0);
+      const oz = Math.min(a.maxZ, b.maxZ) - Math.max(a.minZ, b.minZ);
+      if (ox > TH && oy > TH && oz > TH) bad.push(
+        `#${i}@${((a.minX+a.maxX)/2).toFixed(2)},${((a.minZ+a.maxZ)/2).toFixed(2)} × ` +
+        `#${j}@${((b.minX+b.maxX)/2).toFixed(2)},${((b.minZ+b.maxZ)/2).toFixed(2)} ` +
+        `${ox.toFixed(3)}×${oy.toFixed(3)}×${oz.toFixed(3)}`);
+    }
+    assert.deepEqual(bad, [], `${key} collider overlaps >2 cm:\n${bad.join('\n')}`);
+  }
+});

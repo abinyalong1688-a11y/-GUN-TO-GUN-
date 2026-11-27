@@ -2101,7 +2101,13 @@ class Game{
         assert(kinds.has('move')||kinds.has('hold'),'orders reach the bots ('+mode+'): '+[...kinds]);
         const sets=this.heroes.list.map(h=>h.brain.params);
         assert(new Set(sets).size===sets.length,'each brain owns its parameter set');
-        assert(this.heroes.list.every(h=>h.brain.baseParams===this.heroes.list[0].brain.baseParams||h.faction!==this.heroes.list[0].brain.faction),'…while the presets stay shared per faction');
+        // Presets stay shared per faction — with one sanctioned exception: the Longbow
+        // operator carries its own sniper preset (botConfig SNIPER_OVERRIDES), so a bot's
+        // baseParams may differ from its faction twin's iff exactly one of them is 'sniper'.
+        assert(this.heroes.list.every(h=>h.brain.baseParams===this.heroes.list[0].brain.baseParams
+          ||h.faction!==this.heroes.list[0].brain.faction
+          ||(h.brain.baseParams.style==='sniper')!==(this.heroes.list[0].brain.baseParams.style==='sniper')),
+          '…while the presets stay shared per faction (sniper preset excepted)');
       }
       this.squad.endMatch();this.ui.sel.map='desert';this.ui.sel.mode='dm';this.startGame();
       }finally{this._e2eHold=false;}

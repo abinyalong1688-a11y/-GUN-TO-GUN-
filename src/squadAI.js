@@ -259,8 +259,16 @@ export class SquadAI{
       if(!base||!b.params||!Array.isArray(base.range))continue;
       const p=b.params;
       for(const k of Object.keys(base))if(k!=='range')p[k]=base[k];
-      p.range[0]=base.range[0]*L.tuner.rangeMul(u.id);
-      p.range[1]=base.range[1]*L.tuner.rangeMul(u.id);
+      if(base.style==='sniper'){
+        // A marksman's stand-off band is the weapon's identity, not a tunable: letting the
+        // engagement-range tuner stretch it put easy's upper bound past the bot's own view
+        // range (24×1.3 = 31 > viewRange 30 — holding a lane it cannot even see).
+        p.range[0]=base.range[0];
+        p.range[1]=base.range[1];
+      }else{
+        p.range[0]=base.range[0]*L.tuner.rangeMul(u.id);
+        p.range[1]=base.range[1]*L.tuner.rangeMul(u.id);
+      }
       p.aggression=clamp(base.aggression*L.tuner.aggrMul(u.id),0,1);
       L.diff.apply(p);
     }

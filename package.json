@@ -9,8 +9,10 @@
   "scripts": {
     "build": "node build.mjs",
     "build:single": "node build.mjs --single",
+    "build:map-demo": "node scripts/build-map-demo.mjs",
     "bake:portraits": "node scripts/bake-portraits.mjs",
     "test": "node --test",
+    "test:map-validate": "node test/map-validate.mjs",
     "test:e2e": "node scripts/e2e.mjs",
     "test:load": "node scripts/load-check.mjs 60",
     "evolve": "node scripts/evolve-bots.mjs",

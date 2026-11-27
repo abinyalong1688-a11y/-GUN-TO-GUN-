@@ -108,7 +108,11 @@ export class KothMode extends GameMode{
     if(!g||!g.scene||this.marker)return;
     const grp=new THREE.Group();
     grp.name='koth-hill';
-    const ringMat=new THREE.MeshBasicMaterial({color:0xdbe6f4,transparent:true,opacity:.75,side:THREE.DoubleSide,depthWrite:false});
+    // depthTest:false keeps the capture ring readable where a low rock/kerb sits inside the
+    // hill (ember's lava rim): pickHill deliberately allows standable bumps, so a purely
+    // depth-tested y=.06 ring would vanish under them and hide the objective boundary.
+    const ringMat=new THREE.MeshBasicMaterial({color:0xdbe6f4,transparent:true,opacity:.75,
+      side:THREE.DoubleSide,depthWrite:false,depthTest:false});
     const ring=new THREE.Mesh(new THREE.RingGeometry(this.radius-.45,this.radius,72),ringMat);
     ring.rotation.x=-Math.PI/2;ring.position.y=.06;ring.renderOrder=5;
     const innerMat=ringMat.clone();innerMat.opacity=.22;

@@ -431,10 +431,12 @@ function lamp(ctx,x,z,ry){
   world.add(pole);shootStatics.push(pole);
   colliders.push({minX:x-.1,maxX:x+.1,minZ:z-.1,maxZ:z+.1,bottom:0,top:4.6});
   const head=new THREE.Mesh(new THREE.BoxGeometry(.5,.14,.3),M.metal);
-  head.position.set(x+Math.sin(ry)*.3,4.6,z+Math.cos(ry)*.3);head.rotation.y=ry;
+  head.name='street-lamp-head';head.userData.visualOnly=true;
+  head.position.set(x+Math.sin(ry)*.3,4.67,z+Math.cos(ry)*.3);head.rotation.y=ry; // bottom = pole top 4.6
   world.add(head);
   const bulb=new THREE.Mesh(new THREE.SphereGeometry(.09,8,8),new THREE.MeshBasicMaterial({color:map.lamp.bulb}));
-  bulb.position.set(x+Math.sin(ry)*.5,4.5,z+Math.cos(ry)*.5);
+  bulb.name='street-lamp-bulb';bulb.userData.visualOnly=true;
+  bulb.position.set(x+Math.sin(ry)*.5,4.51,z+Math.cos(ry)*.5); // top = head bottom 4.6
   world.add(bulb);
   ownMats.push(bulb.material);
   const light=new THREE.PointLight(map.lamp.light,map.lamp.i,16,2);
@@ -468,15 +470,23 @@ const LAYOUTS={
       const a=Math.PI*.72+i*Math.PI*.09;
       // Keep the ring east of the container stack; the old centre put four bags inside it.
       addBox(world,shootStatics,colliders,{w:1.1,h:.55,d:.8,mat:M.hesco,x:Math.cos(a)*7.4+2.5,y:.275,z:Math.sin(a)*7.4-1,ry:-a+Math.PI/2,surface:'concrete'});
-      addBox(world,shootStatics,colliders,{w:1.1,h:.55,d:.8,mat:M.hesco,x:Math.cos(a)*7.4+2.9,y:.825,z:Math.sin(a)*7.4-.8,ry:-a+Math.PI/2+.2,surface:'concrete'});
+      // Small offset keeps the upper bag supported (>70% footprint, <20% / 0.4 m overhang);
+      // the old 0.4 m x-offset left only 40–61% contact area.
+      addBox(world,shootStatics,colliders,{w:1.1,h:.55,d:.8,mat:M.hesco,x:Math.cos(a)*7.4+2.62,y:.825,z:Math.sin(a)*7.4-.95,ry:-a+Math.PI/2+.05,surface:'concrete'});
     }
 
     addBox(world,shootStatics,colliders,{w:1.1,h:1.1,d:1.1,mat:M.wood,x:1.8,y:.55,z:4.2,ry:.4,surface:'wood'});
-    addBox(world,shootStatics,colliders,{w:1.1,h:1.1,d:1.1,mat:M.wood,x:2.9,y:.55,z:3.6,ry:.1,surface:'wood'});
-    addBox(world,shootStatics,colliders,{w:1.1,h:1.1,d:1.1,mat:M.wood,x:2.3,y:1.65,z:3.9,ry:.7,surface:'wood'});
+    // Second crate pushed 21 cm east: its rotated AABB (hx .60) shaved 22 cm into the
+    // first crate's AABB (hx .72); the OBBs missed, but the collider pair is flagged.
+    addBox(world,shootStatics,colliders,{w:1.1,h:1.1,d:1.1,mat:M.wood,x:3.11,y:.55,z:3.6,ry:.1,surface:'wood'});
+    // Top crate centred on the (3.11,3.6) base. The old (2.3,3.9) position bridged two
+    // independent bases; centring it on the east base also keeps the (0,7)→(6,-8) sight-line open.
+    addBox(world,shootStatics,colliders,{w:1.1,h:1.1,d:1.1,mat:M.wood,x:3.11,y:1.65,z:3.6,ry:.1,surface:'wood'});
 
     const barrelGeo=new THREE.CylinderGeometry(.42,.42,1.1,14);
-    for(const [x,z,mi] of [[9.2,2.4,0],[10.1,2.9,1],[9.6,-.6,1]]){
+    // Middle barrel nudged 7 cm west: at x 10.1 its AABB reached 10.52 and clipped the
+    // (12,5) container's rotated AABB (minX 10.48). Real drums never touched.
+    for(const [x,z,mi] of [[9.2,2.4,0],[10.03,2.9,1],[9.6,-.6,1]]){
       const b=new THREE.Mesh(barrelGeo,contMats[mi]);
       b.name='supply-barrel';
       b.position.set(x,.55,z);b.castShadow=b.receiveShadow=true;
@@ -491,6 +501,7 @@ const LAYOUTS={
       const legGeo=new THREE.CylinderGeometry(.09,.12,5.11,8);
       for(const [dx,dz] of [[-1.1,-1.1],[1.1,-1.1],[-1.1,1.1],[1.1,1.1]]){
         const leg=new THREE.Mesh(legGeo,M.metal);
+        leg.name='watchtower-leg';
         leg.position.set(tx+dx,2.555,tz+dz);leg.castShadow=true;
         leg.userData.surface='metal';
         world.add(leg);shootStatics.push(leg);
@@ -505,12 +516,15 @@ const LAYOUTS={
       world.add(cab);
       colliders.push({x:tx,z:tz,w:2.6,d:2.6,ry:0,minX:tx-1.3,maxX:tx+1.3,minZ:tz-1.3,maxZ:tz+1.3,bottom:5.3,top:6.3});
       const roof=new THREE.Mesh(new THREE.ConeGeometry(2.3,1.2,4),contMats[1]);
+      roof.name='watchtower-roof';roof.userData.visualOnly=true;
       roof.position.set(tx,6.9,tz);roof.rotation.y=Math.PI/4;roof.castShadow=true;
       world.add(roof);
       const ant=new THREE.Mesh(new THREE.CylinderGeometry(.02,.02,2.4,6),M.metal);
-      ant.position.set(tx+1,8.7,tz);world.add(ant); // starts at the roof apex (7.5 m), not inside it
+      ant.name='watchtower-antenna';ant.userData.visualOnly=true;
+      ant.position.set(tx,8.7,tz);world.add(ant); // base = roof apex (7.5 m), centred on the tower
       const beacon=new THREE.Mesh(new THREE.SphereGeometry(.09,8,8),new THREE.MeshBasicMaterial({color:0xff3a2a}));
-      beacon.position.set(tx+1,9.9,tz);world.add(beacon);
+      beacon.name='watchtower-beacon';beacon.userData.visualOnly=true;
+      beacon.position.set(tx,9.99,tz);world.add(beacon); // bottom = antenna top 9.9
       ownMats.push(beacon.material);
 
       worldAnim.push(t=>{beacon.material.color.setHex(Math.sin(t*3)>0?0xff3a2a:0x571512);});
@@ -520,8 +534,9 @@ const LAYOUTS={
     {
       const px=-15,pz=-9;
       const pole=new THREE.Mesh(new THREE.CylinderGeometry(.12,.16,3.4,8),M.metal);
-      pole.position.set(px,1.7,pz);pole.castShadow=true;world.add(pole);
+      pole.name='radar-pole';pole.position.set(px,1.7,pz);pole.castShadow=true;world.add(pole);
       const dish=new THREE.Mesh(new THREE.SphereGeometry(1.3,16,10,0,Math.PI*2,0,Math.PI*.36),M.metal);
+      dish.name='radar-dish';dish.userData.visualOnly=true;
       dish.position.set(px,4,pz);dish.rotation.x=-.9;dish.castShadow=true;
       dish.userData.surface='metal';
       world.add(dish);shootStatics.push(dish);
@@ -529,21 +544,73 @@ const LAYOUTS={
       colliders.push({minX:px-.18,maxX:px+.18,minZ:pz-.18,maxZ:pz+.18,bottom:0,top:3.4});
     }
 
-    lamp(ctx,-6,7,.7);lamp(ctx,8,-2,2.4);
+    // East lamp moved to x 8.45: its pole AABB sat inside the 3-drum cluster's shared
+    // collider (x 6.3..8.2), although the real drums were 0.95 m away.
+    lamp(ctx,-6,7,.7);lamp(ctx,8.45,-2,2.4);
 
     /* Command tent */
     {
       const tx=-2,tz=-10.5;
       const g1=new THREE.Mesh(new THREE.BoxGeometry(5,.1,3.4),M.concrete);
+      g1.name='command-tent-foundation';g1.userData.visualOnly=true;
       g1.position.set(tx,.05,tz);g1.receiveShadow=true;world.add(g1);
       const roof=new THREE.Mesh(new THREE.CylinderGeometry(1.7,1.7,5,3,1,false,0,Math.PI),M.hesco);
+      roof.name='command-tent-roof';
       roof.rotation.z=Math.PI/2;
       roof.position.set(tx,1.1,tz);roof.scale.set(1,1,1);
       roof.castShadow=roof.receiveShadow=true;
       roof.userData.surface='concrete';
       world.add(roof);shootStatics.push(roof);
-      colliders.push({minX:tx-2.5,maxX:tx+2.5,minZ:tz-1.7,maxZ:tz+1.7,bottom:0,top:2.8});
+      // The arch roof's lower edge is y=1.1; four thin posts connect it to the 0.1 m
+      // foundation instead of leaving the curved roof floating. They are visual/LOS supports
+      // (listed by the validator); the tent keeps its original solid collider.
+      const tentPostGeo=new THREE.CylinderGeometry(.055,.07,1,8);
+      for(const dx of[-2.35,2.35])for(const dz of[-1.55,1.55]){
+        const post=new THREE.Mesh(tentPostGeo,M.metal);
+        post.name='command-tent-post';post.userData.visualOnly=true;post.userData.surface='metal';
+        post.position.set(tx+dx,.6,tz+dz);post.castShadow=true;
+        world.add(post);shootStatics.push(post);
+      }
+      colliders.push({minX:tx-2.5,maxX:tx+2.5,minZ:tz-1.7,maxZ:tz+1.7,bottom:0,top:2.57});
     }
+
+    /* v1.14 cover pass: the old layout left three sight-lines open from base to base.
+       A broken centre wall now cuts the N–S lane, waist-high drums give mid-field peek cover,
+       and a camo-net platform rewards the west flank with a climbable sniper perch. */
+    // Broken wall across the middle (two segments with a gap at x≈-1.4..2.0):
+    // shades the west push lane and the centre-east crossing while leaving the KOTH
+    // capture point, the separation cluster at the origin, the east flick lane and the
+    // pre-existing crate cluster near (2.3,3.9) clear.
+    // West segment pushed to (-6,5): at (-3.2,3.4) it sat inside the sandbag/hesco ring
+    // band (r 7.4 from (2.5,-1)) — the ring's 145.8° bags at (-3.6,3.2)/(-3.2,3.4) ran
+    // straight through it.
+    addBox(world,shootStatics,colliders,{w:3.6,h:2.3,d:.8,mat:M.concrete,x:-6,y:1.15,z:5,ry:.06,surface:'concrete'});
+    // Pale plank-textured panel moved 30 cm north (5.2 → 5.5): its south face at 4.67 m
+    // overlapped the crate at (1.8,4.2) by 28 cm and the stacked crate by 3 cm.
+    addBox(world,shootStatics,colliders,{w:3.4,h:2.3,d:.8,mat:M.concrete,x:3.9,y:1.15,z:5.5,ry:-.08,surface:'concrete'});
+    // Waist-high drum cluster mid-east (peek cover for the push through the gap); the solo
+    // drum sits south of the pre-existing barrel row (its collider spans x 10.2..12, z -1..3.4)
+    for(const [x,z,mi] of [[6.8,-2.4,0],[7.7,-2.9,1],[7.2,-1.4,1],[10.9,-2.6,0]]){
+      const b=new THREE.Mesh(barrelGeo,contMats[mi]);
+      b.position.set(x,.55,z);b.castShadow=b.receiveShadow=true;
+      b.userData.surface='metal';
+      world.add(b);shootStatics.push(b);
+    }
+    colliders.push({minX:6.3,maxX:8.2,minZ:-3.4,maxZ:-.9,top:1.1});
+    colliders.push({minX:10.4,maxX:11.4,minZ:-3.1,maxZ:-2.1,top:1.1});
+    // Camo-net platform on the west lane: tier2 is a half-slab offset north (tier1 keeps a
+    // standable ring — the old same-footprint stack left nothing to stand on at 1.10), and the
+    // rail runs at 1.6 so the E–W sight-line stays open over the post top.
+    addBox(world,shootStatics,colliders,{w:2.4,h:1.1,d:2.4,mat:M.wood,x:-14,y:.55,z:0,surface:'wood'});
+    addBox(world,shootStatics,colliders,{w:2.4,h:1.1,d:1.3,mat:M.wood,x:-14,y:1.65,z:-.55,surface:'wood'});
+    // Rail sits on the tier2 top (2.2 m) with 3 cm horizontal bearing; the old bottom
+    // at 1.7 m floated beside the slab. Its north overhang is intentional guard-rail geometry.
+    const camoRail=addBox(world,shootStatics,colliders,{w:.14,h:1.2,d:2.4,mat:M.metal,x:-12.75,y:2.8,z:0,surface:'metal'});
+    camoRail.name='camo-platform-rail';camoRail.userData.assemblyRole='rail';
+    // Paired hesco ears around the platform: a low shoot-over lip to the south, a blocker to the north
+    addBox(world,shootStatics,colliders,{w:2.2,h:1.35,d:1.35,mat:M.hesco,x:-14,y:.675,z:3.2,ry:.15,surface:'concrete'});
+    // North ear shifted to x -13.5: at -11.6 it ran into the container stack's west end (x ≤ -11.75).
+    addBox(world,shootStatics,colliders,{w:2.2,h:1.35,d:1.35,mat:M.hesco,x:-13.5,y:.675,z:-5.4,ry:-.4,surface:'concrete'});
   },
 
   /* Glacier Lake — "crevasse ridge": a diagonal wall of glacial ice ridges west of centre, a fractured
@@ -552,8 +619,11 @@ const LAYOUTS={
     const {world,shootStatics,colliders,worldAnim,ownMats,M,assets,mounds}=ctx;
     const contMats=ctx.map.containers.map(k=>assets.containers[k]);
 
-    /* Diagonal ice ridge (three long walls stepping NW→SE, west of the arena centre) */
-    for(const [x,z] of [[-13,-4.5],[-9.5,-1],[-9,3]])
+    /* Diagonal ice ridge (three long walls stepping NW→SE, west of the arena centre).
+       The 7 m walls have a 4.33 m deep rotated AABB; the old 3.5 m z steps made their
+       AABBs overlap by 0.8 m. End walls were spread to 3.9 m steps — the wall OBBs
+       never intersected, but the collider pairs tripped the 2 cm audit. */
+    for(const [x,z] of [[-13,-5.4],[-9.5,-1],[-9,3.7]])
       addBox(world,shootStatics,colliders,{w:7,h:2.2,d:1.4,mat:M.ice,x,y:1.1,z,ry:.45,surface:'ice'});
 
     /* Fractured ice maze to the north */
@@ -574,28 +644,40 @@ const LAYOUTS={
     /* Frozen supply crates (the ~1.1 m climbable tier) */
     const stack=(x,z,ry,n=2)=>{
       for(let i=0;i<n;i++)
-        addBox(world,shootStatics,colliders,{w:1.15,h:1.15,d:1.15,mat:M.wood,x:x+(i?.9:0),y:.575+i*1.15,z,ry:ry+i*.13,surface:'wood'});
+        // 18 cm offset stays below the 20% / 0.4 m overhang limit and keeps >70% footprint
+        // overlap; the old 90 cm stair offset left the upper crate mostly unsupported.
+        addBox(world,shootStatics,colliders,{w:1.15,h:1.15,d:1.15,mat:M.wood,x:x+(i?.18:0),y:.575+i*1.15,z,ry:ry+i*.13,surface:'wood'});
     };
     stack(5,6,.3,2);stack(11,-8,-.2,2);
-    stack(-3,8,.1,1);stack(-1.8,9,-.4,1);
+    // North-east crate moved to (-1.6,9.2): its AABB shaved 18 cm × 40 cm into the
+    // (-3,8) crate; the OBBs were clear, the collider pair was not.
+    stack(-3,8,.1,1);stack(-1.6,9.2,-.4,1);
     stack(4,-16.5,.4,1);
 
     /* Frozen trapper hut, north-east */
     {
       const hx=14,hz=-12;
-      addBox(world,shootStatics,colliders,{w:3,h:2.3,d:2.6,mat:M.wood,x:hx,y:1.15,z:hz,ry:-.3,surface:'wood'});
-      const roof=new THREE.Mesh(new THREE.ConeGeometry(2.3,1.3,4),contMats[0]);
-      roof.name='trapper-hut-roof';roof.position.set(hx,2.95,hz);roof.rotation.y=Math.PI/4;roof.castShadow=true;
+      const cabin=addBox(world,shootStatics,colliders,{w:3,h:2.3,d:2.6,mat:M.wood,x:hx,y:1.15,z:hz,ry:-.3,surface:'wood'});
+      cabin.name='trapper-hut-cabin';
+      // The detached roof panel is stored on the ground east of the hut (base on the floor,
+      // not on the cabin): base y=0, apex 1.3, and 46 cm of world-AABB clearance to the cabin.
+      const roof=new THREE.Mesh(new THREE.ConeGeometry(1.8,1.3,4),contMats[0]);
+      const roofSide=3.6*Math.SQRT1_2, roofRy=cabin.rotation.y+Math.PI/4;
+      const roofX=hx+4.3,roofZ=hz;
+      roof.name='trapper-hut-roof';roof.position.set(roofX,.65,roofZ);roof.rotation.y=roofRy;roof.castShadow=roof.receiveShadow=true;
       world.add(roof);
-      colliders.push({x:hx,z:hz,w:3.3,d:3.3,ry:0,minX:hx-1.65,maxX:hx+1.65,minZ:hz-1.65,maxZ:hz+1.65,bottom:2.3,top:3.6});
+      const rh=roofSide*.5,rc=Math.abs(Math.cos(roofRy)),rs=Math.abs(Math.sin(roofRy));
+      const rxa=rc*rh+rs*rh,rza=rs*rh+rc*rh;
+      colliders.push({x:roofX,z:roofZ,w:roofSide,d:roofSide,ry:roofRy,minX:roofX-rxa,maxX:roofX+rxa,minZ:roofZ-rza,maxZ:roofZ+rza,bottom:0,top:1.3});
     }
 
     /* Signal mast, west edge, cold blinking beacon */
     {
       const px=-20,pz=7;
       const pole=new THREE.Mesh(new THREE.CylinderGeometry(.08,.11,5.4,8),M.metal);
-      pole.position.set(px,2.7,pz);pole.castShadow=true;world.add(pole);
+      pole.name='signal-mast';pole.position.set(px,2.7,pz);pole.castShadow=true;world.add(pole);
       const beacon=new THREE.Mesh(new THREE.SphereGeometry(.1,8,8),new THREE.MeshBasicMaterial({color:0x7fd4ff}));
+      beacon.name='signal-beacon';beacon.userData.visualOnly=true;
       beacon.position.set(px,5.5,pz);world.add(beacon);
       ownMats.push(beacon.material);
       colliders.push({minX:px-.14,maxX:px+.14,minZ:pz-.14,maxZ:pz+.14,bottom:0,top:5.4});
@@ -612,6 +694,48 @@ const LAYOUTS={
       pile.position.set(x,terrainHeight(x,z)+.018,z);pile.receiveShadow=true;
       world.add(pile);
     }
+
+    /* v1.14 cover pass: the east plain and the E–W centre lane were rifle-ranges.
+       An ice arch blocks the centre view, a broken serac wall hides the north-east push,
+       and two snow walls give the lake shore waist-high peek cover. */
+    // Ice arch across the east lane (columns + lintel, walkable under, shootable over).
+    // Kept clear of the KOTH capture point (0,0), the spawn gates, the frozen crate stack
+    // at (11,-8) and the iceberg at (10,-4): the first cut welded the arch's slab into
+    // that iceberg into one solid 4 m wall. Collision follows the visual opening (two pillar
+    // discs, no lintel collider — the lintel underside sits at 3.7).
+    // Moved to z -16: at -10.4 the pillars shaved the audit's rock at (6,-11) and the
+    // trapper hut roof at (14,-12), and the lintel clipped the roof cone.
+    {
+      for(const sd of[-1,1]){
+        const col=new THREE.Mesh(new THREE.CylinderGeometry(.7,.85,3.2,7),M.ice);
+        col.name='ice-arch-pillar';
+        col.position.set(10.5+sd*3,1.6,-17);
+        col.castShadow=col.receiveShadow=true;
+        col.userData.surface='ice';
+        world.add(col);shootStatics.push(col);
+        colliders.push({minX:10.5+sd*3-.9,maxX:10.5+sd*3+.9,minZ:-17.8,maxZ:-16.2,top:3.2});
+      }
+      const lintel=new THREE.Mesh(new THREE.BoxGeometry(7.6,1,1.5),M.ice);
+      lintel.name='ice-arch-lintel';lintel.userData.visualOnly=true;
+      // y 3.7: the lintel rests exactly on the pillar tops (3.2) — the old y 3.6 centre
+      // embedded it 0.1 m into both pillars.
+      lintel.position.set(10.5,3.7,-17);lintel.castShadow=true;
+      lintel.userData.surface='ice';
+      world.add(lintel);shootStatics.push(lintel);
+    }
+    // Broken serac wall north-east (staggered blocks with a crouch gap).
+    // Pushed out to the arena rim: the first cut sat at (10,-1.5)/(7.6,-3), inside the
+    // KOTH candidate zone — the hill then lost its ≥7.5 clearance to the audit's ice ridge.
+    // Positions verified against pickHill (clearance 7.95 at (2,-2)) and every nearby prop.
+    addBox(world,shootStatics,colliders,{w:3.2,h:2.1,d:1,mat:M.ice,x:14.5,y:1.05,z:-8.5,ry:-.5,surface:'ice'});
+    addBox(world,shootStatics,colliders,{w:2.2,h:1.7,d:1,mat:M.ice,x:10,y:.85,z:-12.5,ry:.25,surface:'ice'});
+    // Lake-shore snow walls (waist-high peek cover, E–W lanes). Snow-block material:
+    // the shared ground texture repeats at 36 m/tile and would smear on a 4 m box.
+    // Kept ≥10 m off the centre so the KOTH hill keeps its clearance.
+    if(!M.snowBlock)M.snowBlock=new THREE.MeshStandardMaterial({color:0xe8f0f8,roughness:.85,metalness:0});
+    ownMats.push(M.snowBlock);
+    addBox(world,shootStatics,colliders,{w:4,h:.9,d:1,mat:M.snowBlock,x:0,y:.45,z:11,ry:.12,surface:'concrete'});
+    addBox(world,shootStatics,colliders,{w:4,h:.9,d:1,mat:M.snowBlock,x:-9,y:.45,z:-11,ry:-.2,surface:'concrete'});
 
     /* Distant icebergs. Nudge them inward/around any generic mound instead of letting two
        unrelated horizon solids interpenetrate. */
@@ -642,7 +766,7 @@ const LAYOUTS={
     const [seaBlue,rust,mustard,charcoal]=ctx.map.containers.map(k=>assets.containers[k]);
 
     /* Canyon west wall (lengthwise containers, one staggered crossing gap) */
-    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:seaBlue,x:-3,y:1.3,z:-13,ry:Math.PI/2,surface:'metal'});
+    const westNorth=addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:seaBlue,x:-3,y:1.3,z:-13,ry:Math.PI/2,surface:'metal'});
     addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:rust,x:-3,y:1.3,z:-6.9,ry:Math.PI/2,surface:'metal'});
     addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:seaBlue,x:-3,y:3.9,z:-6.9,ry:Math.PI/2,surface:'metal'});
     addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:mustard,x:-3,y:1.3,z:-.2,ry:Math.PI/2,surface:'metal'});
@@ -650,14 +774,14 @@ const LAYOUTS={
     addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:charcoal,x:5,y:1.3,z:-12,ry:Math.PI/2,surface:'metal'});
     addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:seaBlue,x:5,y:3.9,z:-12,ry:Math.PI/2,surface:'metal'});
     addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:rust,x:5,y:6.5,z:-12,ry:Math.PI/2,surface:'metal'});
-    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:mustard,x:5,y:1.3,z:1.8,ry:Math.PI/2,surface:'metal'});
+    const eastMid=addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:mustard,x:5,y:1.3,z:1.8,ry:Math.PI/2,surface:'metal'});
     addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:seaBlue,x:5,y:1.3,z:8.5,ry:Math.PI/2,surface:'metal'});
     addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:rust,x:5,y:3.9,z:8.5,ry:Math.PI/2,surface:'metal'});
 
     /* North stacking yard */
     addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:rust,x:-12,y:1.3,z:-12,ry:.15,surface:'metal'});
     addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:mustard,x:-11.7,y:3.9,z:-11.8,ry:.2,surface:'metal'});
-    addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:seaBlue,x:10,y:1.3,z:-15,ry:-.1,surface:'metal'});
+    const northLower=addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:seaBlue,x:10,y:1.3,z:-15,ry:-.1,surface:'metal'});
     addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:charcoal,x:10.3,y:3.9,z:-14.7,ry:-.06,surface:'metal'});
     addBox(world,shootStatics,colliders,{w:6.1,h:2.6,d:2.44,mat:mustard,x:-16,y:1.3,z:-3,ry:1.35,surface:'metal'});
 
@@ -665,7 +789,9 @@ const LAYOUTS={
     addBox(world,shootStatics,colliders,{w:10,h:1.1,d:3,mat:M.concrete,x:-2,y:.55,z:10.5,ry:.06,surface:'concrete'});
     const stack=(x,z,ry,n=2)=>{
       for(let i=0;i<n;i++)
-        addBox(world,shootStatics,colliders,{w:1.15,h:1.15,d:1.15,mat:M.wood,x:x+(i?.9:0),y:.575+i*1.15,z,ry:ry+i*.13,surface:'wood'});
+        // 18 cm offset stays below the 20% / 0.4 m overhang limit and keeps >70% footprint
+        // overlap; the old 90 cm stair offset left the upper crate mostly unsupported.
+        addBox(world,shootStatics,colliders,{w:1.15,h:1.15,d:1.15,mat:M.wood,x:x+(i?.18:0),y:.575+i*1.15,z,ry:ry+i*.13,surface:'wood'});
     };
     stack(8,8.5,.3,2);stack(10.2,9.4,-.2,1);
     stack(-8,6,.1,1);stack(13,-1,.4,2);
@@ -674,25 +800,40 @@ const LAYOUTS={
     for(const [x,z,ry] of [[1,-6,.4],[-6,1,-.2],[8,6.5,.1],[1,-13,-.3],[-11,3,.9]])
       addBox(world,shootStatics,colliders,{w:2.2,h:1.1,d:1.1,mat:M.concrete,x,y:.55,z,ry,surface:'concrete'});
 
-    /* Neon signage mounted inside the canyon (panel + emissive face, shootable) */
-    const sign=(mat,x,z,ry,{w=2.6,h=1.3,y=1.5,collide=true}={})=>{
+    /* Neon signage (panel + emissive face, shootable). Wall-mounted panels are positioned
+       in the container's local frame: rear face = corrugation peak + 3 cm, same yaw. */
+    const sign=(mat,x,z,ry,{w=2.6,h=1.3,y=1.5,collide=true,name='neon-sign-back'}={})=>{
       const back=new THREE.Mesh(new THREE.BoxGeometry(w+.14,h+.14,.12),charcoal);
-      back.name='neon-sign-back';back.position.set(x,y,z);back.rotation.y=ry;
+      back.name=name;back.position.set(x,y,z);back.rotation.y=ry;
       back.castShadow=true;back.userData.surface='metal';
       world.add(back);shootStatics.push(back);
       const face=new THREE.Mesh(new THREE.PlaneGeometry(w,h),mat);
-      face.name='neon-sign-face';face.position.set(x+Math.sin(ry)*.07,y,z+Math.cos(ry)*.07);
-      face.rotation.y=ry;
-      face.userData.surface='metal';
+      face.name=name+'-face';face.position.set(x+Math.sin(ry)*.07,y,z+Math.cos(ry)*.07);
+      face.rotation.y=ry;face.userData.surface='metal';face.userData.visualOnly=true;
       world.add(face);shootStatics.push(face);
+      if(!collide)back.userData.visualOnly=true; // pole/wall-mounted panel: support owns collision
       if(collide){
         const cw=(w+.14)*.5,cd=.06,hx=Math.abs(Math.cos(ry))*cw+Math.abs(Math.sin(ry))*cd,hz=Math.abs(Math.sin(ry))*cw+Math.abs(Math.cos(ry))*cd;
         colliders.push({x,z,w:w+.14,d:.12,ry,minX:x-hx,maxX:x+hx,minZ:z-hz,maxZ:z+hz,bottom:y-h*.5-.07,top:y+h*.5+.07});
       }
+      return back;
     };
-    sign(M.neonDock,-1.3,-13,Math.PI/2-.25);   // west wall, tilted into the street
-    sign(M.neonCargo,3.35,1.8,-Math.PI/2+.25);   // east wall, tilted into the street
-    sign(M.neonDock,10,-13.3,-.04,{y:1.5});     // north yard stack, facing down the street
+    const mountSign=(mat,box,face,y,name)=>{
+      const targetRy=box.rotation.y;
+      // Panel local +z is always the artwork side; for a '-z' container face it must point
+      // outward too, so the panel yaw is target yaw + π (this is what the old east sign got wrong).
+      const panelRy=face==='+z'?targetRy:targetRy+Math.PI;
+      const normal=new THREE.Vector3(0,0,face==='+z'?1:-1).applyAxisAngle(new THREE.Vector3(0,1,0),targetRy);
+      const halfDepth=box.geometry.parameters.depth*.5;
+      const centre=box.position.clone().addScaledVector(normal,halfDepth+.09); // 3 cm wave + 6 cm half plate
+      const back=sign(mat,centre.x,centre.z,panelRy,{y,collide:false,name});
+      back.userData.mount={type:'container-face',target:box,face,wave:.03,plate:.12,panelRy};
+      back.userData.visualOnly=true; // container owns collision; panel remains in LOS
+      return back;
+    };
+    mountSign(M.neonDock,westNorth,'+z',1.3,'mounted-sign-west');
+    mountSign(M.neonCargo,eastMid,'-z',1.3,'mounted-sign-east');
+    mountSign(M.neonDock,northLower,'+z',1.3,'mounted-sign-north');
     {
       const px=-6,pz=-16.5,ry=Math.atan2(6,16.5);
       const pole=new THREE.Mesh(new THREE.CylinderGeometry(.09,.12,4.4,8),M.metal);
@@ -704,23 +845,27 @@ const LAYOUTS={
     /* Floodlight masts */
     const mast=(x,z,flicker)=>{
       const pole=new THREE.Mesh(new THREE.CylinderGeometry(.14,.2,7.2,8),M.metal);
-      pole.position.set(x,3.6,z);pole.castShadow=true;
+      pole.name='floodlight-pole';pole.position.set(x,3.6,z);pole.castShadow=true;
       pole.userData.surface='metal';
       world.add(pole);shootStatics.push(pole);
       const head=new THREE.Mesh(new THREE.BoxGeometry(1.6,.3,.5),M.metal);
-      head.position.set(x,7,z);world.add(head);
+      head.name='floodlight-head';head.userData.visualOnly=true;
+      head.position.set(x,7.35,z);world.add(head); // bottom = pole top 7.2
       for(const sd of[-1,1]){
         const bulb=new THREE.Mesh(new THREE.SphereGeometry(.13,8,8),new THREE.MeshBasicMaterial({color:0xdcecff}));
-        bulb.position.set(x+sd*.55,6.82,z+.1);
+        bulb.name='floodlight-bulb';bulb.userData.visualOnly=true;
+        bulb.position.set(x+sd*.55,7.07,z+.1); // top = head bottom 7.2
         world.add(bulb);ownMats.push(bulb.material);
       }
       const light=new THREE.PointLight(0xbfd4ff,34,20,2);
-      light.position.set(x,6.7,z);
+      light.position.set(x,7.17,z);
       world.add(light);
       colliders.push({minX:x-.4,maxX:x+.4,minZ:z-.4,maxZ:z+.4,top:7.2});
       if(flicker)worldAnim.push(t=>{light.intensity=30+(Math.sin(t*13)>.86?-16:0)+Math.sin(t*2.1)*3;});
     };
-    mast(-14,8,true);mast(12,-2,false);
+    // East mast moved 20 cm west: its 0.8 m AABB overlapped the (13,-1) crate tier by
+    // 15 cm even though the pole was 1.4 m from the crate centre.
+    mast(-14,8,true);mast(11.8,-2,false);
 
     /* Gantry crane silhouette parked east of the yard */
     {
@@ -728,15 +873,17 @@ const LAYOUTS={
       const legGeo=new THREE.BoxGeometry(1.2,16,1.2);
       for(const [dx,dz] of [[-9,-3],[9,-3],[-9,3],[9,3]]){
         const leg=new THREE.Mesh(legGeo,M.metal);
-        leg.position.set(cx+dx,8,cz+dz);leg.castShadow=true;
+        leg.name='gantry-leg';leg.position.set(cx+dx,8,cz+dz);leg.castShadow=true;
         world.add(leg);
         colliders.push({minX:cx+dx-.8,maxX:cx+dx+.8,minZ:cz+dz-.8,maxZ:cz+dz+.8,top:16});
       }
-      const beam=new THREE.Mesh(new THREE.BoxGeometry(26,1.6,2.4),M.metal);
-      beam.position.set(cx,16.4,cz);beam.castShadow=true;
+      // 7.2 m depth covers both leg rows (z -19.6..-12.4), so the beam actually lands on
+      // all four legs instead of floating between two 2.4 m-wide rows.
+      const beam=new THREE.Mesh(new THREE.BoxGeometry(26,1.6,7.2),M.metal);
+      beam.name='gantry-beam';beam.userData.visualOnly=true;beam.position.set(cx,16.8,cz);beam.castShadow=true; // bottom = leg top 16
       world.add(beam);
       const trolley=new THREE.Mesh(new THREE.BoxGeometry(2,1.2,1.6),M.droneDark);
-      trolley.position.set(cx+4,15.2,cz);world.add(trolley);
+      trolley.name='gantry-trolley';trolley.userData.visualOnly=true;trolley.position.set(cx+4,15.4,cz);world.add(trolley); // top = beam bottom 16
     }
 
     /* Dark skyline with blinking rooftop beacons */
@@ -773,6 +920,32 @@ const LAYOUTS={
         world.add(pd);
       }
     }
+
+    /* v1.14 cover pass: the main street was a 26 m shooting gallery. A staggered crossing
+       container splits the lane, the dock office gives the west yard a climbable vantage,
+       and jersey twins slow the north push.
+       Climb tiers are h=1.10: the discrete jump integration tops out at 1.11 m at 60 fps,
+       a 1.15 crate is 4 cm out of reach on EVERY frame rate. */
+    // Crossing barrier mid-street (slab wall: split the lane, jump-up peek platform).
+    // Kept out of the street's jersey barriers (1,-6) / (1,-13) and the canyon walls.
+    addBox(world,shootStatics,colliders,{w:2.44,h:2.2,d:3,mat:charcoal,x:1.2,y:1.1,z:-9.4,ry:.06,surface:'metal'});
+    // Step box to climb the wall. Sits in the 1.27 m gap between the crossing wall and the
+    // (5,-12) container stack, ry 0 so its corners clear both; at (2.8,-12.5) it clipped the
+    // jersey at (1,-13), at (3.8,-12.4) it ran into the container.
+    addBox(world,shootStatics,colliders,{w:1.15,h:1.1,d:1.15,mat:M.wood,x:3.14,y:.55,z:-11.5,surface:'wood',collide:true}); // step box to climb the wall
+    // Dock office cabin in the west yard (climbable crate tier up to its roof); crate2
+    // leans clear of the cabin AABB (same-height collider overlap reads as a seam)
+    addBox(world,shootStatics,colliders,{w:3,h:2.2,d:2.4,mat:seaBlue,x:-17.5,y:1.1,z:9,ry:.2,surface:'metal'});
+    // Both tiers shifted 20 cm south: they sat 9 cm / 4 cm inside the cabin's AABB.
+    // The climb-to-roof gap stays <10 cm; the (-14,8) mast keeps a 11 cm clearance.
+    addBox(world,shootStatics,colliders,{w:1.15,h:1.1,d:1.15,mat:M.wood,x:-15.2,y:.55,z:6.8,ry:-.2,surface:'wood'});
+    addBox(world,shootStatics,colliders,{w:1.15,h:1.1,d:1.15,mat:M.wood,x:-15.2,y:1.65,z:6.8,ry:.1,surface:'wood',collide:true});
+    // Jersey speed bumps at the street mouths: one at the north bend (off-centre, keeps a
+    // ≥2 m lane), one at the south mouth — they slow pushes, never seal the street.
+    // North one moved to (0.5,-15.9): at (-1.15,-14.8) it ran into the tilted neon-sign
+    // backing plate at (-1.3,-13) and the west-wall box at (-3,-13).
+    addBox(world,shootStatics,colliders,{w:2.2,h:1.1,d:1.1,mat:M.concrete,x:0.5,y:.55,z:-15.9,ry:.12,surface:'concrete'});
+    addBox(world,shootStatics,colliders,{w:2.2,h:1.1,d:1.1,mat:M.concrete,x:1.6,y:.55,z:-2.2,ry:.25,surface:'concrete'});
 
     lamp(ctx,-10,13,.7);lamp(ctx,9,3,2.4);
   },
@@ -842,8 +1015,11 @@ const LAYOUTS={
         if(inBridge(x,z,1.15))continue;
         if(archPillars.some(p=>Math.hypot(x-p.x,z-p.z)<2.15))continue;
         if(Math.hypot(x+2,z+22)<2.1||Math.hypot(x-7,z+20)<2.1)continue;
-        // Circumradius is .80 m; 1.65 m centre spacing guarantees separate rotated boxes.
-        if(bankCenters.some(p=>Math.hypot(x-p.x,z-p.z)<1.65))continue;
+        // Keep the northern supply container's AABB clear of the last river bend.
+        if(Math.hypot(x+11,z-19)<4.6)continue;
+        // Circumradius is .80 m; 1.95 m centre spacing also clears the AABBs of
+        // differently-rotated neighbours (1.65 m left several 3–46 cm overlaps).
+        if(bankCenters.some(p=>Math.hypot(x-p.x,z-p.z)<1.95))continue;
         bankCenters.push({x,z});
         addBox(world,shootStatics,colliders,{w:1.25,h:1,d:1,mat:M.column,x,y:.5,z,ry,surface:'concrete'});
       }
@@ -886,12 +1062,14 @@ const LAYOUTS={
         col.castShadow=col.receiveShadow=true;
         col.userData.surface='concrete';
         world.add(col);shootStatics.push(col);
-        colliders.push({minX:x-1,maxX:x+1,minZ:z-1,maxZ:z+1,bottom:0,top:h});
+        colliders.push({x,z,w:2,d:2,ry:col.rotation.y,minX:x-1,maxX:x+1,minZ:z-1,maxZ:z+1,bottom:0,top:h});
       }
     };
-    cluster(10,-8,[[0,0,4.2],[2,-.2,3.1],[-1.8,1.3,2.4],[.5,-2.5,3.6]]);
-    cluster(15,2,[[0,0,3.4],[2,.5,2.3],[-1.9,-.7,2.9]]);
-    cluster(8,10,[[0,0,4.5],[2,-.6,2.8],[-1.8,1,3.2]]);
+    // Offset columns widened from 1.8/1.9 m to 2.05/2.15 m: their 2×2 box colliders
+    // overlapped the centre prism by 10–20 cm. The hex prisms themselves were clear.
+    cluster(10,-8,[[0,0,4.2],[2,-.2,3.1],[-2.05,1.3,2.4],[.5,-2.5,3.6]]);
+    cluster(15,2,[[0,0,3.4],[2,.5,2.3],[-2.15,-.7,2.9]]);
+    cluster(8,10,[[0,0,4.5],[2,-.6,2.8],[-2.05,1,3.2]]);
     cluster(18,-3,[[0,0,2.6],[2,.8,1.9]]);
 
     /* Northern gate pillars */
@@ -911,8 +1089,9 @@ const LAYOUTS={
       addBox(world,shootStatics,colliders,{w:1.15,h:1.15,d:1.15,mat:M.wood,x,y:.575,z,ry,surface:'wood'});
     }
 
-    /* Obsidian slabs */
-    for(const [x,z,s,ry] of [[5,-13,2.2,.4],[16,7,2.4,-.3],[-18,7,2,.9],[2.5,21,2,-.6]]){
+    /* Obsidian slabs. The (16,7) slab sat against the cluster(15,2) columns' rotated OBBs —
+       moved to (16,8.5) and shrunk to 2.0 so its bounds clear the columns' z reach (3.69). */
+    for(const [x,z,s,ry] of [[5,-13,2.2,.4],[16,8.5,2,-.3],[-18,7,2,.9],[2.5,21,2,-.6]]){
       const slab=new THREE.Mesh(new THREE.DodecahedronGeometry(1,0),M.obsidian);
       slab.name='obsidian-slab';slab.position.set(x,.6,z);
       slab.scale.set(s,s*.5,s*.7);
@@ -962,7 +1141,39 @@ const LAYOUTS={
       worldAnim.push(t=>{glowMat.color.setHSL(.05,1,.45+.12*Math.sin(t*1.3));});
     }
 
-    lamp(ctx,12,-12,.7);lamp(ctx,-13,14,2.4);
+    /* v1.14 cover pass: the east fields were open ground between column clusters. A second
+       basalt arch mid-east breaks the sight-line, a slab barrier walls the fissure field,
+       and pillar twins guard the northern gate approach. */
+    // Second basalt arch mid-east (mirrors the south one: two pillars + lintel).
+    // Collision follows the VISUAL opening: two pillar discs; no lintel collider — its
+    // underside (3.7) is far above head height, the old single slab filled the walk-through
+    // gap with an invisible wall while LOS baked the pillars as an openable.
+    {
+      for(const sd of[-1,1]){
+        const col=new THREE.Mesh(new THREE.CylinderGeometry(.8,1,3.8,7),M.column);
+        col.name='mid-basalt-arch-pillar';
+        col.position.set(11.5+sd*3.2,1.9,4);
+        col.castShadow=col.receiveShadow=true;
+        col.userData.surface='concrete';
+        world.add(col);shootStatics.push(col);
+        colliders.push({minX:11.5+sd*3.2-1,maxX:11.5+sd*3.2+1,minZ:3,maxZ:5,top:3.8});
+      }
+      const lintel=new THREE.Mesh(new THREE.BoxGeometry(8,1,1.7),M.column);
+      lintel.name='mid-basalt-arch-lintel';lintel.userData.visualOnly=true;
+      lintel.position.set(11.5,4.3,4);lintel.castShadow=true; // bottom = pillar top 3.8
+      lintel.userData.surface='concrete';
+      world.add(lintel);shootStatics.push(lintel);
+    }
+    // Slab barrier walling the fissure field (broken: two segments + a crouch gap),
+    // placed clear of the arch pillars to the east
+    addBox(world,shootStatics,colliders,{w:1.4,h:1.9,d:4.5,mat:M.column,x:6,y:.95,z:-1,ry:.1,surface:'concrete'});
+    addBox(world,shootStatics,colliders,{w:1.4,h:1.5,d:2.2,mat:M.column,x:8,y:.75,z:1.4,ry:-.35,surface:'concrete'});
+    // Northern gate-approach pillars (waist-high, shootable cover)
+    addBox(world,shootStatics,colliders,{w:1.4,h:1.1,d:1.4,mat:M.column,x:-6,y:.55,z:-19,surface:'concrete'});
+    addBox(world,shootStatics,colliders,{w:1.4,h:1.1,d:1.4,mat:M.column,x:12,y:.55,z:-17.5,ry:.3,surface:'concrete'});
+
+    // Lamp moved to (12.5,-12.5): at (11,-11) the pole landed inside the basalt column at (10.5,-10.5).
+    lamp(ctx,12.5,-12.5,.7);lamp(ctx,-13,14,2.4);
   },
 };
 

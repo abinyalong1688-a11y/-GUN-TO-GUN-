@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GUN TO GUN · 四地图穿模验收 Demo</title>
+<style>/*__CSS__*/</style>
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <div class="brand"><span class="dot"></span><strong>GUN TO GUN</strong><small>四地图穿模验收</small></div>
+    <nav id="maps" aria-label="地图选择"></nav>
+    <div class="tools">
+      <button data-act="top" title="快捷键 T">俯视</button>
+      <button data-act="persp" title="快捷键 P">透视</button>
+      <button data-act="colliders" title="快捷键 C">Collider</button>
+      <button data-act="markers" title="快捷键 M">修复点</button>
+      <button data-act="fog" title="快捷键 F">雾效</button>
+      <button data-act="tour" title="空格">自动巡览</button>
+      <button data-act="full" title="全屏">全屏</button>
+    </div>
+  </header>
+  <main id="viewport"></main>
+  <aside id="panel">
+    <div class="panel-head">
+      <span id="map-index">01</span>
+      <div><h1 id="map-name">Desert Outpost</h1><p id="map-sub">沙漠哨站 · Sunset</p></div>
+    </div>
+    <div id="audit" class="audit ok"><b>AABB 冲突</b><span>0</span></div>
+    <div class="stats">
+      <div><b id="stat-colliders">0</b><span>colliders</span></div>
+      <div><b id="stat-los">0</b><span>LOS statics</span></div>
+      <div><b id="stat-fixes">0</b><span>本轮修复点</span></div>
+    </div>
+    <div class="section-title">验收说明</div>
+    <p id="map-note" class="note"></p>
+    <div class="section-title">图例</div>
+    <div class="legend"><i class="cyan"></i>地面 collider <i class="purple"></i>overhead collider <i class="orange"></i>修复点</div>
+    <div class="section-title">操作</div>
+    <ul class="help">
+      <li><b>左键拖动</b> 旋转 · <b>滚轮</b> 缩放</li>
+      <li><b>右键拖动</b> 平移 · <b>1–4</b> 切图</li>
+      <li><b>T</b> 俯视 · <b>P</b> 透视 · <b>C</b> 碰撞线框</li>
+      <li><b>M</b> 修复点 · <b>F</b> 雾效 · <b>空格</b> 自动巡览</li>
+    </ul>
+    <details id="conflicts"><summary>冲突明细</summary><div id="conflict-list" class="conflict-list">无冲突</div></details>
+    <div class="panel-foot">检查模式：雾效默认关闭，亮度按地图微调；仅影响本 demo。</div>
+  </aside>
+  <div id="loading">正在生成程序化贴图与地图…</div>
+</div>
+<script>//__JS__</script>
+</body>
+</html>

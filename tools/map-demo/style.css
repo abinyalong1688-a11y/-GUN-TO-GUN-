@@ -1,0 +1,42 @@
+:root{color-scheme:dark;--bg:#080b11;--panel:rgba(12,16,23,.9);--line:rgba(255,255,255,.1);--txt:#edf2fa;--muted:#93a0b4;--amber:#f4b35f;--cyan:#62d9ff;--purple:#c986ff;--orange:#ff9a45;--ok:#67e2ad;--bad:#ff6868}
+*{box-sizing:border-box}
+html,body,#app{width:100%;height:100%;margin:0;overflow:hidden;background:var(--bg);font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif;color:var(--txt)}
+button{font:inherit}
+#app{display:grid;grid-template-rows:58px 1fr}
+#topbar{display:flex;align-items:center;gap:18px;padding:0 16px;background:#0b0f16;border-bottom:1px solid var(--line);z-index:10}
+.brand{display:flex;align-items:center;gap:9px;white-space:nowrap;letter-spacing:.06em}
+.brand strong{font-size:14px}.brand small{color:var(--muted);font-size:11px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--amber);box-shadow:0 0 14px #f4b35f88}
+#maps{display:flex;gap:6px;flex:1}
+#maps button{border:1px solid var(--line);background:#131923;color:var(--muted);padding:8px 12px;border-radius:8px;cursor:pointer;white-space:nowrap;font-size:12px}
+#maps button:hover{color:#fff;border-color:#ffffff33}
+#maps button.active{color:#fff;border-color:#f4b35f99;background:#2a2117;box-shadow:inset 0 -2px #f4b35f}
+.tools{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
+.tools button{border:1px solid var(--line);background:#131923;color:#cfd7e4;padding:7px 9px;border-radius:7px;cursor:pointer;font-size:11px}
+.tools button:hover{border-color:#ffffff44}.tools button.on{color:#fff;border-color:#62d9ff88;background:#123047}
+#viewport{position:relative;min-width:0;min-height:0}
+#viewport canvas{display:block;width:100%;height:100%;outline:none}
+#panel{position:absolute;top:18px;right:18px;width:286px;max-height:calc(100% - 36px);overflow:auto;padding:18px;border:1px solid var(--line);border-radius:14px;background:var(--panel);backdrop-filter:blur(16px);box-shadow:0 18px 60px #0008;z-index:5}
+.panel-head{display:flex;gap:12px;align-items:center}
+#map-index{font-size:34px;font-weight:800;color:var(--amber);line-height:1}
+#map-name{font-size:16px;margin:0 0 4px}#map-sub{font-size:11px;color:var(--muted);margin:0}
+.audit{margin-top:16px;padding:10px 12px;border-radius:9px;display:flex;align-items:center;justify-content:space-between;font-size:12px}
+.audit.ok{background:#123227;color:var(--ok);border:1px solid #67e2ad44}.audit.bad{background:#3a1719;color:var(--bad);border:1px solid #ff686844}
+.audit b{font-weight:600}.audit span{font-size:22px;font-weight:800}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:10px 0 18px}
+.stats div{background:#0d131d;border:1px solid var(--line);border-radius:8px;padding:9px 5px;text-align:center}
+.stats b{display:block;font-size:17px}.stats span{font-size:9px;color:var(--muted)}
+.section-title{font-size:10px;letter-spacing:.12em;color:#748197;text-transform:uppercase;margin:16px 0 7px}
+.note{font-size:11px;line-height:1.65;color:#c4cedd;margin:0}
+.legend{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:10px;color:var(--muted)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-left:5px}.legend i:first-child{margin-left:0}
+.cyan{background:var(--cyan)}.purple{background:var(--purple)}.orange{background:var(--orange)}
+.help{font-size:10px;line-height:1.8;color:var(--muted);padding-left:16px;margin:0}.help b{color:#dce5f2;font-weight:500}
+#conflicts{margin-top:16px;border-top:1px solid var(--line);padding-top:12px;font-size:11px;color:var(--muted)}
+#conflicts summary{cursor:pointer;color:#dce5f2}
+.conflict-list{max-height:170px;overflow:auto;margin-top:8px;font-family:Consolas,monospace;font-size:9px;line-height:1.6;white-space:pre-wrap;color:#ffb3a0}
+.panel-foot{margin-top:16px;padding-top:10px;border-top:1px solid var(--line);font-size:9px;line-height:1.6;color:#68758a}
+#loading{position:absolute;inset:58px 0 0;display:flex;align-items:center;justify-content:center;background:#080b11;color:var(--muted);font-size:13px;z-index:20;transition:opacity .25s}
+#loading.done{opacity:0;pointer-events:none}
+@media(max-width:1100px){.brand small{display:none}#panel{width:250px}.tools button{padding:6px}.tools button[data-act="full"]{display:none}}
+@media(max-width:760px){#topbar{gap:8px;padding:0 8px}.brand strong{display:none}#maps{overflow:auto}#maps button{padding:7px 9px}.tools{display:none}#panel{top:auto;bottom:10px;right:10px;left:10px;width:auto;max-height:42%;padding:12px}.stats{margin-bottom:8px}.help,.legend,.panel-foot{display:none}.note{font-size:10px}}

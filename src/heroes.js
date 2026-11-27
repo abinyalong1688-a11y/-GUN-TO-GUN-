@@ -22,7 +22,10 @@ export const HERO_DEFS={
   t:{label:`${_opT.name.en} · Rogue Mercenary`,hp:_opT.hp,speed:_botSpeed(_opT),gender:_opT.gender},
 };
 const FACTION_HEX={ct:'#7fd4ff',t:'#ff8a6a'};
-/* Bot combat style: Nova fires steady bursts, Rogue sprays hard */
+/* Bot combat style: Nova fires steady bursts, Rogue sprays hard.
+   NOTE: the live brains get their combat parameters from botConfig.getBotParams (difficulty ×
+   faction × operator identity — the Longbow operator carries SNIPER_OVERRIDES there). This
+   table is the pre-brain fallback only: _claimSpot reads it when a hero has no brain yet. */
 const BOT_PROFILE={
   ct:{burst:3,burstT:.13,pause:1.2,missK:1.0,dmgP:6,dmgH:12,range:[7,16],reaction:.25,coverBias:.6,flankBias:.3},
   t:{burst:5,burstT:.11,pause:1.5,missK:1.35,dmgP:9,dmgH:15,range:[6,13],reaction:.18,coverBias:.4,flankBias:.6},
@@ -265,8 +268,11 @@ export class HeroBot{
     if(!this.alive)return -1;
     if(this.netDriven){
       // Remote avatar: the victim's own client settles HP. Never mutate local HP here.
-      // `kind` lets the DO recompute the right weapon (grenades are not the equipped gun).
-      if(this.game.netMatch)this.game.netMatch.requestHit(this,n,fromName,headshot,{kind});
+      // `kind` names the damage source ('weapon' | 'frag' | {kind:'weapon',w:<rifleId>}) — the
+      // DO recomputes damage from it, so a host-simulated bot's hit carries ITS rifle, never
+      // the host player's currently-held gun.
+      const source=typeof kind==='object'?kind:{kind};
+      if(this.game.netMatch)this.game.netMatch.requestHit(this,n,fromName,headshot,source);
       return -1;
     }
     if(fromId)this._lastHitFrom=fromId;
@@ -366,6 +372,7 @@ export class HeroBot{
     this.alive=true;this.state='active';this.deathT=0;this.hp=this.maxHp;
     this.animState='idle';this.animT=0;this.recoilKick=0;this.reloadT=0;this.hitT=0;
     this.ammo=this.magSize;this.burst=0;this.flashT=0;this._lowBarked=false;this.blindT=0;
+    this._lastTargetId=null;this._offA=null; // drop any claimed stand-off point from the last life
     this._restoreFlash(); // the killing hit's white flash is never restored in the death branch; restore it on respawn or the bot stays white
     this.coverTarget=null;this.coverT=0;
     if(this.brain)this.brain.reset();
@@ -782,21 +789,67 @@ export class HeroBot{
      ring around the target; a teammate that already claims a nearby point pushes the roll
      elsewhere, so two bots never converge on the same spot. Re-rolled on every target change. */
   _claimSpot(){
-    const P=BOT_PROFILE[this.faction];
+    /* Stand-off distance follows the operator's real engagement band. The brain's preset is
+       the single truth (a Longbow operator holds 10–15 m here, not the faction SMG's 6–9.5);
+       BOT_PROFILE stays as the fallback for brains built before loadout sync (tests). */
+    const P=(this.brain&&this.brain.baseParams&&Array.isArray(this.brain.baseParams.range))
+      ?this.brain.baseParams:BOT_PROFILE[this.faction];
     this.holdD=P.range[0]+Math.random()*(P.range[1]-P.range[0])*.5;
     /* Best of up to 8 draws: the point furthest from every teammate's point on this target, taken
        at once as soon as one is 1.2 m clear of all of them */
-    let bestA=0,bestR=1.2,bestD=-1;
+    let bestA=0,bestR=1.2,bestD=-1,bestH=null; // bestH = the closest teammate to the best draw
     for(let i=0;i<8;i++){
       const a=Math.random()*Math.PI*2,r=1.2+Math.random()*.8;
       const x=Math.cos(a)*r,z=Math.sin(a)*r;
-      let d=Infinity;
+      let d=Infinity,near=null;
       for(const h of this.game.heroes.list){
         if(h===this||h.team!==this.team||!h.alive||h._lastTargetId!==this._lastTargetId||h._offA==null)continue;
-        d=Math.min(d,Math.hypot(Math.cos(h._offA)*h._offR-x,Math.sin(h._offA)*h._offR-z));
+        const dj=Math.hypot(Math.cos(h._offA)*h._offR-x,Math.sin(h._offA)*h._offR-z);
+        if(dj<d){d=dj;near=h;}
       }
       if(d>=1.2){this._offA=a;this._offR=r;return;}
-      if(d>bestD){bestD=d;bestA=a;bestR=r;}
+      if(d>bestD){bestD=d;bestA=a;bestR=r;bestH=near;}
+    }
+    /* All 8 draws collide: fall back to the best one, but guarantee separation — slide it
+       along the ring away from the nearest claim until it clears every teammate by 1.3 m
+       (the RNG can converge two bots onto the same corner; the offset walk cannot). */
+    const clearOfAll=(a,r)=>{
+      const x=Math.cos(a)*r,z=Math.sin(a)*r;
+      for(const h of this.game.heroes.list){
+        if(h===this||h.team!==this.team||!h.alive||h._lastTargetId!==this._lastTargetId||h._offA==null)continue;
+        if(Math.hypot(Math.cos(h._offA)*h._offR-x,Math.sin(h._offA)*h._offR-z)<1.3)return false;
+      }
+      return true;
+    };
+    if(bestH){
+      const hx=Math.cos(bestH._offA)*bestH._offR,hz=Math.sin(bestH._offA)*bestH._offR;
+      const bx=Math.cos(bestA)*bestR,bz=Math.sin(bestA)*bestR;
+      const away=Math.atan2(bz-hz,bx-hx); // direction from the nearest claim to the draw
+      // Walk the angle outward in both directions (s<8: s=8 would land back on the known
+      // colliding draw), keeping the radius, until all claims clear.
+      for(let s=1;s<8;s++){
+        if(clearOfAll(away+s*Math.PI/4,bestR)){bestA=away+s*Math.PI/4;break;}
+        if(clearOfAll(away-s*Math.PI/4,bestR)){bestA=away-s*Math.PI/4;break;}
+      }
+    }
+    // Last resort 1: fine-grained angle sweep around the best draw.
+    if(!clearOfAll(bestA,bestR)){
+      for(let s=0;s<24;s++){
+        const a=bestA+(s%2?1:-1)*Math.ceil(s/2)*Math.PI/12;
+        if(clearOfAll(a,bestR)){bestA=a;break;}
+      }
+    }
+    // Last resort 2: the whole ring band is saturated (rare: >5 teammates on one target).
+    // Widen the radius — the outer ring geometrically holds more 1.3 m-separated points
+    // (≈9 at r 2.4 vs ≈5 at r 1.2) — sweeping angle×radius until a clear slot exists.
+    if(!clearOfAll(bestA,bestR)){
+      outer:
+      for(const r of[1.8,2.4,3.0]){
+        for(let s=0;s<24;s++){
+          const a=bestA+s*Math.PI/12;
+          if(clearOfAll(a,r)){bestA=a;bestR=r;break outer;}
+        }
+      }
     }
     this._offA=bestA;this._offR=bestR;
   }
@@ -1019,6 +1072,21 @@ export class HeroBot{
       const hit=_losRay.intersectObjects(this.game.world&&this.game.world.losStatics||[],false)[0];
       end=from.clone().addScaledVector(dir,hit?Math.max(1,hit.distance):dist+4);
     }else end=aimPoint.clone();
+    // M-G whiz-by: a miss that passes close to the player gets the ear-feeling it lacks.
+    // The occlusion test is muzzle→PLAYER (the old muzzle→end check was always true: end is
+    // by construction the first cover hit, so the whole segment to it is clear).
+    if(miss&&target==='player'&&this.audio&&this.audio.whiz){
+      const pl=this.game.player.pos;
+      const proj=(pl.x-from.x)*dir.x+(pl.z-from.z)*dir.z; // player projected onto the shot line (2D; height is not what makes a whiz)
+      if(proj>1&&proj<dist+4){ // only while the round actually passes the player, not long after
+        const cx=from.x+dir.x*proj,cz=from.z+dir.z*proj;
+        const near=Math.hypot(pl.x-cx,pl.z-cz);
+        if(near<2.6&&this.game._los&&this.game._los(from,{x:pl.x,y:pl.y+1.2,z:pl.z})){
+          this.audio.whiz(near);
+          if(this.game.shake!=null)this.game.shake=Math.max(this.game.shake,.06*(1-near/2.6)); // tiny flinch, no damage
+        }
+      }
+    }
     this.fx.tracer(from,dir,from.distanceTo(end));
     this.audio.botShot(this.game.player.pos.distanceTo(this.pos));
     this._shotT=this.game.time||0;
@@ -1027,7 +1095,11 @@ export class HeroBot{
       if(target==='player'){
         this.game.damagePlayerFromBot(P.dmgP,this.name,this.pos);
       }else{
-        target.takeDamage(P.dmgH,this.name,false,this.netId||this.name,'weapon',this.pos);
+        // source.w pins the weapon the SERVER recomputes damage from: without it a host-simulated
+        // bot hitting a remote human inherits the host player's currently-held gun (WEAPON_DMG
+        // would score an AK-wielding host's vulture at 115/hit instead of the rifle it carries).
+        target.takeDamage(P.dmgH,this.name,false,this.netId||this.name,
+          {kind:'weapon',w:this.def&&this.def.rifle},this.pos);
         this.game.botDamageFx(target,aimPoint);
       }
     }

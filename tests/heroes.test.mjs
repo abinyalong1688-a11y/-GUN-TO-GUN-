@@ -133,7 +133,7 @@ test('firing line: a teammate in the way holds fire, then fire resumes once the 
 
 /* ---- reaction / burst / reload ---- */
 test('reaction time gates the first shot and scales with difficulty',()=>{
-  for(const [diff,expect] of [['normal',.28],['hard',.13],['easy',.55]]){
+  for(const [diff,expect] of [['normal',.24],['hard',.13],['easy',.55]]){
     const g=makeGame({difficulty:diff});
     const a=makeBot(g,{team:'A',op:'frost',name:'A1'});
     makeBot(g,{team:'B',op:'raven',name:'B1',pos:[0,0,-8]});
@@ -204,7 +204,7 @@ test('accuracy: misses deal no damage; smoke inflates the miss chance across its
   const b=makeBot(g,{team:'B',op:'raven',name:'B1',pos:[0,0,-10]});
   a.update(.016,NOW+=.016,()=>true);
   a.reactionT=0;a.fireT=0;
-  // clean 10 m shot: base .28 + fresh-aim .16 (+ a little while strafing) < .6 → hit
+  // clean 10 m shot: base .24 + fresh-aim .12 (+ a little while strafing) < .6 → hit
   withRand(.6,()=>step(a,1));
   assert.equal(b.maxHp-b.hp,12,'a clean 10 m shot should hit, hp drop '+(b.maxHp-b.hp));
   b.hp=b.maxHp;
@@ -416,9 +416,9 @@ test('switching targets re-opens the reaction window (no snap-fire on the new ta
   b1.takeDamage(9999,'X');           // B1 dies → the target switches to B2
   a.fireT=0;
   const t0=g.fx.tracers.length;
-  step(a,15); // 15 frames ≈ .24 s — inside the re-opened reaction window (.28)
+  step(a,15); // 15 frames ≈ .24 s — inside the re-opened reaction window (.24)
   assert.equal(g.fx.tracers.length,t0,'no shot right after switching targets');
-  assert.ok(a.reactionT>0&&a.reactionT<=.28,'the reaction window should re-arm, got '+a.reactionT);
+  assert.ok(a.reactionT>0&&a.reactionT<=.24,'the reaction window should re-arm, got '+a.reactionT);
   step(a,4); // the window expires on the 19th frame
   assert.equal(g.fx.tracers.length,t0+1,'fire resumes once the window expires');
 });

@@ -273,6 +273,18 @@ export class AudioFX{
     this._noise(t,.06,v,{freq:1300,q:.6,slide:500});
     this._tone(t,.05,v*.7,{freq:150,end:60,type:'triangle'});
   }
+  /* Bullet whiz-by: a round passed within `near` metres of the player. The doppler-like
+     falling bandpass sweep sells the "it went past my ear" feeling that near-misses lack.
+     Throttled to one per 150 ms: a 5-round spray grazing past must not stack five sweeps. */
+  whiz(dist=1){
+    if(!this.ok)return;
+    const t=this.ctx.currentTime;
+    if(this._whizAt&&t-this._whizAt<.15)return;
+    this._whizAt=t;
+    const v=Math.max(.08,.55-Math.min(1,dist/3)*.45);
+    this._noise(t,.14,v,{freq:3600,q:2.4,slide:700});
+    this._tone(t,.05,v*.4,{freq:2600,end:1100,type:'sine'});
+  }
   hammer(dist=5){
     if(!this.ok)return;const t=this.ctx.currentTime;
     const v=Math.max(.2,.9-Math.min(1,dist/30)*.6);

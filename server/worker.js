@@ -400,7 +400,11 @@ export class Room {
     const oy = sp.y + ((sp.flags & PEER_FLAGS.CROUCH) ? 1.0 : 1.6);
     const tx = tp.x, tz = tp.z;
     if (!this.state.worldGeo) return { ok:false };   // no trusted map yet — refuse, never guess
-    const ty = tp.y + (m.head ? 1.6 : 0.95);
+    // A crouched avatar's head is at +1.18 (the client applies a .42 crouch offset to hitSpheres);
+    // using the standing +1.6 here rejected every legitimate crouched headshot. The body claim
+    // already honours crouch below (0.72 vs 0.95) — the head path must too.
+    const crouch = (tp.flags & PEER_FLAGS.CROUCH) ? .42 : 0;
+    const ty = tp.y + (m.head ? 1.6 - crouch : .95 - crouch * .8);
     if (Math.hypot(tx - ox, ty - oy, tz - oz) > LOS_MAX_DIST) return { ok:false };
     // The client's hit spheres have a body radius of ~0.42 m, while a single centre-line LOS
     // check is a pixel test: legitimate torso shots at the edge of a wall corner were rejected.
