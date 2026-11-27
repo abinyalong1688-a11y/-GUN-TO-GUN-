@@ -101,3 +101,31 @@ test('MAP_HASHES matches the geometry world.js bakes for each shipped map', asyn
       `${key}: MAP_HASHES is stale — run node scripts/bake-map-hash.mjs --write`);
   }
 });
+
+/* End-to-end hash tripwire: the DO must hash the RAW wire upload (integer centimetres, the
+   exact representation bake-map-hash.mjs hashes). There was a period where the worker
+   converted to metres FIRST and then hashed — no upload could ever match, worldGeo stayed
+   null and every online gun hit was dropped with "no trusted map yet". */
+test('MAP_HASHES: a worker-side raw upload would validate (hash before unit conversion)', async () => {
+  const THREE = await import('three');
+  const { buildWorld } = await import('../src/world.js');
+  const { MAP_HASHES, mapHashValue } = await import('../src/netProtocol.js');
+  const { Room } = await import('../server/worker.js');
+  const mk = () => new THREE.MeshBasicMaterial();
+  const assets = {
+    mats: new Proxy({}, { get: mk }), ground: new Proxy({}, { get: mk }),
+    containers: new Proxy({}, { get: mk }), tex: new Proxy({}, { get: () => new THREE.Texture() }),
+  };
+  const room = Object.create(Room.prototype);
+  for (const key of ['desert','snow','snowtown','ember']) {
+    const w = buildWorld(new THREE.Scene(), assets, 'high', key);
+    assert.ok(room.validateWorldRaw(w.losGeo), `${key}: the baked geometry must pass the wire validation`);
+    // The uploaded boxes ARE the baked geometry — hash the raw upload like the DO now does.
+    assert.equal(hashGeo(w.losGeo), mapHashValue(MAP_HASHES[key]),
+      `${key}: the raw upload hash must match MAP_HASHES (hash BEFORE the cm→m conversion)`);
+    // And the converted copy must still be a faithful metre representation for the LOS engine.
+    const metres = room.sanitizeWorld(w.losGeo);
+    assert.equal(metres.length, w.losGeo.length);
+    assert.equal(Math.round(metres[0][1] * 100), w.losGeo[0][1], 'cm→m round-trips');
+  }
+});

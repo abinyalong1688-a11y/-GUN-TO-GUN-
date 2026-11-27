@@ -46,6 +46,7 @@ export class Room {
   constructor(ctx, env) {
     this.ctx = ctx; this.env = env;
     this.pending = new Map();     // id → {at, p} latest quantised snapshot (hit origin / liveness)
+    this.botShots = {};           // botId → {by, t} last human hit per bot (kill credit window)
     // Hibernation: restore the authoritative room state before any event is delivered.
     ctx.blockConcurrencyWhile(async () => {
       const stored = await ctx.storage.get('room');
@@ -199,14 +200,18 @@ export class Room {
         if (!at.joined || this.state.phase !== 'live' || at.id !== this.state.hostId) return;
         if (typeof m.map !== 'string' || m.map !== this.state.map || !Array.isArray(m.boxes)) return;
         if (m.boxes.length < 1 || m.boxes.length > WORLD_MAX_BOXES) return;
-        const boxes = this.sanitizeWorld(m.boxes);
-        if (!boxes) return;
+        if (!this.validateWorldRaw(m.boxes)) return;
+        // Hash the upload in its RAW wire units (integer centimetres) — exactly what
+        // scripts/bake-map-hash.mjs baked. (Sanitizing used to convert to metres BEFORE the
+        // hash, so no upload could ever match MAP_HASHES and every gun hit online was
+        // dropped with `no trusted map yet`.)
         const expected = MAP_HASHES[m.map];
-        if (!expected || hashGeo(boxes) !== mapHashValue(expected)) {
+        if (!expected || hashGeo(m.boxes) !== mapHashValue(expected)) {
           at.worldMismatch = (at.worldMismatch || 0) + 1;
           this.attachment(ws, at);
           return;                                  // untrusted geometry: ignore it
         }
+        const boxes = this.sanitizeWorld(m.boxes); // metres, for the LOS engine
         if (!this.state.worldGeo || this.state.worldMap !== m.map) {
           this.state.worldGeo = boxes;
           this.state.worldMap = m.map;
@@ -348,9 +353,11 @@ export class Room {
       const host = this.wsOf(this.state.hostId);
       if (host) this.send(host, { t:S.HIT, bot:m.target, ...payload });
       // Remember who shot this bot: C.BOT_DEATH is only accepted for a shooter that hit it.
-      const shots = (at.botShots = at.botShots || {});
+      // (The old code called this.attachment(ws, at) with a `ws` that is out of scope here —
+      // a ReferenceError on every human→bot hit — and the shots were stored on at.botShots
+      // while creditBotKiller read this.botShots, so remote bot kills were never credited.)
+      const shots = (this.botShots = this.botShots || {});
       shots[m.target] = { by:at.id, t:Date.now() };
-      this.attachment(ws, at);
     }
   }
 
@@ -429,21 +436,32 @@ export class Room {
     return dmg > 0 ? { ok:true, dmg } : { ok:false };
   }
 
-  /* Validate a client geometry upload: box [0,…×8] or cylinder [1,…×6], integer centimetres
-     (ry in milliradians), finite, sane bounds. Converts to metres for the LOS engine. */
+  /* Malformed-input guard for a C.WORLD upload: box [0,…×8] or cylinder [1,…×6], integer
+     centimetres (ry in milliradians), finite, sane bounds. Pure check — no conversion. */
+  validateWorldRaw(raw) {
+    for (const g of raw) {
+      if (!Array.isArray(g) || (g[0] !== 0 && g[0] !== 1)) return false;
+      const n = g[0] === 0 ? 8 : 6;
+      if (g.length !== n) return false;
+      for (let i = 0; i < n; i++) if (typeof g[i] !== 'number' || !Number.isFinite(g[i])) return false;
+      if (Math.abs(g[1]) > 10000 || Math.abs(g[2]) > 10000) return false;   // 100 m in cm
+      if (g[0] === 0) {
+        if (g[3] < 0 || g[4] < 0 || g[6] > g[7] || Math.abs(g[5]) > 6283) return false;
+      } else {
+        if (g[3] < 0 || g[4] > g[5]) return false;
+      }
+    }
+    return true;
+  }
+
+  /* Convert validated wire geometry (integer centimetres / milliradians) to the metre-based
+     primitives the LOS engine expects: box [0,…×8] or cylinder [1,…×6]. */
   sanitizeWorld(raw) {
     const out = [];
     for (const g of raw) {
-      if (!Array.isArray(g) || (g[0] !== 0 && g[0] !== 1)) return null;
-      const n = g[0] === 0 ? 8 : 6;
-      if (g.length !== n) return null;
-      for (let i = 0; i < n; i++) if (typeof g[i] !== 'number' || !Number.isFinite(g[i])) return null;
-      if (Math.abs(g[1]) > 10000 || Math.abs(g[2]) > 10000) return null;   // 100 m in cm
       if (g[0] === 0) {
-        if (g[3] < 0 || g[4] < 0 || g[6] > g[7] || Math.abs(g[5]) > 6283) return null;
         out.push([0, g[1]/100, g[2]/100, g[3]/100, g[4]/100, g[5]/1000, g[6]/100, g[7]/100]);
       } else {
-        if (g[3] < 0 || g[4] > g[5]) return null;
         out.push([1, g[1]/100, g[2]/100, g[3]/100, g[4]/100, g[5]/100]);
       }
     }
@@ -470,6 +488,7 @@ export class Room {
     const h = this.state.humans[id];
     if (!h) return;
     h.connected = false;
+    h.disconnectedAt = Date.now();            // pruneGone() reclaims the seat after the grace window
     this.pending.delete(id);                  // never broadcast stale snapshots from a dropped peer
     if (this.seenHit) delete this.seenHit[id];
     if (this.seenBotDeath) delete this.seenBotDeath[id];
@@ -554,10 +573,14 @@ export class Room {
       return this.endMatch(null, 'noHost');
     }
     const r = R.tick(this.state, now);
+    // Reclaim seats left disconnected past the grace window (capacity counts live seats; see join()).
+    const beforePrune = Object.keys(this.state.humans).length;
+    R.pruneGone(this.state, now);
+    const pruned = Object.keys(this.state.humans).length < beforePrune;
     if (this.state.phase === 'live') {
       this.broadcast({ t:S.TICK, st:Date.now()/1000, left:r.left });
       // Periodic full room resync fixes any score drift from a dropped S.KILL frame.
-      if ((this._tickN = (this._tickN || 0) + 1) % 5 === 0) this.broadcastRoom();
+      if ((this._tickN = (this._tickN || 0) + 1) % 5 === 0 || pruned) this.broadcastRoom();
       await this.ctx.storage.setAlarm(Date.now()+1000);
     } else if (r.end === 'time') {
       /* The clock ran out without anyone reaching the win line: the LEADER wins. Passing null

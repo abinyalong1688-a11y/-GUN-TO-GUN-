@@ -16,6 +16,24 @@ export function createRoom(code, now) {
 
 const count = (s, team) => Object.values(s.humans).filter(h => h.team === team).length;
 const slots = s => (s.teamSize || LIMITS.teamSize);
+// How long a disconnected seat keeps its place before a newcomer may take over the room slot.
+// (The seat itself stays until the room ends so a reconnect within the window reclaims it.)
+const DISCONNECT_GRACE_MS = 60_000;
+
+/* Seats that have been offline longer than the grace window no longer count against capacity.
+   They are pruned for good in pruneGone(), which the DO calls from its periodic alarm. */
+export function staleSeats(s, now) {
+  return Object.values(s.humans).filter(h =>
+    !h.connected && h.disconnectedAt && now - h.disconnectedAt > DISCONNECT_GRACE_MS);
+}
+
+export function pruneGone(s, now) {
+  for (const h of staleSeats(s, now)) {
+    delete s.humans[h.id];
+    s.order = s.order.filter(x => x !== h.id);
+    if (s.hostId === h.id) s.hostId = null;   // promoteHost() runs in the DO's drop path already
+  }
+}
 
 export function uniqueName(s, name) {
   const base = sanitizeName(name) || 'Player';
@@ -56,14 +74,28 @@ export function join(s, { id, name, op, camo, token }, now) {
       delete s.humans[prev.id];
       s.order = s.order.map(x => x === prev.id ? id : x);
       if (s.hostId === prev.id) s.hostId = id;
-      s.humans[id] = { ...prev, id, connected:true };
+      s.humans[id] = { ...prev, id, connected:true, disconnectedAt:0 };
       return { ok:true, team:prev.team, rejoin:true };
     }
   }
+  // Capacity counts LIVE seats only: disconnected seats past the grace window are pruned here
+  // so a room can never fill up permanently with ghosts (the old code counted every seat ever
+  // created — after 10 different visitors the room was "full" for good).
+  pruneGone(s, now);
   if (Object.keys(s.humans).length >= LIMITS.maxHumans) return { err:'full' };
   // Auto-balance: join the smaller team; a full team cannot be joined even if the other has room.
-  const team = count(s, 'A') <= count(s, 'B') ? 'A' : 'B';
-  if (count(s, team) >= slots(s)) return { err:'full' };
+  // A long-gone seat on the smaller team may be evicted earliest-first to make room.
+  let team = count(s, 'A') <= count(s, 'B') ? 'A' : 'B';
+  if (count(s, team) >= slots(s)) {
+    const gone = staleSeats(s, now).filter(h => h.team === team)
+      .sort((a, b) => a.disconnectedAt - b.disconnectedAt)[0];
+    if (gone) {
+      delete s.humans[gone.id];
+      s.order = s.order.filter(x => x !== gone.id);
+      team = count(s, 'A') <= count(s, 'B') ? 'A' : 'B';
+      if (count(s, team) >= slots(s)) return { err:'full' };
+    } else return { err:'full' };
+  }
   s.humans[id] = {
     id, name:uniqueName(s, name), op, camo, team, ready:false,
     connected:true, joinedAt:now, token:token || '',
@@ -78,6 +110,7 @@ export function setSide(s, id, team) {
   if (s.phase !== 'lobby') return { err:'locked' };
   if (team !== 'A' && team !== 'B') return { err:'badTeam' };
   if (h.team === team) return { ok:true };
+  pruneGone(s, Date.now());
   if (count(s, team) >= slots(s)) return { err:'teamFull' };
   h.team = team; return { ok:true };
 }

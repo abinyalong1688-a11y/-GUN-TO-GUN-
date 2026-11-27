@@ -183,3 +183,24 @@ test('dm: 10 seats, first to 25 kills, bots fill the remainder',()=>{
   R.start(bot,NOW,{});
   assert.equal(bot.bots.length,9,'a solo host gets 9 bots (5+5 minus its own seat)');
 });
+
+/* Regression: capacity used to count every seat ever created, so a room that had seen 10
+   different visitors was permanently "full". Disconnected seats must be pruned after the
+   grace window (the DO calls pruneGone() from its alarm and from join()). */
+test('seats left disconnected past the grace window are reclaimed (room never fills up for good)',()=>{
+  const s=room();
+  for(let i=0;i<10;i++)R.join(s,{id:'v'+i,name:'V'+i},NOW+i);
+  assert.equal(R.join(s,{id:'new'},NOW).err,'full','live room is full');
+  // everyone leaves
+  for(const id of Object.keys(s.humans)){s.humans[id].connected=false;s.humans[id].disconnectedAt=NOW;}
+  assert.equal(R.join(s,{id:'new'},NOW+59_000).err,'full','within the grace window the seats are still held');
+  assert.equal(R.join(s,{id:'new'},NOW+61_000).team,'A','after the grace window a newcomer gets in');
+  assert.equal(Object.keys(s.humans).length,1,'pruned down to the newcomer only');
+});
+
+test('join() prunes stale seats by itself, no alarm needed',()=>{
+  const s=room();
+  for(let i=0;i<10;i++)R.join(s,{id:'v'+i,name:'V'+i},NOW+i);
+  for(const id of Object.keys(s.humans)){s.humans[id].connected=false;s.humans[id].disconnectedAt=NOW-61_000;}
+  assert.ok(R.join(s,{id:'new'},NOW).ok,'a stale-full room accepts the newcomer directly');
+});

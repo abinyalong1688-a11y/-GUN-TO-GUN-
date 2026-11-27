@@ -44,3 +44,24 @@ test('validateHit: standing target keeps the original probe heights', () => {
   assert.equal(r.validateHit({id: 'shooter'}, {w: 'awp', target: 'victim', head: 1}).dmg, 230);
   assert.equal(r.validateHit({id: 'shooter'}, {w: 'deagle', target: 'victim', head: 0}).dmg, 53);
 });
+
+/* Regression: the bot branch of relayHit called this.attachment(ws, at) with a `ws` that is
+   out of scope there — a ReferenceError on EVERY human→bot hit — and stored the shot on
+   at.botShots while creditBotKiller read this.botShots, so remote bot kills were never
+   credited. */
+test('relayHit: a human hitting a BOT records the shot for kill credit and does not throw', () => {
+  const r = Object.create(Room.prototype);
+  r.state = { humans: {}, hostId: 'host', bots: [{ id: 'bA0' }] };
+  r.pending = new Map([['shooter', { at: 0, p: peer(0, 0, 10, alive) }]]);
+  const sent = [];
+  r.send = (ws, msg) => sent.push(msg);
+  r.wsOf = () => ({ ok: true });
+  r.attachment = () => {};
+  r.isBotId = Room.prototype.isBotId;
+  const at = { id: 'shooter' };
+  assert.doesNotThrow(() => r.relayHit(at, { target: 'bA0', w: 'm4a4', head: 0 }, 31));
+  assert.equal(sent.length, 1, 'the host receives the S.HIT bot proxy frame');
+  const t = (r.botShots || {})['bA0'];
+  assert.ok(t && t.by === 'shooter', 'the shot is credited on the ROOM (this.botShots), readable by creditBotKiller');
+  assert.ok(r.creditBotKiller('host', 'bA0', 'shooter') === 'shooter', 'creditBotKiller now finds it');
+});

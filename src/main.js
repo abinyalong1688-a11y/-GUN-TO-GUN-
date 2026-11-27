@@ -163,7 +163,7 @@ class Game{
     document.addEventListener('visibilitychange',()=>{
       if(document.hidden&&(this.state==='playing'||this.state==='dying')){
         this.input.firing=false;this.input.ads=false;this.keys.clear();
-        if(this.mode==='online'&&this.netMatch&&this.netMatch.active)this.netMenu();
+        if(this.online())this.netMenu();
         else this.pause();
       }
     });
@@ -784,8 +784,8 @@ class Game{
     this.camera.rotation.set(this.player.pitch,this.player.yaw,0,'YXZ');
     this.fallbackAim=false;
     this._requestLock();
-    // M3-G7: show onboarding on first entry
-    if(this.mode!=='online'&&!this.shotMode&&!this.e2eMode&&!store.get('o07_tutorial_done')){
+    // M3-G7: show onboarding on first entry (offline only — never during a live online match)
+    if(!this.online()&&!this.shotMode&&!this.e2eMode&&!store.get('o07_tutorial_done')){
       this.state='tutorial';
       if(document.pointerLockElement)document.exitPointerLock();
       this.ui.showTutorial(TUTORIAL,()=>{
@@ -801,7 +801,7 @@ class Game{
 
   pause(){
     if(this.state!=='playing')return;
-    if(this.mode==='online'&&this.netMatch&&this.netMatch.active){this.netMenu();return;}
+    if(this.online()){this.netMenu();return;}
     this.state='paused';
     this.input.firing=false;this.input.ads=false;
     this._mouseFire=false;this._mouseAds=false; // a mouse-up lost during pause must not leave fire stuck on after resuming
@@ -1207,7 +1207,7 @@ class Game{
   }
   _factionLabels(){
     const ct=t('faction_ct'),tt=t('faction_t');
-    if(this.mode==='online')return {A:ct,B:tt}; // online sides are fixed: A = Nova, B = Rogue
+    if(this.online())return {A:ct,B:tt}; // online sides are fixed: A = Nova, B = Rogue
     return this.playerFaction==='ct'?{A:ct,B:tt}:{A:tt,B:ct};
   }
   _checkDmWin(){
