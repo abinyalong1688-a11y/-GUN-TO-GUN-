@@ -6,6 +6,7 @@ import { circleOverlapsCollider, circleContact, resolveCircleCollisions } from '
 import {t,isEN} from './i18n.js';
 import {byId,byFaction,DEFAULT_OP} from './operators.js';
 import {SnapshotBuffer} from './interp.js';
+import {SPAWN_INVULN} from './netProtocol.js';
 import {buildOperatorMeshAuto,fadeMaterials} from './character.js';
 import {modelAssets} from './modelAssets.js';
 import {rigInit,poseRot,posePos,poseReset} from './rig.js';
@@ -129,6 +130,7 @@ export class HeroBot{
     this.yaw=0;this.alive=true;
     this.state='active';             // active | dying | dead
     this.deathT=0;this.respawnT=0;
+    this.invulnT=0;                  // spawn protection countdown (seconds); see respawn()
     this.fireT=1+Math.random();this.burst=0;
     this.flashT=0;this.strafeDir=Math.random()>.5?1:-1;this.strafeT=2+Math.random()*2;
     this.walkT=0;
@@ -266,6 +268,9 @@ export class HeroBot{
 
   takeDamage(n,fromName,headshot=false,fromId=null,kind='weapon',fromPos=null){
     if(!this.alive)return -1;
+    /* Spawn shield: a freshly respawned bot soaks the hit without losing HP. Returning -1 keeps
+       the "no damage settled" contract, so no kill is credited and no death effect fires. */
+    if(this.invulnT>0)return -1;
     if(this.netDriven){
       // Remote avatar: the victim's own client settles HP. Never mutate local HP here.
       // `kind` names the damage source ('weapon' | 'frag' | {kind:'weapon',w:<rifleId>}) — the
@@ -370,6 +375,7 @@ export class HeroBot{
     this._restoreRifle();
     fadeMaterials(this.materials,1);
     this.alive=true;this.state='active';this.deathT=0;this.hp=this.maxHp;
+    this.invulnT=SPAWN_INVULN;       // 3 s spawn protection, same rule as the player
     this.animState='idle';this.animT=0;this.recoilKick=0;this.reloadT=0;this.hitT=0;
     this.ammo=this.magSize;this.burst=0;this.flashT=0;this._lowBarked=false;this.blindT=0;
     this._lastTargetId=null;this._offA=null; // drop any claimed stand-off point from the last life
@@ -648,6 +654,8 @@ export class HeroBot{
       if(this.deathT>this.respawnT)this.respawn();
       return;
     }
+    // Spawn shield counts down only while alive and active (a corpse's timer is already 0)
+    if(this.invulnT>0)this.invulnT=Math.max(0,this.invulnT-dt);
     // M2-A5: name tags fade with distance (fully visible within 30 m, hidden beyond 46 m)
     if(this.nameTag){
       const d=this.game.camera.position.distanceTo(this.pos);
@@ -1098,9 +1106,10 @@ export class HeroBot{
         // source.w pins the weapon the SERVER recomputes damage from: without it a host-simulated
         // bot hitting a remote human inherits the host player's currently-held gun (WEAPON_DMG
         // would score an AK-wielding host's vulture at 115/hit instead of the rifle it carries).
-        target.takeDamage(P.dmgH,this.name,false,this.netId||this.name,
+        const hp=target.takeDamage(P.dmgH,this.name,false,this.netId||this.name,
           {kind:'weapon',w:this.def&&this.def.rifle},this.pos);
-        this.game.botDamageFx(target,aimPoint);
+        // -1 = nothing settled (the target is under spawn protection): no impact flash either
+        if(hp!==-1)this.game.botDamageFx(target,aimPoint);
       }
     }
   }

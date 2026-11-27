@@ -38,7 +38,7 @@ import {store,num,escHTML} from './util.js';
 import {NetMatch,PHASE} from './netMatch.js';
 import {NetLobby} from './netLobby.js';
 import {LoopbackTransport} from './net.js';
-import {C,S,ROOM_CODE_RE} from './netProtocol.js';
+import {C,S,ROOM_CODE_RE,SPAWN_INVULN} from './netProtocol.js';
 import {auditFeet} from './footAudit.js';
 import {terrainHeight} from './terrain.js';
 import {contrastCheck} from './contrastCheck.js';
@@ -106,6 +106,8 @@ class Game{
     this._netReady=false;
     this.t=t;                                  // shared by NetMatch killfeed
     this.invulnT=0;this.dmRespawnT=-1;
+    this.spawnInvulnT=0;                       // respawn shield countdown (see SPAWN_INVULN)
+    this._tabHeld=false;this._boardAt=0;       // live TAB board refresh (see tick / input.js)
     this._deathHandled=false;                  // ensures death side-effects run once per life
     this.spectate={target:null,t:0};this.lastKiller=null;
     this._specWant=new THREE.Vector3();this._specFrom=new THREE.Vector3();this._specDir=new THREE.Vector3();
@@ -650,6 +652,10 @@ class Game{
     this.playerFaction=hero;
     this.playerCamo=sel.camo||this.camoFor(op);
     this.player.god=false;this.invulnT=0;this.dmRespawnT=-1;
+    /* No shield at match start: the requirement is RESPAWN protection, and a start shield would
+       be player-only asymmetry (bots get theirs on respawn only). Cleared so a shield left over
+       from the previous match can never carry into a new one. */
+    this.spawnInvulnT=0;
     this._deathHandled=false;
     this.spectate.target=null;this.lastKiller=null;
     this.grenades.reset();this.pickups.clear();
@@ -657,6 +663,7 @@ class Game{
     this.empT=0;
     this.ui.hideBoss();
     this.ui.hideBoard(); // a board left open by a held TAB must not leak into the next match
+    this._tabHeld=false;this._boardAt=0;
     this.upgrades={dmg:0,rpm:0,reload:0,speed:0,hp:0,crit:0,pierce:0,regen:0};
     this.weapon.rpmMul=1;
     this.ui.hideUpgrades();
@@ -708,7 +715,11 @@ class Game{
       this.waves.state='idle';
       const timer=pm?(pm.timer||240):240;
       this.dm={scores:new Map(),timer,winKills:pm?(pm.winKills||200):0,score:{A:0,B:0}};
-      this.dm.scores.set(this.playerName,{name:this.playerName,team:this.playerTeam||'A',kills:0,deaths:0,me:true,op:this.playerOperator});
+      /* Online, pm.rows already carries the local player's roster row (server-sanitised name and
+         seat id). Inserting a second, locally-named "me" row produced two me rows whenever the
+         server had to rename the callsign (duplicate / sanitised), and the id-less one then sat
+         on the board at 0/0 forever because nothing can match it. */
+      if(!pm)this.dm.scores.set(this.playerName,{name:this.playerName,team:this.playerTeam||'A',kills:0,deaths:0,me:true,op:this.playerOperator});
       for(const r of (pm&&pm.rows)||[])
         this.dm.scores.set(r.name,{name:r.name,id:r.id,team:r.team,kills:0,deaths:0,
           me:!!r.me,op:byId(r.op)||byId(DEFAULT_OP)});
@@ -735,7 +746,8 @@ class Game{
       const timer=pm?(pm.timer||300):180; // offline bot DM is a 3-minute match; online uses the room timer
       const winKills=pm?(pm.winKills||25):25;
       this.dm={scores:new Map(),timer,winKills,score:{A:0,B:0}};
-      this.dm.scores.set(this.playerName,{name:this.playerName,team:this.playerTeam||'A',kills:0,deaths:0,me:true,op:this.playerOperator});
+      // Same rule as the KOTH branch: online rows (incl. my own) come from the server roster.
+      if(!pm)this.dm.scores.set(this.playerName,{name:this.playerName,team:this.playerTeam||'A',kills:0,deaths:0,me:true,op:this.playerOperator});
       for(const r of (pm&&pm.rows)||[])
         this.dm.scores.set(r.name,{name:r.name,id:r.id,team:r.team,kills:0,deaths:0,
           me:!!r.me,op:byId(r.op)||byId(DEFAULT_OP)});
@@ -794,6 +806,7 @@ class Game{
     this.input.firing=false;this.input.ads=false;
     this._mouseFire=false;this._mouseAds=false; // a mouse-up lost during pause must not leave fire stuck on after resuming
     this.audio.musicSet(.2);
+    this._tabHeld=false;this._boardAt=0; // a held TAB must not pop the board back after resume
     this.ui.hideBoard();
     this.ui.showOnly('pause');
     if(document.pointerLockElement)document.exitPointerLock();
@@ -950,12 +963,18 @@ class Game{
       :muzzle,{far:scoped});
 
     if(bestHero){
-      this.stats.hits++;
       const head=bestHeroPart==='head';
       const dmg=def.dmg*(head?this.playerCritMul():1)*this.playerDamageMul();
-      bestHero.takeDamage(dmg,this.playerName,head,killerId);
-      this.audio.hit(head);
-      this.ui.hitmark(head);
+      const hp=bestHero.takeDamage(dmg,this.playerName,head,killerId);
+      /* A locally simulated bot returns -1 only when the spawn shield absorbed the shot, so the
+         hit marker / hit sound / accuracy stat must not fire. Net-driven proxies also return -1
+         (their hit is merely a request) — those still count as a hit. */
+      const absorbed=hp===-1&&!bestHero.netDriven;
+      if(!absorbed){
+        this.stats.hits++;
+        this.audio.hit(head);
+        this.ui.hitmark(head);
+      }
       this.effects.impact(end,UP,'metal',{decal:false});
     }else if(bestEnemy){
       this.stats.hits++;
@@ -1105,7 +1124,7 @@ class Game{
   }
   /* Single entry point for all incoming damage. `from = {id,name,pos}`; older callers pass a name. */
   damagePlayer(dmg,from,head=false,weapon){
-    if(this.player.god||this.invulnT>0||!this.player.alive)return;
+    if(this.player.god||this.invulnT>0||this.spawnInvulnT>0||!this.player.alive)return;
     const fromName=typeof from==='string'?from:from?.name;
     const fromPos=typeof from==='string'?(head&&typeof head==='object'?head:null):from?.pos;
     const fromId=typeof from==='string'?null:from?.id;
@@ -1175,9 +1194,12 @@ class Game{
       .sort((a,b)=>b.kills-a.kills||a.deaths-b.deaths);
     const meta={title:this.mode==='koth'?t('mode_koth'):t('sb_title')};
     if(this.mode==='koth'&&this.koth){
+      /* Online the DO owns the capture score (s:score → dm.score) and KothMode.update returns
+         before writing this.koth.score, so reading it here showed a permanent 0 : 0. */
+      const ks=(this.koth.online&&this.dm&&this.dm.score)?this.dm.score:this.koth.score;
       meta.lines=[
-        [t('koth_a'),Math.floor(this.koth.score.A)],
-        [t('koth_b'),Math.floor(this.koth.score.B)],
+        [t('koth_a'),Math.floor(ks.A||0)],
+        [t('koth_b'),Math.floor(ks.B||0)],
         [t('koth_name'),Math.round((this.koth.capture+1)/2*100)+'%'],
       ];
     }
@@ -1239,7 +1261,7 @@ class Game{
     const win=m.win===this.playerTeam;
     const raw=(m.rows&&m.rows.length)?m.rows:[...(this.dm?.scores?.values()||[])];
     const rows=raw.map(r=>({
-      name:r.name,team:r.team,kills:r.kills||0,deaths:r.deaths||0,
+      name:r.name,team:r.team,kills:(r.kills|0)||0,deaths:(r.deaths|0)||0,
       me:r.id===this.netMatch?.me?.id||!!r.me,op:r.op,
     })).sort((x,y)=>y.kills-x.kills);
     const top=rows[0];
@@ -1251,7 +1273,8 @@ class Game{
       title:win?t('win'):t('lose'),win,kicker:t('online_over_kicker'),
       stats:{...this.stats,waveLabel:t('dur_label'),
         wave:t('dur_fmt',{m:Math.floor(this.stats.time/60),s:Math.floor(this.stats.time%60)}),
-        score:score.A,best:0,mvp},
+        // Show MY side's score: the B-team used to be shown the opponent's A score here.
+        score:score[this.playerTeam]??score.A??0,best:0,mvp},
       board:this._resultBoard(rows,this._factionLabels()),
     });
     const restart=$('o-restart'),rematch=$('o-rematch'),share=$('o-share');
@@ -1363,6 +1386,10 @@ class Game{
 
     if(active){
       this.stats.time+=dt;
+      /* A held TAB keeps the board live: without this the panel froze at the instant it was
+         opened, so kills and the KOTH score never appeared until the player re-pressed TAB.
+         ~4 Hz is fast enough to read and cheap enough for the DOM. */
+      if(this._tabHeld&&(this._boardAt=(this._boardAt||0)+dt)>=.25){this._boardAt=0;this._showBoard();}
       // Deathmatch respawn
       if(this.isArena()&&this.dmRespawnT>0){
         this.dmRespawnT-=dtRaw;
@@ -1377,7 +1404,10 @@ class Game{
           this.player.alive=true;
           this._deathHandled=false;             // allow the next death to run side-effects once
           this.player.health=this.player.maxHealth;
-          this.player.god=true;this.invulnT=2;
+          /* Respawn protection: 3 s of spawn invulnerability (requirement), tracked on its own
+             timer instead of the debug `god` flag so a screenshot check cannot be confused with
+             a spawn shield and the HUD can show a countdown. `god` is no longer touched here. */
+          this.spawnInvulnT=SPAWN_INVULN;
           this.audio.respawn();
           this.ui.deathFlash();
           this._suppressPauseOnce=false; // the death unlock was consumed; normal lock-loss behaviour resumes
@@ -1388,6 +1418,10 @@ class Game{
         this.invulnT-=dt;
         if(this.invulnT<=0)this.player.god=false;
       }
+      // Spawn shield: a separate 3 s window that survives even when `god`/`invulnT` are scripted.
+      // Online holds a 3 s pre-match countdown with _uiLock set — the shield must not burn away
+      // inside it, or it is already 0 by the time control is handed to the player.
+      if(this.spawnInvulnT>0&&!this._uiLock)this.spawnInvulnT=Math.max(0,this.spawnInvulnT-dt);
 
       if(!this._uiLock && this.player.alive){
         this._fallbackEdgeRotate(dt);
@@ -1681,6 +1715,7 @@ class Game{
   /* M4-P3: spectator screenshot */
   _shotSpectate(){
     this.ui.sel.mode='dm';this.startGame();this.fallbackAim=true;this.player.god=false;
+    this.spawnInvulnT=0;   // this shot force-kills on frame 0: the opening spawn shield must not absorb it
     const killer=this.heroes.list.find(h=>h.team==='B');
     this.lastKiller=killer;
     this.player.health=1;this.player.alive=true;
@@ -2048,7 +2083,7 @@ class Game{
       foes[0].takeDamage(9999,this.playerName,true);
       assert(this.state==='playing'&&this.koth.done===false,'a kill must not end King of the Hill');
       assert(this.dm.timer>230,'the match clock should still be running');
-      this.player.god=false;this.player.health=1;this.player.alive=true;
+      this.player.god=false;this.spawnInvulnT=0;this.player.health=1;this.player.alive=true;
       this.damagePlayerFromBot(999,foes[1].name,foes[1].pos);
       assert(this.state!=='over','the player dying must not end King of the Hill');
       this.player.god=true;this.startGame();
@@ -2180,7 +2215,8 @@ class Game{
       this.ui.sel.mode='dm';this.startGame();
       const killer=this.heroes.list.find(h=>h.team==='B');
       this.lastKiller=killer;
-      this.player.god=false;this.player.health=1;this.player.alive=true;
+      // kill the player on frame 0: clear every damage immunity, including the opening spawn shield
+      this.player.god=false;this.invulnT=0;this.spawnInvulnT=0;this.player.health=1;this.player.alive=true;
       this.damagePlayerFromBot(999,killer.name,killer.pos);
       assert(!this.player.alive,'player should be dead');
       assert(this.spectate.target===killer,'after death the killer should be spectated');
@@ -2190,7 +2226,7 @@ class Game{
     await run('dm-player-death-scored',()=>{
       this.ui.sel.mode='dm';this.startGame();
       const killer=this.heroes.list.find(h=>h.team==='B'&&h.alive);
-      this.player.god=false;this.invulnT=0;this.player.health=1;this.player.alive=true;
+      this.player.god=false;this.invulnT=0;this.spawnInvulnT=0;this.player.health=1;this.player.alive=true;
       const me=this.dm.scores.get(this.playerName),k=killer&&this.dm.scores.get(killer.name);
       const d0=me.deaths,k0=k.kills;
       const origFeed=this.ui.killFeed;let feeds=0;this.ui.killFeed=()=>feeds++;
@@ -2210,7 +2246,7 @@ class Game{
       this.ui.sel.mode='dm';this.startGame();
       this.fallbackAim=true;
       const killer=this.heroes.list.find(h=>h.team==='B'&&h.alive);
-      this.player.god=false;this.invulnT=0;this.player.health=1;this.player.alive=true;
+      this.player.god=false;this.invulnT=0;this.spawnInvulnT=0;this.player.health=1;this.player.alive=true;
       this.damagePlayerFromBot(999,killer.name,killer.pos);
       const clock=this.clock;
       this.clock={getDelta:()=>.05}; // deterministic 20 fps: the loop under test is the real tick()
@@ -2227,6 +2263,39 @@ class Game{
         // overlay pinned on screen (the death screen never faded), which is what this guards.
         assert(flashes===2,'death and respawn should flash exactly once each, got '+flashes);
       }finally{this.clock=clock;this.composer.render=render;this.ui.deathFlash=origFlash;}
+      this.spectate.target=null;this.dmRespawnT=-1;this.player.god=true;
+    });
+    await run('spawn-invuln-3s',()=>{
+      /* Respawn protection: 3 s where incoming damage is ignored entirely (no HP loss, no death,
+         no score), then normal damage resumes. The timer is driven by tick(), so this steps the
+         real loop like dm-respawn does. */
+      this.ui.sel.mode='dm';this.startGame();
+      this.fallbackAim=true;
+      const killer=this.heroes.list.find(h=>h.team==='B'&&h.alive);
+      this.player.god=false;this.invulnT=0;this.spawnInvulnT=0;this.player.health=1;this.player.alive=true;
+      this.damagePlayerFromBot(999,killer.name,killer.pos);
+      const clock=this.clock;
+      this.clock={getDelta:()=>.05};
+      const render=this.composer.render;this.composer.render=()=>{};
+      try{
+        let respawned=false;
+        for(let i=0;i<120&&!respawned;i++){this.tick();if(this.player.alive)respawned=true;}
+        assert(respawned,'the player should respawn');
+        assert(Math.abs(this.spawnInvulnT-SPAWN_INVULN)<.06,
+          `a respawn must arm a ${SPAWN_INVULN} s shield, got ${this.spawnInvulnT.toFixed(2)}`);
+        const me=this.dm.scores.get(this.playerName);
+        const d0=me.deaths;
+        const hp=this.player.health;
+        this.damagePlayerFromBot(999,killer.name,killer.pos);
+        assert(this.player.alive,'a shielded player must not die');
+        assert(this.player.health===hp,'a shielded player must lose no HP');
+        assert(me.deaths===d0,'a shielded death must not be scored');
+        // Step ~3.2 s: the shield expires.
+        for(let i=0;i<64;i++)this.tick();
+        assert(this.spawnInvulnT===0,'the shield must expire, got '+this.spawnInvulnT);
+        this.damagePlayerFromBot(999,killer.name,killer.pos);
+        assert(!this.player.alive,'once the shield is gone a 999 hit kills the player');
+      }finally{this.clock=clock;this.composer.render=render;}
       this.spectate.target=null;this.dmRespawnT=-1;this.player.god=true;
     });
     await run('gamepad-map',()=>{
@@ -2481,7 +2550,7 @@ class Game{
       this.effects.explosion=orig;
     });
     await run('damage-direction',()=>{
-      this.player.god=false;this.invulnT=0;this.player.alive=true;
+      this.player.god=false;this.invulnT=0;this.spawnInvulnT=0;this.player.alive=true;
       this.player.health=999;this.player.maxHealth=999;
       this.player.pos.set(0,0,0);this.player.yaw=0;
       const check=(x,z,want)=>{
@@ -2623,7 +2692,7 @@ class Game{
     await run('bot-player-damage',()=>{
       this.ui.sel.mode='dm';this.startGame();
       const b=this.heroes.list.find(h=>h.team==='B');
-      this.player.god=false;this.invulnT=0;this.player.alive=true;
+      this.player.god=false;this.invulnT=0;this.spawnInvulnT=0;this.player.alive=true;
       this.player.pos.set(0,0,4);this.player.health=100;this.player.maxHealth=100;
       b.place(new THREE.Vector3(0,0,10),Math.PI);
       b.blindT=0;b.update(.016,this.time,()=>true); // acquire the player as the nearest enemy
@@ -2771,7 +2840,7 @@ class Game{
       const playerScore=this.dm.scores.get(this.playerName);
       const killerScore=this.dm.scores.get(b.name);
       const k0=killerScore.kills,d0=playerScore.deaths;
-      this.player.god=false;this.invulnT=0;this.player.alive=true;this.player.health=5;
+      this.player.god=false;this.invulnT=0;this.spawnInvulnT=0;this.player.alive=true;this.player.health=5;
       this.damagePlayerFromBot(50,b.name,b.pos);
       assert(!this.player.alive,'the player should die');
       assert(killerScore.kills===k0+1,'the bot that killed the player should get the kill');

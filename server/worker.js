@@ -412,10 +412,14 @@ export class Room {
     // clear, which keeps the wall-shot guarantee (all blocked → rejected) but stops false hits.
     const cy = tp.y + ((tp.flags & PEER_FLAGS.CROUCH) ? 0.72 : 0.95);
     // Head claims get a tight pattern only: accepting a headshot on a clear torso would let a
-    // client aim at the chest and claim the 2× head multiplier.
+    // client aim at the chest and claim the 2× head multiplier. The diagonal probes matter
+    // because a straight cross misses a head that is offset on both axes (strafing target).
+    const hd = LOS_HEAD, dg = LOS_HEAD * .7;
     const aim = m.head
-      ? [[tx, ty, tz], [tx + LOS_HEAD, ty, tz], [tx - LOS_HEAD, ty, tz],
-         [tx, ty, tz + LOS_HEAD], [tx, ty, tz - LOS_HEAD]]
+      ? [[tx, ty, tz], [tx + hd, ty, tz], [tx - hd, ty, tz],
+         [tx, ty, tz + hd], [tx, ty, tz - hd],
+         [tx + dg, ty, tz + dg], [tx - dg, ty, tz + dg],
+         [tx + dg, ty, tz - dg], [tx - dg, ty, tz - dg]]
       : [[tx, ty, tz], [tx, cy, tz], [tx + LOS_SPREAD, ty, tz], [tx - LOS_SPREAD, ty, tz],
          [tx, ty, tz + LOS_SPREAD], [tx, ty, tz - LOS_SPREAD]];
     const visible = aim.some(([px, py, pz]) =>
@@ -556,7 +560,11 @@ export class Room {
       if ((this._tickN = (this._tickN || 0) + 1) % 5 === 0) this.broadcastRoom();
       await this.ctx.storage.setAlarm(Date.now()+1000);
     } else if (r.end === 'time') {
-      this.endMatch(null, 'time');
+      /* The clock ran out without anyone reaching the win line: the LEADER wins. Passing null
+         here made `win === playerTeam` false on both clients, so even the team that was ahead
+         was shown "DEFEAT". A genuine tie still passes null (no side is a winner). */
+      const sc = this.state.score || { A:0, B:0 };
+      this.endMatch(sc.A > sc.B ? 'A' : sc.B > sc.A ? 'B' : null, 'time');
       await this.ctx.storage.setAlarm(Date.now()+3600_000);
     } else {
       // Empty / finished room: keep the code reserved a while longer, then let the DO evict.

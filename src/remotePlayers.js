@@ -62,7 +62,12 @@ export function applyHitToBot(game, msg) {
   const h = game.heroes.byNetId(msg.bot);
   if (!h || h.netDriven || !h.alive) return false;
   const from = { id:msg.from, name:msg.fromName, pos:msg.pos || null };
-  h.takeDamage(msg.dmg, msg.fromName, !!msg.head, msg.from);
+  const hp = h.takeDamage(msg.dmg, msg.fromName, !!msg.head, msg.from);
+  /* takeDamage returns -1 when nothing was settled (spawn shield / already dead). A shielded bot
+     must not flash an impact, and must not be recorded as the last remote hit — that record is
+     what authorises the host to report a bot death, so a shielded target would otherwise
+     consume a kill it never took. */
+  if (hp === -1) return false;
   game.botDamageFx && game.botDamageFx(h, h.pos);
   game.lastRemoteHit = from;  // consumed by onHeroKill -> reportBotDeath
   return true;

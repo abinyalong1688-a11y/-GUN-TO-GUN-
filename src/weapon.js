@@ -34,7 +34,7 @@ export const WEAPON_DEFS={
    kick:.0088,kickAds:.004,recoilV:.0105,recoilH:.004,auto:true,
    tracer:0xffd27f,tracerW:.026,tracerSpeed:450,scope:true,scopeFov:34,reloadDur:3.28,speedMul:.85},
   awp:{id:'awp',name:'LONGBOW · .338 Lapua Magnum',slotName:'LONGBOW',rpm:41,dmg:115,mag:10,reserve:30,
-   spreadHip:.06,spreadAds:.0008,moveSpread:.02,heatShot:.004,heatMax:.008,
+   spreadHip:.042,spreadAds:.0008,moveSpread:.014,heatShot:.004,heatMax:.008,
    kick:.045,kickAds:.03,recoilV:.05,recoilH:.012,auto:false,
    tracer:0xbfe3ff,tracerW:.05,tracerSpeed:640,scope:true,scopeFov:16,reloadDur:3.6,speedMul:.80},
   mp5:{id:'mp5',name:'MP5 · 9×19MM',slotName:'MP5',rpm:800,dmg:26,mag:30,reserve:120,
@@ -92,6 +92,7 @@ export class Weapon{
     this.camKick=0;this.gunKickZ=0;this.gunKickRX=0;this.gunKickRY=0;this._slide=0;
     this.camKickYaw=0;this.recoilIdx=0;this.recoilReset=0;
     this.bobT=0;this._trigWasDown=false;
+    this._shotBuf=0;      // semi-auto: seconds left on a queued shot (see update())
     this.muzzleFlashT=0;
     this.switchT=-1;      // weapon switch animation timer
     // Muzzle flash
@@ -549,7 +550,13 @@ export class Weapon{
 
   spreadRad(player){
     const d=this.def;
-    let s=this.adsAmt>.7?d.spreadAds:d.spreadHip;
+    /* Blend hip → ADS by the actual zoom amount instead of a hard `adsAmt > .7` switch. The
+       old binary test made every shot taken mid-scope (adsAmt .25–.7, i.e. the whole raise /
+       lower transition and any moment the scope is eased) inherit the FULL hip cone. For the
+       sniper that cone is .06 rad ≈ 1.2 m at 20 m against a .42 m torso, which is why "aiming"
+       and "hip firing" both felt like the rifle never hit anything. */
+    const k=Math.max(0,Math.min(1,(this.adsAmt-.25)/.55)); // 0 at ≤.25 (pure hip) → 1 at ≥.8
+    let s=d.spreadHip+(d.spreadAds-d.spreadHip)*k;
     s+=(1-this.adsAmt)*Math.min(.016,player.vel.length()*d.moveSpread);
     if(player.airborne)s+=.045;   // accuracy collapses while jumping
     if(player.crouching)s*=.62;   // crouching is steadier
@@ -594,6 +601,10 @@ export class Weapon{
       this.gunKickZ*=Math.max(0,1-9*dt);this.gunKickRX*=Math.max(0,1-9*dt);this.gunKickRY*=Math.max(0,1-7*dt);
       this.camKickYaw*=Math.max(0,1-6*dt);
       this._slide=Math.max(0,this._slide-dt*9);
+      // A click made during the swap still counts for a semi-auto: queue it for after the swap
+      // (same remaining-cooldown rule as the firing block below, so a Longbow click is not lost)
+      if(!this.def.auto&&input.firing&&!this._trigWasDown)
+        this._shotBuf=Math.max(this._shotBuf,Math.max(.25,this.fireT+.05));
       this._trigWasDown=!!input.firing;
       return;
     }
@@ -629,7 +640,16 @@ export class Weapon{
     const canFire=!this.reloading&&s.ammo>0&&!player.sprinting;
     const trig=input.firing&&s.ammo>0;
     const wantFire=d.auto?trig:(trig&&!this._trigWasDown); // semi-auto: fires on the trigger edge
-    if(wantFire&&canFire&&this.fireT<=0){
+    /* Semi-auto: a click that lands during the bolt/recoil cooldown used to be dropped outright,
+       so rapid clicks produced nothing at all — the rifle felt like it "never fired". Queue ONE
+       shot instead. The window has to span the REMAINING cooldown (the Longbow bolt is 1.46 s),
+       so it is stretched to fireT+ε rather than a fixed 0.25 s that expired before the bolt did.
+       The bolt pace itself is unchanged: the queued shot leaves the moment the cycle ends. */
+    if(!d.auto&&wantFire&&canFire&&this.fireT>0)this._shotBuf=Math.max(this._shotBuf,this.fireT+.05);
+    if(this._shotBuf>0)this._shotBuf-=dt;
+    const buffered=!d.auto&&this._shotBuf>0&&canFire&&this.fireT<=0;
+    if((wantFire&&canFire&&this.fireT<=0)||buffered){
+      this._shotBuf=0;
       // Carry over last frame's overshoot (at most one frame) so the fire rate is not rounded down by the frame rate (MP5 @60fps back from ~720 to 800 rpm)
       this.fireT=Math.max(this.fireT,-dt)+60/(d.rpm*(this.rpmMul||1));
       s.ammo--;
@@ -774,6 +794,7 @@ export class Weapon{
     this.reloading=false;
     this.switchT=-1;this._pending=undefined;   // no ghost slot after restarting mid-switch
     this.fireT=0;this.camKick=0;this.camKickYaw=0;this.heat=0;
+    this._shotBuf=0;this._trigWasDown=false;   // a queued semi shot must not survive a restart
     this._equip(0,true);
   }
   addReserve(n){

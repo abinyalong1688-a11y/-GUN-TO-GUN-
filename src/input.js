@@ -43,6 +43,7 @@ export class KeyboardMouseAdapter{
       if(g._uiLock&&e.code!=='Tab'&&e.code!=='Escape')return;
       if(e.code==='Tab'){
         e.preventDefault();
+        g._tabHeld=true;   // tick() re-renders the board while this stays true (live K/D)
         // Mode-aware board (DM/KOTH team table, waves run summary); allowed through the UI lock.
         if(g.state==='playing')g._showBoard();
         return;
@@ -73,7 +74,7 @@ export class KeyboardMouseAdapter{
       const toggle=g.settings&&g.settings.get('crouchToggle');
       if(toggle&&(e.code==='ControlLeft'||e.code==='ControlRight'))return;
       g.keys.delete(e.code);
-      if(e.code==='Tab')g.ui.hideBoard();
+      if(e.code==='Tab'){g._tabHeld=false;g.ui.hideBoard();}
     });
 
     this._on(window,'mousedown',e=>{

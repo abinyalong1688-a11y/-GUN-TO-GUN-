@@ -420,10 +420,19 @@ export class NetMatch {
 
   _syncScoreboard(m) {
     const g = this.game;
-    if (!g.dm || !m.roster || g.mode !== 'online') return;
+    /* `g.mode` is 'dm'/'koth' while a match runs (startGame copies matchMode into it), so the
+       old `g.mode !== 'online'` guard returned on every live roster message and this function
+       was dead code: a mid-match joiner never got a TAB row, and a reconnected client kept an
+       old seat id that `_onKill` could no longer match. Gate on the session instead. */
+    if (!g.dm || !m.roster || !this.active) return;
     for (const r of m.roster) {
-      if (!g.dm.scores.has(r.name))
+      const row = g.dm.scores.get(r.name);
+      if (!row)
         g.dm.scores.set(r.name, { id:r.id, name:r.name, team:r.team, kills:0, deaths:0, me:r.id===this.me?.id });
+      else {
+        if (row.id !== r.id) row.id = r.id;       // reconnect: seat id changed, keep the K/D
+        if (r.team && row.team !== r.team) row.team = r.team;
+      }
     }
   }
 

@@ -353,8 +353,9 @@ export class Enemies{
           this._steer(e,target,dt,e.T.speed*1.9,6);
           e.group.lookAt(eye);
           if(toPlayer<1.7){
-            // Detonate
-            player.damage(16*Math.max(.4,1-toPlayer/8),time);
+            // Detonate. A drone dive calls player.damage() directly (damagePlayer() is not in
+            // this path), so it has to honour the spawn shield itself.
+            if(!(game&&game.spawnInvulnT>0))player.damage(16*Math.max(.4,1-toPlayer/8),time);
             if(this.onPlayerHit)this.onPlayerHit(e.pos);
             e.dead=false;
             this.kill(e,false,true);
@@ -448,7 +449,8 @@ export class Enemies{
       // Hit the player
       const chest=this._t1.copy(eye);chest.y-=.35;
       if(b.mesh.position.distanceTo(chest)<.55&&player.alive){
-        player.damage(b.dmg,time);
+        // Bolts also bypass damagePlayer(), so the spawn shield is checked here too.
+        if(!(game&&game.spawnInvulnT>0))player.damage(b.dmg,time);
         if(this.onPlayerHit)this.onPlayerHit(b.mesh.position);
         kill=true;
       }else{

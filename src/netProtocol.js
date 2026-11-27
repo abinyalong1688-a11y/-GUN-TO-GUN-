@@ -69,6 +69,10 @@ export const WEAPON_DMG = {
 };
 export const HEAD_MUL = 2;
 
+/* Spawn protection (seconds): every respawn grants this much damage immunity. Shared by the
+   player (Game.spawnInvulnT), the bots (HeroBot.invulnT) and the server so all three agree. */
+export const SPAWN_INVULN = 3;
+
 /* World collision upload: every LOS-blocking static is sent as
    box = [0, cx, cz, hw, hd, ryMilli, y0, y1]  — integer centimetres, ry in milliradians
    (or cyl = [1, cx, cz, r, y0, y1]). Integer encoding keeps a 92-box arena ~2 KB, well under
@@ -91,9 +95,11 @@ export const mapHashValue = hex => Number(hex) | 0;
 export const BOT_RESPAWN_MS = 3000; // min time between a bot death and the host resurrecting it
 /* Server-side LOS aim pattern (metres): the client's hit spheres are wider than a centre line,
    so a body shot is legal when any probe around the aim point is clear; head claims use a tight
-   pattern so a clear chest cannot be claimed as a 2× headshot. */
+   pattern so a clear chest cannot be claimed as a 2× headshot. LOS_HEAD matches the client head
+   sphere radius (heroes.js hitSpheres r=.16) — at .12 a headshot on a moving target was rejected
+   whenever the server's newest snapshot sat >12 cm from the client's interpolated aim point. */
 export const LOS_SPREAD = 0.4;
-export const LOS_HEAD = 0.12;
+export const LOS_HEAD = 0.16;
 
 /* Name cleaning: aligned with <input maxlength=10>; strips control chars and angle brackets (XSS), folds whitespace */
 export const sanitizeName = s => String(s ?? '')
