@@ -240,13 +240,13 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
 .camo-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px}
 .camo-label{font-size:10px;letter-spacing:.14em;color:#eef2f8}
 .camo-chip{cursor:pointer;font-size:11px;padding:4px 10px;border-radius:999px;border:1px solid rgba(199,209,226,.4);color:#f2f5fa;background:rgba(255,255,255,.06)}
-.camo-chip.selected{border-color:var(--accent);color:var(--accent);background:rgba(127,212,255,.1)}
+.camo-chip.selected{border-color:#ffd166;color:#111;background:#ffd166;font-weight:700}
 .camo-chip.locked{opacity:.35;cursor:not-allowed}
 
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{cursor:pointer;font-size:13px;color:#f2f5fa;background:rgba(255,255,255,.07);border:1px solid rgba(199,209,226,.45);border-radius:999px;padding:8px 18px;transition:.15s;text-shadow:0 1px 2px rgba(0,0,0,.55)}
 .chip:hover{border-color:rgba(240,168,96,.5);color:#fff;background:rgba(255,255,255,.1)}
-.chip.selected{color:#fff;background:linear-gradient(120deg,#f0b470,#e88a50);border-color:transparent;font-weight:700;text-shadow:0 1px 3px rgba(60,30,0,.55)}
+.chip.selected{color:#111;background:#ffd166;border-color:#ffd166;font-weight:700;text-shadow:none}
 
 .m-row{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 .btn{cursor:pointer;font-size:14px;letter-spacing:.1em;color:#f2f5fa;background:rgba(255,255,255,.07);

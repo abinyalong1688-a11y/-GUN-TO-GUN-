@@ -36,9 +36,9 @@ const STR={
     map_snow:'极夜冰湖 · 极光',
     map_snowtown:'霓虹雨港 · 雨夜',
     map_ember:'熔岩火山口 · 烈焰',
-    mode_waves:'无尽波次 · 单人守卫哨站',
+    mode_waves:'无尽波次 · 单人',
     mode_dm:'团队死斗 · 3v3',
-    mode_online:'五五开黑 5v5 · 在线',   // online-only: DEPLOY opens the friends lobby
+    mode_online:'好友对战 · 5v5',   // online-only: DEPLOY opens the friends lobby
     room_dm:'五五开黑 · 团队死斗',room_koth:'五五开黑 · 占点争夺',
     quality_high:'画质:高',
     quality_low:'画质:流畅',
