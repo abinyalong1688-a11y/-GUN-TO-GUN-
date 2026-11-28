@@ -5,8 +5,10 @@ import * as THREE from 'three';
 import { circleOverlapsCollider, resolveCircleCollisions } from './collision.js';
 import { WEAPON_DEFS } from './weapon.js';
 
-const TYPES=['ammo','med','boost','weapon'];
-const COLOR={ammo:0xe8c060,med:0x7fd4a0,boost:0xef6a5a,weapon:0xf5f5f5};
+const TYPES=['ammo','med','boost','weapon','fun'];
+const COLOR={ammo:0xe8c060,med:0x7fd4a0,boost:0xef6a5a,weapon:0xf5f5f5,fun:0xffd24a};
+/* How many props one Fun Brawl box hands out (funItems.js owns the ammo bags). */
+const FUN_REFILL=2;
 
 export class Pickups{
   constructor(game,scene,effects,audio,ui){
@@ -23,14 +25,21 @@ export class Pickups{
     this._ray=new THREE.Raycaster();this._down=new THREE.Vector3(0,-1,0);this._from=new THREE.Vector3();
   }
 
-  /* Highest rendered mesh below the drop. Using the world group (not only colliders) also keeps
-     drops off the lava ribbon and decorative surfaces while still honouring real cover tops. */
+  /* Highest rendered surface below the drop.
+     Casts against the flat losStatics list (cover + ground, no sky) instead of recursing the whole
+     world group: the recursive version walked the sky sphere, seven distant hills and every
+     decorative mesh for each drop, which cost ~2 ms per kill — measured, and it fired on every
+     death of every bot. The arena floor is flat at y=0 inside the play bound (terrain.js), so an
+     empty result simply means "ground level". */
   _surfaceY(x,z){
     const w=this.game.world;
-    if(!w||!w.group)return 0;
+    const list=w&&(w.losStatics||w.shootStatics);
+    if(!list||!list.length)return 0;
     this._ray.set(this._from.set(x,30,z),this._down);this._ray.far=60;
-    for(const hit of this._ray.intersectObject(w.group,true)){
-      if(hit.object.isMesh&&hit.object!==w.sky)return hit.point.y;
+    const hits=this._ray.intersectObjects(list,false);
+    for(const hit of hits){
+      if(hit.object===w.sky)continue;
+      return hit.point.y;
     }
     return 0;
   }
@@ -114,6 +123,7 @@ export class Pickups{
       this.game.damageBoostMul=1.5;
     }
     else if(p.type==='weapon')this.collectWeapon(p.w);
+    else if(p.type==='fun')this.collectFun();
     this.fx.impact(p.pos,new THREE.Vector3(0,1,0),'metal',{decal:false});
     if(this.audio&&this.audio.pickup)this.audio.pickup();
     return true;
@@ -141,6 +151,17 @@ export class Pickups{
       // Not in the loadout (faction primaries cover everything) — treat as reserve ammo.
       w.addReserve(60);
     }
+  }
+
+  /* Fun Brawl prop box: tops up one random prop type (funItems.js owns the counts). */
+  collectFun(){
+    const f=this.game.funItems;
+    if(!f||!f.counts)return;
+    const keys=Object.keys(f.counts);
+    if(!keys.length)return;
+    const k=keys[Math.floor(Math.random()*keys.length)];
+    f.counts[k]+=FUN_REFILL;
+    if(this.ui&&this.ui.setFunItems)this.ui.setFunItems(f.counts);
   }
 
   _remove(i){

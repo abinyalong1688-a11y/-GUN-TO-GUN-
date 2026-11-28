@@ -36,6 +36,9 @@ export class UI{
   progress:$('m-progress'),
       wslots:[...document.querySelectorAll('.wslot')],
       grenades:{frag:$('g-frag'),flash:$('g-flash'),smoke:$('g-smoke')},
+      funItems:{banana:$('fi-banana'),magnet:$('fi-magnet'),spring:$('fi-spring'),water:$('fi-water')},
+      funBar:$('fun-items'),
+      grenadeBar:$('grenades'),
       fragBadge:$('tb-frag'),
       scope:$('scope-overlay'),
     };
@@ -69,7 +72,7 @@ export class UI{
     this.dmgDirT=0;this.comboT=0;
     // Menu selection state (validates persisted values; dirty data falls back to defaults)
     // Offline roster: waves (solo) / dm (3v3) / koth (3v3); 'online' is the Friends 5v5 lobby entry.
-    const MOK=['desert','snow','snowtown','ember'],KOK=['waves','koth','dm','online'];
+    const MOK=['desert','snow','snowtown','ember'],KOK=['waves','koth','dm','fun','online'];
     const m=store.get('o07_map'),k=store.get('o07_mode');
     const p=store.get('o07_primary');
     const op=byId(store.get('o07_operator'))||byId(DEFAULT_OP);
@@ -393,9 +396,21 @@ export class UI{
   hitmark(crit){
     const el=this.el.hitmark;
     el.classList.remove('show','crit');
-    void el.offsetWidth;
+    this._restartAnim(el);   // was `void el.offsetWidth` — that forced a synchronous layout on every hit
     if(crit)el.classList.add('crit');
     el.classList.add('show');
+  }
+  /* Restart a CSS animation without reading layout. `offsetWidth` used to force a style+layout
+     flush on the hit frame, right when the HUD is being written every frame anyway; the Web
+     Animations API restarts it without touching geometry. Falls back when unsupported. */
+  _restartAnim(el){
+    if(!el)return;
+    if(el.getAnimations){
+      const anims=el.getAnimations();
+      if(anims.length){for(const a of anims){try{a.cancel();a.play();}catch(e){}}return;}
+    }
+    el.style.animation='none';
+    requestAnimationFrame(()=>{el.style.animation='';});
   }
   reloadRing(k){
     if(k<0){this.el.reloadRing.classList.remove('show');return;}
@@ -465,7 +480,7 @@ export class UI{
     if(!this.el.combo)return;
     this.el.combo.textContent=t('combo_'+Math.min(5,Math.max(2,n)));
     this.el.combo.classList.remove('show');
-    void this.el.combo.offsetWidth;
+    this._restartAnim(this.el.combo);
     this.el.combo.classList.add('show');
     this.comboT=1.1;
   }
@@ -486,6 +501,16 @@ export class UI{
       this.el.fragBadge.textContent=counts.frag;
       this.el.fragBadge.classList.toggle('empty',counts.frag<=0);
     }
+  }
+  /* Fun Brawl prop counts (funItems.js): swaps the grenade bar for the prop bar while the mode runs. */
+  setFunItems(counts){
+    if(!counts||!this.el.funItems)return;
+    const f=this.el.funItems;
+    for(const k in f)if(f[k])f[k].textContent=counts[k]!=null?counts[k]:0;
+  }
+  setFunItemsActive(on){
+    if(this.el.funBar)this.el.funBar.classList.toggle('hidden',!on);
+    if(this.el.grenadeBar)this.el.grenadeBar.classList.toggle('hidden',!!on);
   }
   /* M4-P4: KOTH capture status bar */
   setKoth(owner,ratio,a,b){
@@ -558,9 +583,21 @@ export class UI{
       if(p.t>0){p.t-=dt;if(p.t<=0)p.el.style.display='none';}
     }
     const low=Math.max(0,1-health/max*2.2)*(0.55+Math.sin(performance.now()*.006)*.2);
-    this.el.dmg.style.opacity=Math.min(1,this.dmgLevel+low*.7);
-    this.el.lowhp.style.opacity=health<35?low:0;
+    /* Full-screen overlays are the most expensive things we touch per frame: writing a new opacity
+       on them re-composites the whole canvas. Only write when the value actually moved enough to
+       be visible (0.01 is under one 8-bit level), which removes ~60 pointless style writes a
+       second while a low-health player is standing still. */
+    this._setOpacity(this.el.dmg,Math.min(1,this.dmgLevel+low*.7));
+    this._setOpacity(this.el.lowhp,health<35?low:0);
     this.updatePops(dt);
+  }
+
+  /* Opacity writes that skip the DOM when the value has not visibly changed. */
+  _setOpacity(el,v){
+    if(!el)return;
+    if(el._opLast!=null&&Math.abs(el._opLast-v)<.01)return;
+    el._opLast=v;
+    el.style.opacity=String(v);
   }
 
   /* ---------- Results ---------- */

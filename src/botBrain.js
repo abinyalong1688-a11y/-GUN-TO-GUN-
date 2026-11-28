@@ -192,11 +192,34 @@ export class BotBrain {
     this._coverWanted = false;
 
     this.tree.tick(bot, this);
+    /* Fun Brawl only (funItems.js): mid-range bots lob a prop at the target now and then. The
+       throw rides the same per-bot timer pattern as fireT, so it never spams. */
+    this._funThrow(dt);
 
     if (!this._coverWanted) bot.coverTarget = null;
     if (this.state !== 'search') this._scanT = 0;
     bot.hasTarget = !!this.target;
     bot._targetId = this.targetId;
+  }
+
+  /* Fun Brawl props (funItems.js): a bot inside the engagement band lobs a prop at its target
+     every few seconds. Deliberately simple — it fires once the timer elapses rather than
+     modelling intent, so the player reads it as "the bots are playing the mode too". */
+  _funThrow(dt) {
+    const bot = this.bot, g = bot.game;
+    if (!g || g.matchMode !== 'fun' || !g.funItems) return;
+    if (this._funT == null) this._funT = 4 + Math.random() * 8;
+    this._funT -= dt;
+    if (this._funT > 0) return;
+    this._funT = 8 + Math.random() * 7;
+    const t = this.target;
+    if (!t || !this.targetVisible || this.targetDist < 5 || this.targetDist > 22) return;
+    if (bot.disarmedT > 0) return;
+    // Pick a prop that suits the distance: the magnet needs to land near the victim, the rest
+    // are area props and work at any range.
+    const pick = this.targetDist < 9 ? 'water' : Math.random() < .5 ? 'banana' : 'spring';
+    g.funItems.botThrow(pick, { x: bot.pos.x, y: bot.pos.y + 1.4, z: bot.pos.z }, t.point,
+      { team: bot.team, name: bot.name, isPlayer: false });
   }
 
   /* ---------------- perception ---------------- */
@@ -401,6 +424,9 @@ export class BotBrain {
   fire() {
     const bot = this.bot, t = this.target;
     if (!t || !this.targetVisible) return false;
+    /* Disarmed by a magnet (funItems.js): nothing to shoot, and the burst counter must not advance
+       (otherwise the bot "spends" a burst on an empty hand and reports a phantom hit). */
+    if (bot.disarmedT > 0) return false;
     if (bot.reloadT > 0 || bot.reactionT > 0 || bot.fireT > 0) return false;
     if (!this.hasAim) return false;
     _eye.set(bot.pos.x, bot.pos.y + 1.4, bot.pos.z);

@@ -95,6 +95,7 @@ export class Weapon{
     this._shotBuf=0;      // semi-auto: seconds left on a queued shot (see update())
     this.muzzleFlashT=0;
     this.switchT=-1;      // weapon switch animation timer
+    this._dead=false;     // true while the owner is dead and the viewmodel is only settling
     // Muzzle flash
     this.flash=new THREE.Mesh(new THREE.PlaneGeometry(.3,.3),
       new THREE.MeshBasicMaterial({map:assets.tex.flash,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false,depthTest:false}));
@@ -526,15 +527,19 @@ export class Weapon{
     this.ui.weaponSlots(idx);
     const d=this.defs[idx],s=this.state[idx];
     this.ui.setAmmo(s.ammo,s.reserve,this.reloading,wName(d));
-    // Reset reload-pose leftovers when a reload was interrupted by a switch.
+    this._resetReloadPose();   // an interrupted reload leaves the mag / support hand mid-animation
+    this.recoilIdx=0;this.camKickYaw=0;
+    // Weapon weight affects move speed (heavier weapons move slower)
+    this.speedCb&&this.speedCb(d.speedMul||1);
+  }
+  /* Put every weapon's mag and support hand back on their rest pose. Shared by _equip (a switch
+     cancels a reload) and onDeath (a death does too, without changing the held slot). */
+  _resetReloadPose(){
     for(const key in this.models){
       const ud=this.models[key].userData;
       if(ud&&ud.mag&&ud.magBase){ud.mag.position.y=ud.magBase.y;ud.mag.rotation.z=ud.magBase.rz;}
       if(ud&&ud.armSupport){ud.armSupport.position.set(0,0,0);ud.armSupport.rotation.z=0;}
     }
-    this.recoilIdx=0;this.camKickYaw=0;
-    // Weapon weight affects move speed (heavier weapons move slower)
-    this.speedCb&&this.speedCb(d.speedMul||1);
   }
   get def(){return this.defs[this.cur];}
   get st(){return this.state[this.cur];}
@@ -581,6 +586,16 @@ export class Weapon{
   }
 
   update(dt,input,player,cam,time,fireCb){
+    /* Dead players keep the viewmodel settling but cannot drive it: this branch must run BEFORE
+       any switch/reload/fire logic so a corpse can never fire, auto-reload from an empty mag, or
+       finish a swap. `=== false` is deliberate — unit-test player stubs have no `alive` field at
+       all, and treating undefined as "dead" would silently stop every shot in those tests. */
+    if(player&&player.alive===false){
+      if(!this._dead)this.onDeath();   // self-healing: covers callers that bypass main's death branch
+      this._deadTick(dt);
+      return;
+    }
+    this._dead=false;
     // Switch animation
     if(this.switchT>=0){
       this.switchT+=dt;
@@ -641,8 +656,12 @@ export class Weapon{
 
     // Fire
     this.fireT-=dt;
-    const canFire=!this.reloading&&s.ammo>0&&!player.sprinting;
-    const trig=input.firing&&s.ammo>0;
+    /* Fun Brawl status gate (funItems.js): a slipped or disarmed player cannot shoot. This belongs
+       HERE, not only in main.fire() — the shot's ammo, muzzle flash, sound and recoil are all
+       committed below, so a late guard would empty the magazine with zero damage dealt. */
+    const stunned=!!(player&&((player.slipT>0)||(player.disarmT>0)));
+    const canFire=!this.reloading&&s.ammo>0&&!player.sprinting&&!stunned;
+    const trig=!stunned&&input.firing&&s.ammo>0;
     const wantFire=d.auto?trig:(trig&&!this._trigWasDown); // semi-auto: fires on the trigger edge
     /* Semi-auto: a click that lands during the bolt/recoil cooldown used to be dropped outright,
        so rapid clicks produced nothing at all — the rifle felt like it "never fired". Queue ONE
@@ -799,13 +818,67 @@ export class Weapon{
     this.switchT=-1;this._pending=undefined;   // no ghost slot after restarting mid-switch
     this.fireT=0;this.camKick=0;this.camKickYaw=0;this.heat=0;
     this._shotBuf=0;this._trigWasDown=false;   // a queued semi shot must not survive a restart
+    this._dead=false;                          // a fresh match is alive again
     this._equip(0,true);
   }
   /* Respawn (DM/KOTH): ammo persists by design, but the trigger state must not — a queued
      semi shot frozen mid-death would otherwise fire by itself ~1.4 s after respawn. */
   onRespawn(){
     this._shotBuf=0;this._trigWasDown=false;
+    this._dead=false;              // re-arm the death tick so the next death cleans up again
   }
+
+  /* Clear the short-lived viewmodel effects that only weapon.update() would otherwise decay.
+     Used by pause / online menu, where the sim freezes but the (visible) gun would keep a muzzle
+     flash burning. Unlike onDeath() this keeps the reload, the switch and the ADS state intact:
+     pausing mid-reload must resume that reload, not cancel it. */
+  clearTransientFx(){
+    this.muzzleFlashT=0;
+    this.flash.visible=false;
+    this.flashLight.intensity=0;
+    for(const sh of this.shells){sh.active=false;sh.mesh.visible=false;sh.t=0;}
+    this.camKick=0;this.camKickYaw=0;
+    this.gunKickZ=0;this.gunKickRX=0;this.gunKickRY=0;this._slide=0;
+    this.heat=0;this.recoilIdx=0;this.recoilReset=0;
+    /* A trigger held when the menu opened must not fire on resume. */
+    this._shotBuf=0;this._trigWasDown=false;this._emptyClicked=false;
+  }
+
+  /* Player died: kill every transient visual state the viewmodel can be carrying.
+     weapon.update() is what normally decays all of this, and main.js calls it every frame even
+     while dead — but the cleanup has to be guaranteed on the death frame itself, not inferred a
+     frame later. Idempotent: calling it twice is harmless.
+     Deliberately does NOT zero adsAmt: a hard cut would snap the camera FOV, so update()'s dead
+     tick eases it out instead. */
+  onDeath(){
+    this._dead=true;
+    /* Muzzle flash, point light, shell casings, recoil and heat — all shared with pause. */
+    this.clearTransientFx();
+    /* Reload: cancelled rather than paused, so a death cannot hand out a free magazine on respawn. */
+    if(this.reloading||this.reloadT>0){
+      this.reloading=false;this.reloadT=0;this._reloadSnd=0;
+      this.ui.reloadRing(-1);
+    }
+    this._resetReloadPose();
+    /* A switch animation in flight is finished at once and the gun snaps back to the hip pose. */
+    if(this.switchT>=0){
+      if(this._pending!==undefined){this._equip(this._pending,true);this._pending=undefined;}
+      this.switchT=-1;
+    }
+    this.group.position.copy(HIP_POS);
+    this.fireT=0;
+  }
+
+  /* While dead, the viewmodel still needs to settle: the ADS zoom has to ease back out (the camera
+     FOV is derived from adsAmt) and the gun should return to its rest pose. Nothing else runs —
+     no firing, no auto-reload, no switch completion, no reload progress. */
+  _deadTick(dt){
+    this.adsAmt+=((0)-this.adsAmt)*Math.min(1,10*dt);
+    this.group.position.lerp(HIP_POS,Math.min(1,8*dt));
+    this.ui.setAmmo(this.st.ammo,this.st.reserve,false,wName(this.def));
+    this.ui.weaponSlots(this.cur);
+  }
+
   addReserve(n){
     this.defs.forEach((d,i)=>{
       this.state[i].reserve=Math.min(999,this.state[i].reserve+n);

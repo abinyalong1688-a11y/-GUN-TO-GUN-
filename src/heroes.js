@@ -146,6 +146,10 @@ export class HeroBot{
     /* M2-A2 radio bark cooldown (staggered at match start to avoid spam) */
     this._barkT=1+Math.random()*4;this._lowBarked=false;
     this.blindT=0;
+    /* Fun Brawl status effects (funItems.js) — inert outside matchMode 'fun'. */
+    this.slipT=0;      // banana peel: control lost, inertia carries
+    this.slowT=0;      // water puddle: movement scaled down
+    this.disarmedT=0;  // magnet: rifle stripped, cannot shoot
     /* M3-G6: cover / flanking / reactions */
     this.coverTarget=null;this.coverT=0;
     /* Navigation (P0–P3). Stuck escape: a blocker on the walking line can pin the bot — progress
@@ -378,6 +382,7 @@ export class HeroBot{
     this.invulnT=SPAWN_INVULN;       // 3 s spawn protection, same rule as the player
     this.animState='idle';this.animT=0;this.recoilKick=0;this.reloadT=0;this.hitT=0;
     this.ammo=this.magSize;this.burst=0;this.flashT=0;this._lowBarked=false;this.blindT=0;
+    this.slipT=0;this.slowT=0;this.disarmedT=0;  // Fun Brawl statuses never survive a respawn
     this._lastTargetId=null;this._offA=null; // drop any claimed stand-off point from the last life
     this._restoreFlash(); // the killing hit's white flash is never restored in the death branch; restore it on respawn or the bot stays white
     this.coverTarget=null;this.coverT=0;
@@ -428,7 +433,8 @@ export class HeroBot{
        desired velocity → squad spacing → stuck escape → separation / RVO → smoothing →
        integrate → normal-projection slide → stuck bookkeeping */
   _stepMove(mx,mz,dt){
-    const spd=this.speed,px=this.pos.x,pz=this.pos.z;
+    /* Water puddle: bots wade through it at a third of their speed, matching the player's rule. */
+    const spd=this.slowT>0?this.speed*.35:this.speed,px=this.pos.x,pz=this.pos.z;
     let want=Math.hypot(mx,mz);
     const dx0=want>0?mx/want:0,dz0=want>0?mz/want:1; // true destination direction (before the escape)
     if(want<.08){mx=0;mz=0;want=0;} // P0 dead-band: micro-oscillation never reaches the position
@@ -667,9 +673,33 @@ export class HeroBot{
     }
     if(this._barkT>0)this._barkT-=dt;
     if(this.blindT>0)this.blindT-=dt;
+    /* Fun Brawl status timers (funItems.js). Both are zero outside that mode, so the two branches
+       below never run in waves / dm / koth. */
+    if(this.slipT>0)this.slipT-=dt;
+    if(this.slowT>0)this.slowT-=dt;
+    if(this.disarmedT>0){
+      this.disarmedT-=dt;
+      if(this.disarmedT<=0){this.disarmedT=0;this._restoreRifle();}  // the bot "picks its rifle back up"
+    }
     if(this.flashT>0){
       this.flashT-=dt;
       if(this.flashT<=0)this._restoreFlash();
+    }
+    if(this.slipT>0){
+      /* Banana peel: like a flashbang the brain stops driving the bot, but here the slide is the
+         point — momentum is kept (only a light drag) so the bot visibly skids past its cover. */
+      this.vel.x*=Math.max(0,1-1.2*dt);this.vel.z*=Math.max(0,1-1.2*dt);
+      this.pos.x+=this.vel.x*dt;this.pos.z+=this.vel.z*dt;
+      this._collide(this.game.world.colliders);
+      if(this.reloadT>0)this.reloadT=Math.max(0,this.reloadT-dt);
+      if(this.hitT>0)this.hitT=Math.max(0,this.hitT-dt);
+      if(this.recoilKick>0)this.recoilKick=Math.max(0,this.recoilKick-dt*4.5);
+      /* A rifle dropped by a magnet still has to reach the ground while the bot skids. */
+      if(this.rifleFalling)this._updateDroppedRifle(dt);
+      this._animate(dt,time,this.vel.length());
+      this.group.position.set(this.pos.x,this.pos.y,this.pos.z);
+      this.group.rotation.y=this.yaw;
+      return;
     }
     if(this.blindT>0){
       // Flashbang blindness: like drones — loses target awareness, holds fire, coasts to a stop
@@ -697,6 +727,9 @@ export class HeroBot{
     this.brain.update(dt,time,losCheck);
     this._applyBrainAim(dt);
     this._applyBrainMovement(dt);
+    /* A rifle knocked out of the hands by a magnet (funItems.js) still has to fall to the ground
+       while the bot is alive — the death branch below is the only other caller. */
+    if(this.rifleFalling)this._updateDroppedRifle(dt);
 
     this.moving=this.vel.length()>.5;
     this.hasTarget=!!(this.brain&&this.brain.target);
@@ -1067,6 +1100,9 @@ export class HeroBot{
   }
 
   _shoot(aimPoint,target,dist,P,miss){
+    /* Magnet: the rifle was yanked out of the bot's hands — it has nothing to fire until it
+       picks one back up (disarmedT expires or it respawns). */
+    if(this.disarmedT>0)return;
     this._consumeAmmo();
     const from=this._fromT;
     this.gunTip.getWorldPosition(from);

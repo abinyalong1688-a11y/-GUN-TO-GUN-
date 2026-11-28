@@ -30,6 +30,7 @@ import {InputManager,KeyboardMouseAdapter} from './input.js';
 import {TouchAdapter} from './input-touch.js';
 import {GamepadAdapter,PAD_MAP} from './input-gamepad.js';
 import {Grenades} from './grenades.js';
+import {FunItems,funScoreEvent,FUN_MATCH,FUN_ITEMS} from './funItems.js';
 import {Pickups} from './pickups.js';
 import {applyUpgrade,rollUpgrades} from './upgrades.js';
 import {Radar} from './radar.js';
@@ -84,7 +85,7 @@ class Game{
     this.keys=new Set();
     this.input={firing:false,ads:false};
     this.fallbackAim=false;
-    this._suppressPauseOnce=false; // set before game-initiated unlocks (DM death) so the lock-loss auto-pause is skipped
+    this._suppressPauseOnce=false; // set before a game-initiated unlock so the lock-loss auto-pause is skipped. Arena death no longer unlocks (it used to, and the respawn re-lock could be refused); kept for any future scripted unlock.
     this._lastCursor=null;         // deduped per-frame canvas cursor state
     // S1.4 settings hub: unified reads + legacy key migration
     this.settings=settings;
@@ -218,6 +219,7 @@ class Game{
     this.waves=new Waves(this);
     this.heroes=new HeroTeam(this);
     this.grenades=new Grenades(this,this.scene,this.effects,this.audio,this.ui);
+    this.funItems=new FunItems(this,this.scene,this.effects,this.audio,this.ui);
     this.pickups=new Pickups(this,this.scene,this.effects,this.audio,this.ui);
     this.radar=new Radar(document.getElementById('radar'));
     this.koth=new KothMode(this);
@@ -585,7 +587,7 @@ class Game{
 
   /* Every arena mode is played online now: dm and koth are team arenas. Endless waves is
      single-player only; a solo-training session (server unreachable) runs it locally. */
-  isArena(){ return this.mode==='dm'||this.mode==='koth'; }
+  isArena(){ return this.mode==='dm'||this.mode==='koth'||this.mode==='fun'; }
   /* True while a networked match is running (the DO is authoritative). */
   online(){ return !!(this.netMatch&&this.netMatch.active); }
 
@@ -658,7 +660,7 @@ class Game{
     this.spawnInvulnT=0;
     this._deathHandled=false;
     this.spectate.target=null;this.lastKiller=null;
-    this.grenades.reset();this.pickups.clear();
+    this.grenades.reset();this.funItems.reset();this.pickups.clear();
     this.damageBoostT=0;this.damageBoostMul=1;
     this.empT=0;
     this.ui.hideBoss();
@@ -710,6 +712,29 @@ class Game{
       this.ui.banner(t('mode_waves'),t('wave_sub'));
       this.audio.waveStart();
       this.ui.setWave(0);
+    }else if(this.matchMode==='fun'){
+      /* Fun Brawl: a plain 3v3 team arena (same roster/spawn/respawn rules as offline DM) whose
+         score is the prank board — kills and prop hits both feed the same `kills` column. */
+      this.ui.setDmMode(true);
+      this.waves.state='idle';
+      this.dm={scores:new Map(),timer:FUN_MATCH.duration,winKills:FUN_MATCH.win,score:{A:0,B:0}};
+      this.dm.scores.set(this.playerName,{name:this.playerName,team:this.playerTeam||'A',kills:0,deaths:0,me:true,op:this.playerOperator});
+      this.heroes.setup(this.playerFaction,this.playerName,op.id);
+      for(const h of this.heroes.list)
+        this.dm.scores.set(h.name,{name:h.name,team:h.team,kills:0,deaths:0,me:false,op:h.def});
+      /* Props are the point of the mode: everyone starts with one of each, and the map keeps
+         seeding boxes (FunItems.update). Grenades are disabled — the prop keys replace them. */
+      this.funItems.reset();
+      this.grenades.counts={frag:0,flash:0,smoke:0};
+      this.ui.setGrenades&&this.ui.setGrenades(this.grenades.counts);
+      this.ui.setFunItems&&this.ui.setFunItems(this.funItems.counts);
+      this.ui.setFunItemsActive&&this.ui.setFunItemsActive(true);
+      // Tighter reserve than DM: the props, not the rifle, are supposed to carry the match.
+      for(const s of this.weapon.state)s.reserve=Math.floor(s.reserve/2);
+      this.ui.banner(t('mode_fun'),t('fun_sub',{k:FUN_MATCH.win}));
+      this.audio.waveStart();
+      this.ui.setScore(0);
+      this.ui.setDmScore(0,0,this.dm.timer);
     }else if(this.matchMode==='koth'){
       this.ui.setDmMode(true);
       this.waves.state='idle';
@@ -805,6 +830,11 @@ class Game{
     this.state='paused';
     this.input.firing=false;this.input.ads=false;
     this._mouseFire=false;this._mouseAds=false; // a mouse-up lost during pause must not leave fire stuck on after resuming
+    /* The sim is frozen but the gun stays on screen (main.js keeps the viewmodel visible while
+       paused), so anything weapon.update() would have decayed has to be cleared by hand — most
+       visibly a muzzle flash burning in a still frame if ESC lands right after a shot. The reload
+       and switch state are deliberately kept: pausing mid-reload resumes that reload. */
+    this.weapon.clearTransientFx();
     this.audio.musicSet(.2);
     this._tabHeld=false;this._boardAt=0; // a held TAB must not pop the board back after resume
     this.ui.hideBoard();
@@ -819,6 +849,7 @@ class Game{
     this.input.firing=false;this.input.ads=false;
     this._mouseFire=false;this._mouseAds=false;
     this.keys.clear();
+    this.weapon.clearTransientFx();   // same frozen-frame muzzle flash guard as pause()
     this.audio.musicSet(.2);
     this.ui.showOnly('pause');
     this.ui.setNetMode(true);
@@ -841,6 +872,7 @@ class Game{
     this.enemies.clearAll();
     this.heroes.clear();
     this.grenades.clear();
+    this.funItems.clear();
     this.pickups.clear();
     this.koth.end();
     this.state='menu';
@@ -902,6 +934,7 @@ class Game{
     // Hard guard: dead players / post-match input must never produce a shot, even if a
     // direct caller (touch, gamepad, test hook) bypasses weapon.update().
     if(!this.player || !this.player.alive)return;
+    if(this.player.slipT>0||this.player.disarmT>0)return;  // slipped / disarmed: no shot
     this.stats.shots++;
     const killerId=this.netMatch&&this.netMatch.active?this.netMatch.me?.id:null;
     const cam=this.camera;
@@ -1107,8 +1140,10 @@ class Game{
     }
     if(!this.dm||!this.isArena())return;
     if(this.squad)this.squad.onKill(killerName,victimHero);
+    /* Fun Brawl pays kills at the same rate as a disarm (funScoreEvent), not one point. */
+    const killPts=this.matchMode==='fun'?funScoreEvent('kill'):1;
     const k=this.dm.scores.get(killerName);
-    if(k)k.kills++;
+    if(k)k.kills+=killPts;
     const v=this.dm.scores.get(victimHero.name);
     if(v)v.deaths++;
     const mine=killerName===this.playerName;
@@ -1125,6 +1160,26 @@ class Game{
   }
   botDamageFx(hero,pos){
     this.effects.impact(pos,UP,'metal',{decal:false});
+  }
+
+  /* Single entry point for Fun Brawl scoring (funItems.js calls this for every prop hit).
+     Offline it writes the prank board directly; online a mode would route the same event through
+     the DO, so the signature already carries the neutral shape {kind, owner, victim, pos}. */
+  onFunEvent(ev){
+    if(!ev||this.matchMode!=='fun'||!this.dm||this.netMatch&&this.netMatch.active)return 0;
+    const pts=funScoreEvent(ev.kind);
+    if(!pts)return 0;
+    const by=ev.owner&&ev.owner.name;
+    const row=by&&this.dm.scores.get(by);
+    if(!row)return 0;
+    row.kills+=pts;
+    /* Feed the kill feed so the whole lobby can see who got pranked. */
+    if(ev.victim&&ev.victim.name&&ev.victim.name!==by){
+      const verb=t('fun_verb_'+ev.kind);
+      this.ui.killFeed(by,ev.victim.name,verb,by===this.playerName);
+    }
+    this._checkDmWin();
+    return pts;
   }
 
   /* Arena kill drop (dm / koth / online, NOT waves): a defeated opponent drops their primary.
@@ -1164,7 +1219,8 @@ class Game{
         if(me)me.deaths++;
         if(fromName){
           const k=this.dm&&this.dm.scores.get(fromName);
-          if(k)k.kills++;
+          const killPts=this.matchMode==='fun'?funScoreEvent('kill'):1;
+          if(k)k.kills+=killPts;
           this.ui.killFeed(fromName,this.playerName,t('kill_verb'),false);
           if(this.squad)this.squad.onKill(fromName,'player');
           this._checkDmWin();
@@ -1172,6 +1228,10 @@ class Game{
       }
       const killer=fromName?this.heroes.list.find(h=>h.name===fromName):null;
       if(killer&&killer.alive)this.spectate={target:killer,t:2.5};
+      /* Clear the viewmodel the moment HP hits zero — here, not only in tick's death branch: the
+         shot that killed us may have lit the muzzle flash microseconds earlier, and any code path
+         (online death report, a test hook) has to leave the same clean state behind. Idempotent. */
+      this.weapon.onDeath();
     }
   }
   damagePlayerFromBot(dmg,fromName,fromPos){ return this.damagePlayer(dmg,{name:fromName,pos:fromPos}); }
@@ -1209,7 +1269,7 @@ class Game{
     if(!this.dm){this.ui.hideBoard();return;}
     const rows=[...this.dm.scores.values()]
       .sort((a,b)=>b.kills-a.kills||a.deaths-b.deaths);
-    const meta={title:this.mode==='koth'?t('mode_koth'):t('sb_title')};
+    const meta={title:this.mode==='koth'?t('mode_koth'):this.mode==='fun'?t('sb_fun'):t('sb_title')};
     if(this.mode==='koth'&&this.koth){
       /* Online the DO owns the capture score (s:score → dm.score) and KothMode.update returns
          before writing this.koth.score, so reading it here showed a permanent 0 : 0. */
@@ -1229,9 +1289,10 @@ class Game{
   }
   _checkDmWin(){
     if(this.netMatch&&this.netMatch.active)return; // the DO decides the winner online
-    // Team deathmatch only. KOTH is decided by capture points (KothMode offline / the room server
-    // online) — its kill line is 0, so running the kill check there ended the match on first blood.
-    if(this.matchMode!=='dm')return;
+    // Team deathmatch and Fun Brawl only. KOTH is decided by capture points (KothMode offline /
+    // the room server online) — its kill line is 0, so running the kill check there ended the
+    // match on first blood.
+    if(this.matchMode!=='dm'&&this.matchMode!=='fun')return;
     let a=0,b=0;
     for(const s of this.dm.scores.values()){
       if(s.team==='A')a+=s.kills;else b+=s.kills;
@@ -1255,7 +1316,7 @@ class Game{
     const award=this._awardProgress(); // award before the results screen so LV/XP is current
     this.ui.showOver({
       title:win?t('win'):t('lose'),
-      win,kicker:t('dm_over_kicker'),
+      win,kicker:t(this.matchMode==='fun'?'fun_over_kicker':'dm_over_kicker'),
       stats:{...this.stats,waveLabel:t('dur_label'),wave:t('dur_fmt',{m:Math.floor(this.stats.time/60),s:Math.floor(this.stats.time%60)}),score:this.score,best:Math.max(best,this.score),mvp},
       board:`<table><tr><th>${t('sb_role')}</th><th>${t('sb_faction')}</th><th>${t('sb_kills')}</th><th>${t('sb_deaths')}</th></tr>${rows}</table>`,
     });
@@ -1418,6 +1479,7 @@ class Game{
           this.player.yaw=0;this.player.pitch=0;
           this.player.vel.set(0,0,0);
           this.player.velY=0;this.player.grounded=true;this.player.airborne=false;
+          this.player.slipT=0;this.player.slowT=0;this.player.disarmT=0; // no stale prop status carries over
           this.player.alive=true;
           this._deathHandled=false;             // allow the next death to run side-effects once
           this.player.health=this.player.maxHealth;
@@ -1427,9 +1489,12 @@ class Game{
           this.spawnInvulnT=SPAWN_INVULN;
           this.weapon.onRespawn();       // a queued semi shot must not fire itself after respawn
           this.audio.respawn();
-          this.ui.deathFlash();
-          this._suppressPauseOnce=false; // the death unlock was consumed; normal lock-loss behaviour resumes
-          this._requestLock();           // re-acquire aim control without waiting for the player to click
+          /* No second full-screen white flash: death already flashed, and flashing again on the
+             frame the player regains control is a needless full-screen composite at the exact
+             moment they are trying to read the battlefield again. */
+          /* The lock was held through the spectate window (see the death branch), so normally
+             there is nothing to do here. Only re-request when it was actually lost meanwhile. */
+          if(!document.pointerLockElement&&!this.fallbackAim)this._requestLock();
         }
       }
       if(this.invulnT>0){
@@ -1441,9 +1506,16 @@ class Game{
       // inside it, or it is already 0 by the time control is handed to the player.
       if(this.spawnInvulnT>0&&!this._uiLock)this.spawnInvulnT=Math.max(0,this.spawnInvulnT-dt);
 
-      if(!this._uiLock && this.player.alive){
-        this._fallbackEdgeRotate(dt);
-        this.player.update(dt,this.input,this.keys,this.time,this.audio);
+      if(!this._uiLock){
+        if(this.player.alive){
+          this._fallbackEdgeRotate(dt);
+          this.player.update(dt,this.input,this.keys,this.time,this.audio);
+        }
+        /* The weapon keeps updating while dead: its muzzle flash, shell casings, recoil kick and
+           ADS zoom are all decayed inside weapon.update(), so skipping the call froze them on the
+           death frame (a permanently lit muzzle flash was the visible symptom). weapon.update()
+           has its own dead branch that only settles the viewmodel — it can never fire, reload or
+           complete a swap for a corpse. */
         this.weapon.update(dt,this.input,this.player,this.camera,this.time,d=>this.fire(d));
       }
 
@@ -1466,6 +1538,11 @@ class Game{
               let a=0,b=0;
               for(const s of this.dm.scores.values()){if(s.team==='A')a+=s.kills;else b+=s.kills;}
               if(this.mode==='dm')this._endDm(a,b);
+              else if(this.mode==='fun'){
+                // Fun Brawl: the prank board decides, same end screen as DM.
+                this._checkDmWin();
+                if(this.state!=='over')this._endDm(a,b);
+              }
               else{
                 const win=this.koth.score.A>=this.koth.score.B;
                 this._endMode(win);
@@ -1494,7 +1571,10 @@ class Game{
       if(this.comboT>0){this.comboT-=dt;if(this.comboT<=0)this.comboKills=0;}
 
       // Recoil + screen shake
-      let kick=this.weapon.camKick;
+      /* Recoil only applies while alive. It is decayed inside weapon.update(), but adding a stale
+         nonzero value to the camera every frame would ratchet the view up/aside for as long as the
+         corpse sits there — and it is dead-obvious when the spectate camera has no target. */
+      let kick=this.player.alive?this.weapon.camKick:0;
       // Near the zenith recoil stops lifting the view (otherwise it crosses 90° into the flip zone and spray control breaks);
       // while pinned at the top, stored recoil drains quickly, halving the "pull-down dead zone"
       const headroom=1.553-this.player.pitch;
@@ -1506,7 +1586,7 @@ class Game{
         this.weapon.camKick*=Math.max(0,1-16*dt);
       }
       this.camera.rotation.x+=kick;
-      this.camera.rotation.y+=this.weapon.camKickYaw; // recoil pattern horizontal drift
+      if(this.player.alive)this.camera.rotation.y+=this.weapon.camKickYaw; // recoil pattern horizontal drift
       const shake=this.settings.get('reduceMotion')?0:this.shake;
       this.camera.rotation.y+=(Math.random()-.5)*shake*.06;
       this.camera.rotation.z=(Math.random()-.5)*shake*.05;
@@ -1524,13 +1604,19 @@ class Game{
         this._deathHandled=true;          // death side-effects must not re-run every frame
         this.input.firing=false;this.input.ads=false;
         this._mouseFire=false;this._mouseAds=false;
+        /* Clean the viewmodel on this exact frame rather than waiting for the next weapon.update():
+           the shot that killed us may have lit the muzzle flash microseconds ago in the same tick. */
+        this.weapon.onDeath();
         if(this.isArena()){
           this.dmRespawnT=2.5;
           if(this.lastKiller&&this.lastKiller.alive)this.spectate={target:this.lastKiller,t:2.5};
           this.ui.deathFlash();
           this.audio.hurt();
-          this._suppressPauseOnce=true; // this unlock is the game's own (spectate window) — it must not auto-pause
-          if(document.pointerLockElement)document.exitPointerLock();
+          /* Pointer lock is deliberately NOT released here. Dropping it on death and asking for it
+             back 2.5 s later is a lock request without a fresh user gesture: the browser may reject
+             it, and _requestLock's polynomial fallback then leaves the player unable to turn for
+             1.4-2.3 s — which reads as "respawn froze". Keeping the lock through the spectate window
+             also matches an FPS convention: the camera keeps following the killer under mouse look. */
         }else{
           // Waves is single-player: one death ends the run.
           this.state='dying';this.dyingT=1.5;
@@ -1551,17 +1637,28 @@ class Game{
           const from=this._specFrom.set(t.pos.x,t.pos.y+1.2,t.pos.z);
           const dir=this._specDir.copy(want).sub(from);
           const len=dir.length();
-          if(len>.01){
+          /* The wall test only needs to run on alternate frames: the spectate camera tracks a bot
+             that moves a few centimetres per frame, so a one-frame-old pullback is invisible, and
+             this raycast was ~2 ms against the full static list every single frame while dead.
+             losStatics (no sky sphere, no distant scenery) is the list built for exactly this. */
+          if(len>.01&&(this._frame&1)===1){
             dir.divideScalar(len);
             this.losRay.set(from,dir);this.losRay.far=len;
-            const hits=this.losRay.intersectObjects(this.world.shootStatics,false);
-            if(hits.length)want.copy(from).addScaledVector(dir,Math.max(.4,hits[0].distance-.3));
+            const hits=this.losRay.intersectObjects(this.world.losStatics||this.world.shootStatics,false);
+            this._specClamped=!!hits.length;
+            if(this._specClamped)this._specWantHit=Math.max(.4,hits[0].distance-.3);
+          }
+          if(this._specClamped&&this._specWantHit!=null){
+            const d2=this._specDir.copy(want).sub(from);const l2=d2.length();
+            if(l2>.01)want.copy(from).addScaledVector(d2.divideScalar(l2),this._specWantHit);
           }
           this.camera.position.copy(want);
           this.camera.lookAt(from);
           s.t-=dtRaw;
           if(s.t<=0)s.target=null;
         }else s.target=null;
+        /* Leaving spectate drops the cached clamp so the next death starts from a clean test. */
+        if(!s.target){this._specClamped=false;this._specWantHit=null;}
       }
     }else if(this.state==='menu'){
       const t=performance.now()*.001*.06;
@@ -1579,6 +1676,9 @@ class Game{
     // pause menu. Effects keep running (pure visuals).
     if(this.state==='playing'){
       this.grenades.update(dt);
+      /* Fun Brawl props only exist in that mode: the update is gated so no other mode can ever
+         have a prop ticking, and `reset()` leaves the list empty the moment the mode changes. */
+      if(this.matchMode==='fun')this.funItems.update(dt);
       this.pickups.update(dt,this.player);
     }
     if(this.damageBoostT>0)this.damageBoostT=Math.max(0,this.damageBoostT-dt);
@@ -1604,7 +1704,9 @@ class Game{
   _applyCameraState(){
     const scoping=this.weapon.def.scope&&this.weapon.adsAmt>.8&&this.player.alive;
     this.ui.setScope(scoping);
-    this.weapon.group.visible=!scoping;
+    /* A dead player has no viewmodel: the spectate camera looks at the killer through the main
+       camera, so a gun+arms pinned to the screen would float in someone else's view. */
+    this.weapon.group.visible=this.player.alive&&!scoping;
     const viewFov=75+(58-75)*this.weapon.adsAmt;
     if(Math.abs(viewFov-(this._lastViewFov??-1))>.01){
       this._lastViewFov=viewFov;
@@ -2282,11 +2384,102 @@ class Game{
         assert(respawned,'the player should respawn after the 2.5 s countdown, alive after '+t.toFixed(2)+' s');
         assert(this.dmRespawnT<0,'the countdown should be cleared after the respawn, got '+this.dmRespawnT);
         assert(this.player.health===this.player.maxHealth,'respawn should restore full health');
-        // The death and respawn flashes fire once each. Re-arming them every frame kept the white
-        // overlay pinned on screen (the death screen never faded), which is what this guards.
-        assert(flashes===2,'death and respawn should flash exactly once each, got '+flashes);
+        /* Death flashes exactly once. There is deliberately NO respawn flash: it used to fire on
+           the very frame control was handed back, slamming a full-screen white layer over the
+           battlefield the player is trying to re-read. The assertion guards both halves — the
+           count must not re-arm every frame (that pinned the white overlay on screen forever). */
+        assert(flashes===1,'death should flash exactly once, got '+flashes);
       }finally{this.clock=clock;this.composer.render=render;this.ui.deathFlash=origFlash;}
       this.spectate.target=null;this.dmRespawnT=-1;this.player.god=true;
+    });
+    await run('death-clears-viewmodel',()=>{
+      /* Regression: the muzzle flash / shells / recoil / ADS all decay inside weapon.update(), and
+         main.js used to skip that call for a dead player — so a shot fired just before death left
+         the flash lit on the gun tip for the whole spectate window. */
+      this.ui.sel.mode='dm';this.startGame();this.player.god=false;
+      const w=this.weapon;
+      this.player.sprinting=false;this.input.ads=false;
+      w.switchT=-1;w._equip(0,true);
+      // Fire once so the flash is genuinely lit before the kill lands.
+      this.input.firing=true;w._trigWasDown=false;w.fireT=0;
+      w.update(.016,this.input,this.player,this.camera,this.time,()=>{});
+      assert(w.muzzleFlashT>0&&w.flash.visible,'a shot should light the muzzle flash');
+      this.input.firing=false;
+      const killer=this.heroes.list.find(h=>h.team==='B'&&h.alive);
+      this.invulnT=0;this.spawnInvulnT=0;this.player.health=1;this.player.alive=true;
+      this.damagePlayerFromBot(999,killer.name,killer.pos);
+      assert(w.muzzleFlashT===0,'the muzzle flash timer must be cleared on the death frame');
+      assert(w.flash.visible===false,'the flash plane must be hidden');
+      assert(w.flashLight.intensity===0,'the muzzle point light must be off');
+      assert(w.shells.every(s=>!s.active&&!s.mesh.visible),'no casing may hang in the air');
+      assert(w.camKick===0&&w.camKickYaw===0,'recoil must not survive into the death camera');
+      /* group.visible is owned by _applyCameraState() (called once per frame), so drive one frame
+         to observe it — the flash/light/shells above are already clean without a tick. */
+      this._applyCameraState();
+      assert(w.group.visible===false,'a dead player has no viewmodel');
+      this.player.alive=true;this.player.health=this.player.maxHealth;
+      this.dmRespawnT=-1;this.spectate.target=null;this._deathHandled=false;
+    });
+    await run('death-cancels-reload',()=>{
+      this.ui.sel.mode='dm';this.startGame();this.player.god=false;
+      const w=this.weapon;
+      this.player.sprinting=false;this.input.ads=false;
+      w.switchT=-1;w._equip(0,true);
+      this.input.firing=true;w._trigWasDown=false;w.fireT=0;
+      w.update(.016,this.input,this.player,this.camera,this.time,()=>{});
+      this.input.firing=false;
+      w.startReload();
+      for(let i=0;i<20;i++)w.update(.016,{firing:false,ads:false},this.player,this.camera,this.time,()=>{});
+      assert(w.reloading||w.reloadT>0,'the reload should be underway');
+      const killer=this.heroes.list.find(h=>h.team==='B'&&h.alive);
+      this.invulnT=0;this.spawnInvulnT=0;this.player.health=1;this.player.alive=true;
+      this.damagePlayerFromBot(999,killer.name,killer.pos);
+      assert(w.reloading===false,'a death cancels the reload rather than pausing it');
+      assert(w.reloadT===0,'the reload timer is reset');
+      this.player.alive=true;this.player.health=this.player.maxHealth;
+      this.dmRespawnT=-1;this.spectate.target=null;this._deathHandled=false;
+    });
+    await run('death-restores-fov',()=>{
+      /* ADS zoom feeds the camera FOV; a frozen adsAmt left the player zoomed in through the whole
+         death screen and the respawn. */
+      this.ui.sel.mode='dm';this.startGame();this.player.god=false;
+      const w=this.weapon;
+      w.switchT=-1;w.setLoadout('awp');w._equip(0,true);
+      this.player.sprinting=false;
+      for(let i=0;i<90;i++)w.update(.016,{firing:false,ads:true},this.player,this.camera,this.time,()=>{});
+      assert(w.adsAmt>.85,'the scope should be up, got '+w.adsAmt);
+      const killer=this.heroes.list.find(h=>h.team==='B'&&h.alive);
+      this.invulnT=0;this.spawnInvulnT=0;this.player.health=1;this.player.alive=true;
+      this.damagePlayerFromBot(999,killer.name,killer.pos);
+      // Let the dead tick ease the zoom out (main.js still calls weapon.update while dead).
+      for(let i=0;i<60;i++)w.update(.016,{firing:false,ads:false},this.player,this.camera,this.time,()=>{});
+      assert(w.adsAmt<.05,'the ADS zoom must ease back out while dead, got '+w.adsAmt);
+      this.player.alive=true;this.player.health=this.player.maxHealth;
+      this.dmRespawnT=-1;this.spectate.target=null;this._deathHandled=false;
+    });
+    await run('pause-clears-muzzle-fx',()=>{
+      /* Same frozen-frame symptom as death, reached through ESC instead: the sim stops but the gun
+         stays on screen, so a muzzle flash lit by the last shot would burn in the paused frame. */
+      this.ui.sel.mode='dm';this.startGame();this.player.god=true;
+      const w=this.weapon;
+      this.player.sprinting=false;this.input.ads=false;
+      w.switchT=-1;w._equip(0,true);
+      this.input.firing=true;w._trigWasDown=false;w.fireT=0;
+      w.update(.016,this.input,this.player,this.camera,this.time,()=>{});
+      this.input.firing=false;
+      assert(w.muzzleFlashT>0&&w.flash.visible,'a shot should light the muzzle flash');
+      // Reload in flight: a pause must not cancel it.
+      w.startReload();
+      for(let i=0;i<10;i++)w.update(.016,{firing:false,ads:false},this.player,this.camera,this.time,()=>{});
+      const reloadWas=w.reloading;
+      this.pause();
+      assert(w.muzzleFlashT===0,'pausing must clear the muzzle flash timer');
+      assert(w.flash.visible===false,'pausing must hide the flash plane');
+      assert(w.flashLight.intensity===0,'pausing must turn the muzzle light off');
+      assert(w.reloading===reloadWas,'a pause must not cancel an in-flight reload');
+      assert(this.state==='paused','the game should be paused');
+      this.resume();
+      this.player.god=false;
     });
     await run('spawn-invuln-3s',()=>{
       /* Respawn protection: 3 s where incoming damage is ignored entirely (no HP loss, no death,
@@ -2441,6 +2634,168 @@ class Game{
       assert(!g.throw('unknown'),'unknown types should be rejected');
       g.reset();
       assert(g.counts.frag===2,'grenades should refill on restart');
+    });
+    await run('fun-items',()=>{
+      this.ui.sel.mode='fun';this.startGame();
+      const f=this.funItems;
+      assert(this.matchMode==='fun'&&this.isArena(),'fun should be an arena mode');
+      assert(f.counts.banana===1&&f.counts.magnet===1&&f.counts.spring===1&&f.counts.water===1,
+        'every prop starts with one charge');
+      assert(this.grenades.counts.frag===0,'grenades are disabled in Fun Brawl');
+      assert(!document.getElementById('fun-items').classList.contains('hidden'),'the prop HUD is shown');
+      assert(document.getElementById('grenades').classList.contains('hidden'),'the grenade HUD is hidden');
+      // Throwing spends a charge and lands as a placed prop.
+      assert(f.throw('banana'),'a throw should leave the hand');
+      assert(f.counts.banana===0,'the charge is spent');
+      assert(!f.throw('banana'),'an empty bag throws nothing');
+      assert(document.getElementById('fi-banana').textContent==='0','the prop HUD stays in sync');
+    });
+    await run('fun-props',()=>{
+      this.ui.sel.mode='fun';this.startGame();this.player.god=true;
+      const f=this.funItems;
+      /* Props score for whoever THREW them, so the owner has to be someone on the board. */
+      const enemyBot=this.heroes.list.find(h=>h.team==='B');
+      const owner={team:'B',name:enemyBot.name,isPlayer:false};
+      const ownerRow=this.dm.scores.get(enemyBot.name);
+      assert(ownerRow,'the enemy bot must have a board row');
+      // Banana: a peel on open ground slips the player and scores for the thrower.
+      const before=ownerRow.kills;
+      f._place({type:'banana',pos:new THREE.Vector3(0,0,0),owner},0);
+      this.player.pos.set(0,0,0);
+      f.update(.016);
+      assert(this.player.slipT>0,'the banana should make the player slip');
+      assert(ownerRow.kills>before,'the thrower should score the slip');
+      // Spring: launches upward.
+      this.player.slipT=0;this.player.velY=0;this.player.grounded=true;
+      f._place({type:'spring',pos:new THREE.Vector3(3,0,3),owner},0);
+      this.player.pos.set(3,0,3);
+      f.update(.016);
+      assert(this.player.velY>0,'the spring should launch the player');
+      // Water: slows the player.
+      this.player.velY=0;this.player.grounded=true;
+      f._place({type:'water',pos:new THREE.Vector3(-3,0,-3),owner},0);
+      this.player.pos.set(-3,0,-3);
+      f.update(.016);
+      assert(this.player.slowT>0,'the puddle should slow the player');
+      assert(this.player.alive,'props are prank effects, not damage');
+    });
+    await run('fun-magnet',()=>{
+      this.ui.sel.mode='fun';this.startGame();
+      const f=this.funItems;
+      const bot=this.heroes.list.find(h=>h.team==='B');
+      bot.pos.set(1,0,1);bot.disarmedT=0;bot.rifleFalling=false;
+      const dropsBefore=this.pickups.list.length;
+      const myRow=this.dm.scores.get(this.playerName);
+      assert(myRow,'the local player must have a board row');
+      const before=myRow.kills;
+      f._magnetBurst(new THREE.Vector3(1,0,1),{team:'A',name:this.playerName,isPlayer:true});
+      assert(bot.disarmedT>0,'the magnet should disarm the enemy bot');
+      assert(bot.rifleFalling,'the bot rifle should fall');
+      assert(this.pickups.list.length>dropsBefore,'a weapon crate should spawn');
+      assert(myRow.kills>before,'the thrower should score the disarm');
+      // A second burst cannot farm the same victim.
+      const again=myRow.kills;
+      f._magnetBurst(new THREE.Vector3(1,0,1),{team:'A',name:this.playerName,isPlayer:true});
+      assert(myRow.kills===again,'a disarmed bot must not score twice');
+    });
+    await run('fun-status-no-fire',()=>{
+      /* A slipped or disarmed player must not empty the magazine: the shot's ammo/spark/sound are
+         committed inside weapon.update(), so the status gate has to live there too (the fire()
+         guard alone would drain the mag and deal no damage). */
+      this.ui.sel.mode='fun';this.startGame();this.player.god=true;
+      this.weapon.switchT=-1;
+      this.weapon._equip(0,true);           // a known primary, no swap animation in flight
+      /* canFire also requires !player.sprinting; this harness never calls player.update(), so a
+         sprint flag left over from an earlier case would silently block every shot here. */
+      this.player.sprinting=false;
+      this.input.ads=false;
+      /* `shove` always goes through this one callback so every segment below counts shots;
+         a separate no-op callback would make the "fires again" assertion unobservable. */
+      let shots=0;
+      const shove=(dt)=>this.weapon.update(dt,this.input,this.player,this.camera,this.time,()=>{shots++;});
+      this.player.slipT=0;this.player.disarmT=0;
+      this.weapon.resetAmmo();this.weapon.fireT=0;
+      this.input.firing=true;this.weapon._trigWasDown=false;
+      const before=this.weapon.st.ammo;
+      shove(.016);
+      assert(this.weapon.st.ammo<before,'a normal trigger pull spends a round');
+
+      // Slipped: no rounds, no fire callback.
+      this.weapon.resetAmmo();this.weapon.fireT=0;this.weapon._trigWasDown=false;
+      this.player.slipT=.9;
+      const magSlip=this.weapon.st.ammo;shots=0;
+      for(let i=0;i<40;i++)shove(.016);
+      assert(this.weapon.st.ammo===magSlip,'slipping must not spend ammo');
+      assert(shots===0,'slipping must not fire a shot');
+
+      // Disarmed: same rule.
+      this.player.slipT=0;this.player.disarmT=3;
+      this.weapon.resetAmmo();this.weapon.fireT=0;this.weapon._trigWasDown=false;
+      const magDis=this.weapon.st.ammo;shots=0;
+      for(let i=0;i<40;i++)shove(.016);
+      assert(this.weapon.st.ammo===magDis,'being disarmed must not spend ammo');
+      assert(shots===0,'being disarmed must not fire a shot');
+
+      // Control: once the statuses clear the rifle works again. (player.update() is what drains
+      // the timers, so a weapon-only harness has to clear them by hand.)
+      this.player.slipT=0;this.player.disarmT=0;
+      this.weapon.resetAmmo();this.weapon.fireT=0;this.weapon._trigWasDown=false;
+      const magOk=this.weapon.st.ammo;shots=0;
+      this.player.sprinting=false;              // re-assert: nothing else resets it in this harness
+      for(let i=0;i<40;i++)shove(.016);
+      assert(this.weapon.st.ammo<magOk,'the rifle works again after the status expires');
+      assert(shots>0,'shots fire again after the status expires');
+      this.input.firing=false;
+    });
+    await run('fun-ends',()=>{
+      this.ui.sel.mode='fun';this.startGame();
+      // The prank board decides the match: first to FUN_MATCH.win ends it.
+      const me=this.dm.scores.get(this.playerName);
+      me.kills=FUN_MATCH.win;
+      this._checkDmWin();
+      assert(this.state==='over','the prank board should end the match at the win score');
+      const kicker=document.getElementById('o-kicker');
+      assert(kicker&&kicker.textContent.includes(t('fun_over_kicker')),'fun shows its own end kicker');
+    });
+    await run('fun-player-disarm',()=>{
+      /* The local player is a valid magnet victim; the guard used to only be exercised on bots. */
+      this.ui.sel.mode='fun';this.startGame();
+      const f=this.funItems;
+      this.player.pos.set(0,0,0);
+      this.weapon.switchT=-1;                       // no switch mid-animation
+      this.weapon._equip(0,true);                   // holding a primary
+      this.player.disarmT=0;
+      const dropsBefore=this.pickups.list.length;
+      const holding=this.weapon.cur<this.weapon.primaryCount;
+      assert(holding,'the player should start on a primary slot');
+      f._magnetBurst(new THREE.Vector3(0,0,0),{team:'B',name:'enemy',isPlayer:false});
+      assert(this.player.disarmT>0,'the magnet disarms the local player');
+      /* switchTo() starts a 0.32 s raise animation: the slot index only becomes the sidearm when
+         that animation completes, so a weapon timer has to be driven to see the hand change. */
+      for(let i=0;i<40;i++)this.weapon.update(.016,{firing:false,ads:false},this.player,this.camera,this.time,()=>{});
+      assert(this.weapon.cur>=this.weapon.primaryCount,'the player is handed a sidearm');
+      assert(this.pickups.list.length>dropsBefore,'the primary is dropped as a weapon crate');
+      // A sidearm in hand has no rifle to yank: no second crate, but still no shooting.
+      this.player.disarmT=0;
+      const drops2=this.pickups.list.length;
+      f._magnetBurst(new THREE.Vector3(0,0,0),{team:'B',name:'enemy',isPlayer:false});
+      assert(this.player.disarmT>0,'the sidearm holder is still stunned');
+      assert(this.pickups.list.length===drops2,'a sidearm holder drops no rifle crate');
+      this.player.disarmT=0;
+    });
+    await run('fun-isolation',()=>{
+      // Fun Brawl must leave every other mode byte-identical: no props, grenades intact.
+      for(const m of ['waves','dm','koth']){
+        this.ui.sel.mode=m;this.startGame();
+        assert(this.funItems.list.length===0&&this.funItems.placed.length===0,`${m} must not have props`);
+        assert(document.getElementById('fun-items').classList.contains('hidden'),`${m} hides the prop HUD`);
+      }
+      this.ui.sel.mode='dm';this.startGame();
+      assert(this.grenades.counts.frag===2,'dm keeps its grenades');
+      assert(this.funItems.throw('banana')===false||this.funItems.list.length===0,'dm never receives props');
+      this.ui.sel.mode='fun';this.startGame();
+      this.toMenu();
+      assert(this.funItems.list.length===0&&this.funItems.placed.length===0,'leaving the mode clears props');
     });
     await run('grenade-aoe',()=>{
       this.ui.sel.mode='waves';this.startGame();this.player.god=true;

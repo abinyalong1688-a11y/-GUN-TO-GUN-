@@ -28,6 +28,11 @@ export class Player{
     this.sprinting=false;this.moving=false;
     this.lastHurt=-99;this.regenDelay=5;
     this.stepT=0;this.stepAlt=false;
+    /* Fun Brawl status effects (funItems.js). Kept on the player so the movement code reads them
+       directly; all three are inert outside matchMode 'fun'. */
+    this.slipT=0;    // banana: input is ignored, inertia keeps sliding
+    this.slowT=0;    // water: movement speed is scaled down
+    this.disarmT=0;  // magnet: counts down the "your rifle is gone" window
     this.boundsR=56;
     this.god=false; // invulnerability for screenshot checks
   }
@@ -38,6 +43,7 @@ export class Player{
     this.velY=0;this.grounded=true;this.crouching=false;this.eyeHCur=EYE_STAND;
     this.pitch=-.05;
     this.health=this.maxHealth;this.alive=true;this.lastHurt=-99;
+    this.slipT=0;this.slowT=0;this.disarmT=0;
   }
   get eye(){
     return this._eye.set(this.pos.x,this.pos.y+this.eyeHCur,this.pos.z);
@@ -101,6 +107,7 @@ export class Player{
 
   update(dt,input,keys,time,audio){
     if(!this.alive)return;
+    if(this.disarmT>0)this.disarmT=Math.max(0,this.disarmT-dt);
 
     /* --- Crouch: lower stance / slower / steadier (eye height eases between states) --- */
     const wantCrouch=keys.has('ControlLeft')||keys.has('ControlRight');
@@ -123,11 +130,19 @@ export class Player{
     if(keys.has('KeyS'))iz+=1;
     if(keys.has('KeyA'))ix-=1;
     if(keys.has('KeyD'))ix+=1;
+    /* Fun Brawl: a banana peel takes the controls away for a moment — the slide keeps whatever
+       momentum the player had and friction is halved, so it reads as a slide rather than a freeze. */
+    if(this.slipT>0){
+      this.slipT=Math.max(0,this.slipT-dt);
+      ix=0;iz=0;
+    }
     const moving=ix!==0||iz!==0;
     this.moving=moving;
     this.sprinting=keys.has('ShiftLeft')&&moving&&iz<=0&&!input.ads&&!this.crouching&&this.grounded;
     const crouchMul=this.crouching?.55:1;
-    const spd=(this.sprinting?this.sprintSpeed:this.speed)*crouchMul*(input.ads?.62:1);
+    let spd=(this.sprinting?this.sprintSpeed:this.speed)*crouchMul*(input.ads?.62:1);
+    // Water puddle: heavy slowdown while standing in it.
+    if(this.slowT>0){this.slowT=Math.max(0,this.slowT-dt);spd*=.35;}
     const sinY=Math.sin(this.yaw),cosY=Math.cos(this.yaw);
     // Keyboard vector → world: world = R_y(yaw) * (ix, 0, iz)
     let wx=(ix*cosY+iz*sinY),wz=(-ix*sinY+iz*cosY);
@@ -135,7 +150,8 @@ export class Player{
     wx=wx/len*spd;wz=wz/len*spd;
     if(!moving){wx=0;wz=0;}
     // Smoothed acceleration: reduced air control (real inertia)
-    const accel=this.grounded?10:3.2;
+    let accel=this.grounded?10:3.2;
+    if(this.slipT>0)accel*=.45;   // sliding on a peel: less grip, the inertia carries
     const k=Math.min(1,accel*dt);
     this.vel.x+=(wx-this.vel.x)*k;
     this.vel.z+=(wz-this.vel.z)*k;

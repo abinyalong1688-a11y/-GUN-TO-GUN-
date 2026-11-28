@@ -193,13 +193,22 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
   letter-spacing:.06em;color:#9ba7c0;text-shadow:0 1px 3px #000}
 /* bottom:310px — the 6-slot weapon bar tops out around bottom:299px; 8px gap so this never overlaps the slots */
 #grenades b{color:var(--gold);font-size:14px;margin:0 2px}
-
-/* damage overlays */
+/* Fun Brawl prop bar — shares the grenade bar's slot; the two are never visible together */
+#fun-items{position:absolute;right:18px;bottom:310px;z-index:7;font-size:11px;font-family:var(--mono);
+  letter-spacing:.06em;color:#9ba7c0;text-shadow:0 1px 3px #000}
+#fun-items b{color:#ffd24a;font-size:14px;margin:0 2px}
+body.touch #fun-items{display:none}
+/* damage overlays — will-change:opacity promotes each to its own compositor layer, so changing
+   them only re-composites a cached layer instead of re-rasterising the full-screen gradient over
+   the live WebGL canvas every frame (death flashes two of these at once) */
 #dmg-vignette{position:absolute;inset:0;pointer-events:none;z-index:9;opacity:0;
+  will-change:opacity;
   background:radial-gradient(ellipse at center,transparent 42%,rgba(190,30,20,.55) 100%)}
 #lowhp{position:absolute;inset:0;pointer-events:none;z-index:9;opacity:0;
+  will-change:opacity;
   background:radial-gradient(ellipse at center,transparent 55%,rgba(160,20,15,.4) 100%)}
-#flash-white{position:absolute;inset:0;pointer-events:none;z-index:9;opacity:0;background:#fff}
+#flash-white{position:absolute;inset:0;pointer-events:none;z-index:9;opacity:0;background:#fff;
+  will-change:opacity}
 
 /* ============ overlays ============ */
 .overlay{position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;

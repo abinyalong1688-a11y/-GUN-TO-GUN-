@@ -67,6 +67,14 @@ export class KeyboardMouseAdapter{
       if(e.code==='KeyG'&&g.grenades)g.grenades.throw('frag');
       if(e.code==='KeyF'&&g.grenades)g.grenades.throw('flash');
       if(e.code==='KeyV'&&g.grenades)g.grenades.throw('smoke');
+      // Fun Brawl (funItems.js): 4 banana / 5 magnet / 6 spring / 7 water. Only bound in that mode
+      // so the numbers stay free for weapon slots everywhere else.
+      if(g.matchMode==='fun'&&g.funItems){
+        if(e.code==='Digit4')g.funItems.throw('banana');
+        if(e.code==='Digit5')g.funItems.throw('magnet');
+        if(e.code==='Digit6')g.funItems.throw('spring');
+        if(e.code==='Digit7')g.funItems.throw('water');
+      }
       if(e.code==='Escape'&&g.fallbackAim)g.pause();
     });
 
