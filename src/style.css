@@ -252,10 +252,10 @@ body{font-family:var(--sans);color:var(--txt);-webkit-font-smoothing:antialiased
 .btn{cursor:pointer;font-size:14px;letter-spacing:.1em;color:#f2f5fa;background:rgba(255,255,255,.07);
   border:1px solid rgba(199,209,226,.45);border-radius:9px;padding:11px 22px;transition:.15s;font-family:var(--sans)}
 .btn:hover{background:rgba(240,168,96,.14);border-color:rgba(240,168,96,.5);color:#fff}
-.btn-primary{cursor:pointer;font-size:16px;font-weight:700;letter-spacing:.14em;color:#fff;
-  background:linear-gradient(120deg,#f0b470,#e88a50);border:none;border-radius:9px;padding:13px 34px;transition:.15s;font-family:var(--sans);
-  text-shadow:0 1px 3px rgba(60,30,0,.55)}
-.btn-primary:hover{filter:brightness(1.12);box-shadow:0 6px 24px rgba(240,168,96,.35)}
+.btn-primary{cursor:pointer;font-size:16px;font-weight:700;letter-spacing:.14em;color:#111;
+  background:#ffd166;border:none;border-radius:9px;padding:13px 34px;transition:.15s;font-family:var(--sans);
+  text-shadow:none}
+.btn-primary:hover{filter:brightness(1.06);box-shadow:0 6px 24px rgba(255,209,102,.35)}
 select.btn{appearance:none;padding-right:16px}
 /* Dark native controls. A <select> popup list is drawn by the OS/browser, not by our CSS: on
    Windows Chrome/Edge it is a white sheet, and the light option text inherited from the button
