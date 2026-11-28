@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { buildWorld } from '../src/world.js';
 import {
   FunItems, FUN_ITEMS, FUN_DEFS, FUN_MATCH,
-  funScoreEvent, funStartCounts,
+  funScoreEvent, funStartCounts, funStartBreakdown, funApplyScore, FUN_CATEGORIES,
 } from '../src/funItems.js';
 import { makeProp } from '../src/funProps.js';
 
@@ -68,6 +68,31 @@ test('the prank scoring table: kills and disarms pay 2, every other prop hit pay
   assert.equal(funScoreEvent('bounce'), 1);
   assert.equal(funScoreEvent('water'), 1);
   assert.equal(funScoreEvent('nonsense'), 0);
+});
+
+test('funApplyScore credits each category and keeps row.kills as the grand total', () => {
+  const row = { kills: 0 };
+  assert.equal(funApplyScore(row, 'kill'), 2);
+  assert.equal(funApplyScore(row, 'slip'), 1);
+  assert.equal(funApplyScore(row, 'disarm'), 2);
+  assert.equal(funApplyScore(row, 'bounce'), 1);
+  assert.equal(funApplyScore(row, 'water'), 1);
+  assert.equal(row.kills, 7, 'the row total is the sum of every category');
+  assert.deepEqual(row.breakdown, { kill: 2, banana: 1, magnet: 2, spring: 1, water: 1 });
+});
+
+test('unknown scoring kinds award nothing and never touch the row', () => {
+  const row = { kills: 3 };
+  assert.equal(funApplyScore(row, 'nonsense'), 0);
+  assert.equal(funApplyScore(null, 'kill'), 0);
+  assert.equal(row.kills, 3, 'no points moved');
+  assert.equal(row.breakdown, undefined, 'no breakdown created for a no-op');
+});
+
+test('a fresh breakdown starts all-zero with one bucket per category', () => {
+  const b = funStartBreakdown();
+  assert.deepEqual(b, { kill: 0, banana: 0, magnet: 0, spring: 0, water: 0 });
+  assert.deepEqual(FUN_CATEGORIES, ['kill', 'banana', 'magnet', 'spring', 'water']);
 });
 
 test('throwing spends one prop of that type and refuses when the bag is empty', () => {
@@ -223,6 +248,23 @@ test('prop models reuse cached geometry instead of allocating per instance', () 
   modelA.traverse(o => o.geometry && geoA.push(o.geometry.uuid));
   modelB.traverse(o => o.geometry && geoB.push(o.geometry.uuid));
   assert.deepEqual(geoA, geoB, 'two instances must share the same geometry buffers');
+});
+
+test('every prop part has a finite world matrix after an update', () => {
+  /* A NaN transform (e.g. a builder passing undefined into position.set) does not throw —
+     the GPU just clips every triangle and the prop silently vanishes. That bug shipped once:
+     the banana body rendered as nothing because its position was [undefined, undefined, 0]. */
+  for (const type of FUN_ITEMS) {
+    for (const stage of ['fly', 'rest']) {
+      const model = makeProp(type, stage);
+      model.updateMatrixWorld(true);
+      model.traverse(o => {
+        for (const m of [o.matrix, o.matrixWorld])
+          for (const v of m.elements)
+            assert.ok(Number.isFinite(v), `${type}/${stage}: ${o.type} has a non-finite transform element`);
+      });
+    }
+  }
 });
 
 test('outside Fun Brawl the prop system is completely inert', () => {

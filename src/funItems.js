@@ -10,7 +10,7 @@
 // other mode is untouched.
 import * as THREE from 'three';
 import {t as i18nT} from './i18n.js';
-import {makeProp,setPropPuddleRadius,disposePropAssets} from './funProps.js';
+import {makeProp,setPropPuddleRadius,disposePropAssets,ensureMagnetPulseGeo} from './funProps.js';
 
 export const FUN_ITEMS = ['banana', 'magnet', 'spring', 'water'];
 
@@ -34,6 +34,34 @@ export function funScoreEvent(kind) {
   if (kind === 'disarm') return 2;
   if (kind === 'slip' || kind === 'bounce' || kind === 'water') return 1;
   return 0;
+}
+
+/* Scoring categories: kills plus one per prop type. The results screen shows every category
+   as its own column, so a player can see WHERE their points came from. */
+export const FUN_CATEGORIES = ['kill', 'banana', 'magnet', 'spring', 'water'];
+/* Scoring event kind → category (the props score by the prop that caused them). */
+export const FUN_EVENT_CATEGORY = { kill: 'kill', slip: 'banana', disarm: 'magnet', bounce: 'spring', water: 'water' };
+
+/* Fresh per-player category breakdown. Pure. */
+export function funStartBreakdown() {
+  const b = {};
+  for (const k of FUN_CATEGORIES) b[k] = 0;
+  return b;
+}
+
+/* Credit one scoring event to a scoreboard row: bumps the category bucket AND the row's total
+   (row.kills stays the grand total the HUD / win check read). Returns the points awarded
+   (0 for unknown kinds, which then must not touch the row at all). Pure w.r.t. everything but
+   the row — so it can be unit-tested without a Game. */
+export function funApplyScore(row, kind) {
+  const pts = funScoreEvent(kind);
+  if (!pts || !row) return 0;
+  const cat = FUN_EVENT_CATEGORY[kind];
+  if (!cat) return 0;
+  if (!row.breakdown) row.breakdown = funStartBreakdown();
+  row.breakdown[cat] += pts;
+  row.kills += pts;
+  return pts;
 }
 
 /* Fresh per-type ammo bag. */
@@ -175,21 +203,20 @@ export class FunItems {
       q.mesh.material.opacity = q.opacity * (1 - k) * (1 - k);
       if (k >= 1) {
         this.scene.remove(q.mesh);
-        q.mesh.material.dispose();
-        q.mesh.geometry.dispose();
+        q.mesh.material.dispose();   // geometry is the shared MAGNET_PULSE_GEO — keep it
         this.pulses.splice(i, 1);
       }
     }
   }
 
-  /* Expanding ring that shows where a one-shot field reached. Own geometry/material per pulse
-     because it is short-lived and scaled per instance (a handful per match at most). */
+  /* Expanding ring that shows where a one-shot field reached. The ring GEOMETRY is shared for
+     the whole session (it was rebuilt per burst: 80 tris + 4 buffer uploads every magnet hit);
+     only the material is per-pulse, because the fade animates a private opacity. */
   _magnetPulse(pos, radius) {
-    const geo = new THREE.RingGeometry(.9, 1, 40);
-    geo.rotateX(-Math.PI / 2);
+    ensureMagnetPulseGeo();
     const mat = new THREE.MeshBasicMaterial({ color: 0xff7a5c, transparent: true, opacity: .7,
       side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending });
-    const mesh = new THREE.Mesh(geo, mat);
+    const mesh = new THREE.Mesh(ensureMagnetPulseGeo(), mat);
     mesh.position.set(pos.x, pos.y + .05, pos.z);
     mesh.renderOrder = 5;
     this.scene.add(mesh);
@@ -233,6 +260,18 @@ export class FunItems {
     const mesh = makeProp(p.type, 'rest');
     mesh.position.set(p.pos.x, ground + (p.type === 'water' ? .012 : .02), p.pos.z);
     this.scene.add(mesh);
+
+    /* The bomb bursts on landing: one outward ring of spray at the splash site. */
+    if (p.type === 'water' && this.fx && this.fx.dust) {
+      const V = mesh.position.constructor;
+      const v = this._fxV || (this._fxV = new V());
+      for (let i = 0; i < 12; i++) {
+        const a = Math.PI * 2 * i / 12 + Math.random() * .4;
+        v.set(Math.cos(a) * (1.6 + Math.random()), .8 + Math.random() * 1.6, Math.sin(a) * (1.6 + Math.random()));
+        this.fx.dust.spawn(mesh.position, v,
+          { life: .35 + Math.random() * .3, size: .22, size1: .6, color: [.5, .8, .95], gravity: -3.2, drag: 1.6, alpha: .8 });
+      }
+    }
 
     if (p.type === 'magnet') {
       /* One-shot field: it fires on landing and does not linger. The pulse ring below tells the
@@ -409,10 +448,46 @@ export class FunItems {
   /* Report a scoring event to the host game (main.js decides whether it counts for the board). */
   _report(kind, owner, victim, pos) {
     const g = this.game;
+    this._fxBurst(kind, pos);
     if (g && g.onFunEvent) g.onFunEvent({ kind, owner: owner || null, victim: victim || null, pos });
     if (g && g.ui && g.ui.scorePop && pos) {
       const pts = funScoreEvent(kind);
       if (pts > 0) g.ui.scorePop(pos, g.camera, `+${pts}`, false, 'fun');
+    }
+  }
+
+  /* One-shot particle feedback per scoring event. Scoring events are rare (single-use props,
+     a 4 s per-victim puddle cooldown), so the handful of scratch vectors here are off the hot
+     path by construction — one shared Vector3 keeps it allocation-light anyway. */
+  _fxBurst(kind, pos) {
+    const fx = this.fx;
+    if (!fx || !fx.dust || !fx.sparks || !pos) return;
+    const V = pos.constructor || THREE.Vector3;
+    const v = this._fxV || (this._fxV = new V());
+    const dust = this.fx.dust, sparks = this.fx.sparks;
+    if (kind === 'slip') {
+      /* Banana: a puff of pale peel-yellow kicked along the ground. */
+      for (let i = 0; i < 8; i++)
+        dust.spawn(pos, v.set((Math.random() - .5) * 2.2, .5 + Math.random() * 1.2, (Math.random() - .5) * 2.2),
+          { life: .4 + Math.random() * .3, size: .22, size1: .5, color: [.95, .87, .45], gravity: -2.5, drag: 1.5, alpha: .85 });
+    } else if (kind === 'bounce') {
+      /* Spring: a vertical jet of cool sparks. */
+      for (let i = 0; i < 10; i++)
+        sparks.spawn(pos, v.set((Math.random() - .5) * 1.4, 2.5 + Math.random() * 2.2, (Math.random() - .5) * 1.4),
+          { life: .3 + Math.random() * .25, size: .16, size1: .03, color: [.6, .85, 1], gravity: -8, alpha: 1 });
+    } else if (kind === 'water') {
+      /* Puddle: spray plus a few bright drops. */
+      for (let i = 0; i < 8; i++)
+        dust.spawn(pos, v.set((Math.random() - .5) * 1.8, 1.6 + Math.random() * 1.8, (Math.random() - .5) * 1.8),
+          { life: .35 + Math.random() * .3, size: .2, size1: .55, color: [.5, .8, .95], gravity: -3, drag: 1.8, alpha: .8 });
+      for (let i = 0; i < 4; i++)
+        sparks.spawn(pos, v.set((Math.random() - .5) * 1.2, 2 + Math.random() * 2, (Math.random() - .5) * 1.2),
+          { life: .25, size: .12, size1: .02, color: [.85, .95, 1], gravity: -9, alpha: 1 });
+    } else if (kind === 'disarm') {
+      /* Magnet: crackling orange sparks around the yanked rifle. */
+      for (let i = 0; i < 12; i++)
+        sparks.spawn(pos, v.set((Math.random() - .5) * 3.4, (Math.random() - .2) * 3, (Math.random() - .5) * 3.4),
+          { life: .28 + Math.random() * .2, size: .14, size1: .02, color: [1, .72, .42], gravity: -9, alpha: 1 });
     }
   }
 
@@ -462,8 +537,7 @@ export class FunItems {
     for (const p of this.placed) this.scene.remove(p.mesh);
     for (const q of this.pulses) {
       this.scene.remove(q.mesh);
-      q.mesh.material.dispose();
-      q.mesh.geometry.dispose();
+      q.mesh.material.dispose();     // geometry is the shared MAGNET_PULSE_GEO — keep it
     }
     this.list.length = 0; this.placed.length = 0; this.pulses.length = 0;
     if (this.ui && this.ui.setFunItems) this.ui.setFunItems(this.counts);

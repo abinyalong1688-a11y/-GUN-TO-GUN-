@@ -30,7 +30,8 @@ import {InputManager,KeyboardMouseAdapter} from './input.js';
 import {TouchAdapter} from './input-touch.js';
 import {GamepadAdapter,PAD_MAP} from './input-gamepad.js';
 import {Grenades} from './grenades.js';
-import {FunItems,funScoreEvent,FUN_MATCH,FUN_ITEMS} from './funItems.js';
+import {FunItems,funApplyScore,funStartBreakdown,FUN_MATCH,FUN_ITEMS,FUN_CATEGORIES} from './funItems.js';
+import {prewarmPropModels} from './funProps.js';
 import {Pickups} from './pickups.js';
 import {applyUpgrade,rollUpgrades} from './upgrades.js';
 import {Radar} from './radar.js';
@@ -235,6 +236,20 @@ class Game{
     this.playerShotT=-99;
 
     this._setupComposer();
+    // Prop prewarm (Fun Brawl): render every prop variant once through the SAME composer
+    // pipeline the match uses, while the loading screen still covers the canvas. D3D11 drivers
+    // build their native shaders per pipeline format, so prewarming through a bare
+    // renderer.render() would not cover the match's HalfFloat+MSAA target — first throws still
+    // hitched 70-380 ms without this (measured). frustumCulled=false forces every mesh through
+    // a real draw call despite being far outside the menu camera's frustum.
+    try{
+      const unprewarm=prewarmPropModels(this.scene);
+      // Also force one shadow pass: the shadow depth programs for the prop materials must be
+      // built here too, or the first prop entering the light frustum pays them mid-match.
+      this.renderer.shadowMap.needsUpdate=true;
+      this.composer.render();
+      unprewarm();
+    }catch(e){}
     this._setupInput();
 
     // Menu bindings
@@ -497,6 +512,24 @@ class Game{
     this._applyQuality();               // re-apply DPR cap and half-res bloom after a resize
   }
 
+  /* Prewarm the corpse-fade variant: a dying character's materials flip to transparent, and the
+     FIRST transparent draw of each pays a driver-side pipeline build — measured 300-470 ms on
+     the first bot death of a match. One composer.render() behind the deploy banner with every
+     hero material temporarily transparent builds them all; restored on the next line. */
+  _prewarmFadeVariants(){
+    try{
+      const touched=[];
+      for(const h of this.heroes.list)for(const m of h.materials||[])
+        if(m&&m.isMaterial&&!m.transparent){m.transparent=true;m.opacity=Math.min(m.opacity,.999);touched.push(m);}
+      if(!touched.length)return;
+      // shadow pass too: the depth programs for the transparent-fade variant are a separate
+      // build, and the corpse still casts a shadow while it fades.
+      this.renderer.shadowMap.needsUpdate=true;
+      this.composer.render();
+      for(const m of touched){m.transparent=false;m.opacity=1;}
+    }catch(e){}
+  }
+
   /* ================= Input ================= */
   /* S1.5: input abstraction; mouse/keyboard listeners live in KeyboardMouseAdapter, M4 layers touch / gamepad on top */
   _setupInput(){
@@ -629,6 +662,11 @@ class Game{
     const sel=this.ui.sel;
     this.mode=sel.mode;
     this.playerName=this.ui.playerName;
+    // Dynamic-resolution grace: the first seconds of a match are one-off shader compilation,
+    // not sustained load — downscaling during the grace only chains into a second rebuild hitch
+    // when the scale creeps back (measured; see the M4-P6 note in tick()).
+    this._resAt=performance.now()/1000+5;
+    this._resCeil=1;this._resOk=0;
     const pm=this.mode==='online'?this._pendingNet:null;
     if(this.mode==='online'&&!pm){this.toMenu();return;}  // bail before any state is cleared
     // The room's mode (waves / koth / dm) decides the rules. Solo training (server unreachable)
@@ -718,10 +756,10 @@ class Game{
       this.ui.setDmMode(true);
       this.waves.state='idle';
       this.dm={scores:new Map(),timer:FUN_MATCH.duration,winKills:FUN_MATCH.win,score:{A:0,B:0}};
-      this.dm.scores.set(this.playerName,{name:this.playerName,team:this.playerTeam||'A',kills:0,deaths:0,me:true,op:this.playerOperator});
+      this.dm.scores.set(this.playerName,{name:this.playerName,team:this.playerTeam||'A',kills:0,deaths:0,me:true,op:this.playerOperator,breakdown:funStartBreakdown()});
       this.heroes.setup(this.playerFaction,this.playerName,op.id);
       for(const h of this.heroes.list)
-        this.dm.scores.set(h.name,{name:h.name,team:h.team,kills:0,deaths:0,me:false,op:h.def});
+        this.dm.scores.set(h.name,{name:h.name,team:h.team,kills:0,deaths:0,me:false,op:h.def,breakdown:funStartBreakdown()});
       /* Props are the point of the mode: everyone starts with one of each, and the map keeps
          seeding boxes (FunItems.update). Grenades are disabled — the prop keys replace them. */
       this.funItems.reset();
@@ -735,6 +773,7 @@ class Game{
       this.audio.waveStart();
       this.ui.setScore(0);
       this.ui.setDmScore(0,0,this.dm.timer);
+      this._prewarmFadeVariants();   // corpse fade should not cost the first bot death a 300-470 ms pipeline build
     }else if(this.matchMode==='koth'){
       this.ui.setDmMode(true);
       this.waves.state='idle';
@@ -1140,10 +1179,15 @@ class Game{
     }
     if(!this.dm||!this.isArena())return;
     if(this.squad)this.squad.onKill(killerName,victimHero);
-    /* Fun Brawl pays kills at the same rate as a disarm (funScoreEvent), not one point. */
-    const killPts=this.matchMode==='fun'?funScoreEvent('kill'):1;
-    const k=this.dm.scores.get(killerName);
-    if(k)k.kills+=killPts;
+    /* Fun Brawl: kills and prop hits all pay per funScoreEvent; each lands in its own scoring
+       category (see funApplyScore) so the results screen can show where points came from. */
+    if(this.matchMode==='fun'){
+      const kf=this.dm.scores.get(killerName);
+      funApplyScore(kf,'kill');
+    }else{
+      const k=this.dm.scores.get(killerName);
+      if(k)k.kills+=1;
+    }
     const v=this.dm.scores.get(victimHero.name);
     if(v)v.deaths++;
     const mine=killerName===this.playerName;
@@ -1167,14 +1211,13 @@ class Game{
      the DO, so the signature already carries the neutral shape {kind, owner, victim, pos}. */
   onFunEvent(ev){
     if(!ev||this.matchMode!=='fun'||!this.dm||this.netMatch&&this.netMatch.active)return 0;
-    const pts=funScoreEvent(ev.kind);
-    if(!pts)return 0;
     const by=ev.owner&&ev.owner.name;
     const row=by&&this.dm.scores.get(by);
     if(!row)return 0;
-    row.kills+=pts;
+    /* One call both bumps the category bucket and the row total; unknown kinds award nothing. */
+    const pts=funApplyScore(row,ev.kind);
     /* Feed the kill feed so the whole lobby can see who got pranked. */
-    if(ev.victim&&ev.victim.name&&ev.victim.name!==by){
+    if(pts&&ev.victim&&ev.victim.name&&ev.victim.name!==by){
       const verb=t('fun_verb_'+ev.kind);
       this.ui.killFeed(by,ev.victim.name,verb,by===this.playerName);
     }
@@ -1219,8 +1262,8 @@ class Game{
         if(me)me.deaths++;
         if(fromName){
           const k=this.dm&&this.dm.scores.get(fromName);
-          const killPts=this.matchMode==='fun'?funScoreEvent('kill'):1;
-          if(k)k.kills+=killPts;
+          if(this.matchMode==='fun')funApplyScore(k,'kill');
+          else if(k)k.kills+=1;
           this.ui.killFeed(fromName,this.playerName,t('kill_verb'),false);
           if(this.squad)this.squad.onKill(fromName,'player');
           this._checkDmWin();
@@ -1300,6 +1343,22 @@ class Game{
     this.ui.setDmScore(a,b,this.dm.timer);
     if(a>=this.dm.winKills||b>=this.dm.winKills)this._endDm(a,b);
   }
+  /* Fun Brawl results: the per-category scoring breakdown (kills / banana / magnet / spring /
+     water). `row.kills` is the grand total the match was decided on; this table shows WHERE the
+     points came from, and the last column re-sums the categories as a consistency check. */
+  _funBreakdownBoard(){
+    const CAT_KEY={kill:'over_kills',banana:'fun_banana',magnet:'fun_magnet',spring:'fun_spring',water:'fun_water'};
+    const rows=[...this.dm.scores.values()].sort((x,y)=>y.kills-x.kills);
+    const head=`<tr><th>${t('sb_role')}</th>${FUN_CATEGORIES.map(c=>`<th>${t(CAT_KEY[c])}</th>`).join('')}<th>${t('sb_total')}</th></tr>`;
+    const body=rows.map(r=>{
+      const b=r.breakdown||{};
+      let sum=0;
+      const cells=FUN_CATEGORIES.map(c=>{const v=b[c]||0;sum+=v;return `<td>${v}</td>`}).join('');
+      return `<tr class="${r.me?'me':''}"><td>${escHTML(r.name)}</td>${cells}<td class="fb-total"><b>${sum}</b></td></tr>`;
+    }).join('');
+    return `<div class="fun-breakdown"><div class="fb-title">${t('sb_breakdown')}</div><table>${head}${body}</table></div>`;
+  }
+
   _endDm(a,b){
     if(this.state==='over')return;
     this.squad.endMatch();this.state='over';
@@ -1314,11 +1373,13 @@ class Game{
     this.audio.gameOver();
     this.ui.hideBoard();
     const award=this._awardProgress(); // award before the results screen so LV/XP is current
+    const board=`<table><tr><th>${t('sb_role')}</th><th>${t('sb_faction')}</th><th>${t('sb_kills')}</th><th>${t('sb_deaths')}</th></tr>${rows}</table>`+
+      (this.matchMode==='fun'?this._funBreakdownBoard():'');
     this.ui.showOver({
       title:win?t('win'):t('lose'),
       win,kicker:t(this.matchMode==='fun'?'fun_over_kicker':'dm_over_kicker'),
       stats:{...this.stats,waveLabel:t('dur_label'),wave:t('dur_fmt',{m:Math.floor(this.stats.time/60),s:Math.floor(this.stats.time%60)}),score:this.score,best:Math.max(best,this.score),mvp},
-      board:`<table><tr><th>${t('sb_role')}</th><th>${t('sb_faction')}</th><th>${t('sb_kills')}</th><th>${t('sb_deaths')}</th></tr>${rows}</table>`,
+      board,
     });
     if(document.pointerLockElement)document.exitPointerLock();
     this._announceProgress(award);
@@ -1424,13 +1485,35 @@ class Game{
     if(this.perfMode&&this.perf.frames%180===0)
       console.log(`[PERF] frames=${this.perf.frames} slow=${this.perf.slow} max=${(this.perf.maxDt*1000).toFixed(1)}ms calls=${this.renderer.info.render.calls} tris=${this.renderer.info.render.triangles}`);
     // M4-P6: dynamic resolution (every 60 frames)
+    /* Hysteresis + minimum dwell + match-start grace. The old policy flipped the scale on a
+       single window: a ratio hovering between the .2 down and .05 up thresholds ping-ponged
+       0.70↔0.80 every ~2 s, and EVERY flip rebuilds the composer render targets (MSAA buffers
+       included) — a measured 60-100 ms hitch each time, 20+ times per match, with the flip's
+       own hitch causing the next slow window. Now a change needs a decisively crossed
+       threshold (> .2 down / < .04 up) AND ≥ 4 s since the last one, and the first 5 s after a
+       deploy never rescale (first-frame shader compilation is a one-off, not sustained load).
+       Small steps are deliberate: on iGPUs the sustainable ratio often sits at 0.80-0.85, and
+       big 0.7↔1.0 swings produced long stretches of >25 ms frames at 1.0 (measured). */
     if(this.perf.frames-this._perfAt>=60){
       const ratio=this.perf.slow/Math.max(1,this.perf.frames-this._perfAt);
+      this.perf.slow=0;this._perfAt=this.perf.frames;
+      const nowS=performance.now()/1000;
+      this._resOk=ratio<.04?(this._resOk||0)+1:0;
+      /* Ceiling memory: a scale that just proved too heavy may not be climbed straight back
+         into, or the scale oscillates across it forever (measured: 0.70↔0.80 every ~8 s on an
+         iGPU whose sustainable ratio sits just below 0.75). A long comfortable stretch relaxes
+         the ceiling one step at a time, so a genuinely lighter scene can still regain levels. */
+      if(this._resOk>=6&&(this._resCeil??1)<1)this._resCeil=Math.min(1,(this._resCeil||1)+.05);
       let next=this.dynScale;
       if(ratio>.2)next=Math.max(.7,this.dynScale-.1);
-      else if(ratio<.05)next=Math.min(1,this.dynScale+.05);
-      if(next!==this.dynScale){this.dynScale=next;this._applyQuality();}
-      this.perf.slow=0;this._perfAt=this.perf.frames;
+      else if(this._resOk>=2)next=Math.min(this._resCeil??1,this.dynScale+.05);
+      if(next!==this.dynScale){
+        const dwell=next<this.dynScale?4:6;
+        if(nowS-(this._resAt||0)>=dwell){
+          if(next<this.dynScale)this._resCeil=Math.min(this._resCeil??1,this.dynScale-.05);
+          this.dynScale=next;this._resAt=nowS;this._applyQuality();
+        }
+      }
     }
     this.inputMgr&&this.inputMgr.update(dtRaw);
     // The network session runs even while the local player is in the online pause menu.
@@ -2749,13 +2832,32 @@ class Game{
     });
     await run('fun-ends',()=>{
       this.ui.sel.mode='fun';this.startGame();
-      // The prank board decides the match: first to FUN_MATCH.win ends it.
+      // The prank board decides the match: first to FUN_MATCH.win ends it. Points must go
+      // through funApplyScore so the per-category breakdown mirrors the row total exactly.
       const me=this.dm.scores.get(this.playerName);
-      me.kills=FUN_MATCH.win;
+      const other=[...this.dm.scores.values()].find(r=>!r.me);
+      for(let i=0;i<FUN_MATCH.win/2;i++)funApplyScore(me,'kill');   // 2 pts per kill → win score
+      funApplyScore(other,'slip');funApplyScore(other,'slip');      // banana ×2
+      funApplyScore(other,'water');
+      funApplyScore(other,'disarm');
       this._checkDmWin();
       assert(this.state==='over','the prank board should end the match at the win score');
       const kicker=document.getElementById('o-kicker');
       assert(kicker&&kicker.textContent.includes(t('fun_over_kicker')),'fun shows its own end kicker');
+      /* Per-category breakdown on the results screen: kills + every prop, plus the total. */
+      const fb=document.querySelector('#o-board .fun-breakdown');
+      assert(fb,'the results screen shows the per-category breakdown table');
+      const headers=[...fb.querySelectorAll('th')].map(th=>th.textContent);
+      for(const key of ['over_kills','fun_banana','fun_magnet','fun_spring','fun_water','sb_total'])
+        assert(headers.includes(t(key)),'breakdown header missing: '+key);
+      const totals=[...fb.querySelectorAll('td.fb-total')].map(td=>+td.textContent);
+      assert(totals.length===this.dm.scores.size,'one total cell per player');
+      assert(totals.includes(FUN_MATCH.win),'my row re-sums to the win score');
+      assert(totals.includes(5),'the other row re-sums to banana2+water1+magnet2');
+      const myRow=fb.querySelector('tr.me');
+      assert(myRow,'my row is marked in the breakdown');
+      const myCells=[...myRow.children].map(td=>+td.textContent);
+      assert(myCells[1]===FUN_MATCH.win,'all my points sit in the kills category');
     });
     await run('fun-player-disarm',()=>{
       /* The local player is a valid magnet victim; the guard used to only be exercised on bots. */
